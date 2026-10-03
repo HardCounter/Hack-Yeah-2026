@@ -153,5 +153,4 @@ uv run python -m persistence.demo --scenario crash-after-bank
 uv run python -m persistence.demo --scenario wrong-state
 ```
 
-The [persistence completion plan](superpowers/plans/2026-10-03-persistence-completion.md)
-specifications are fully implemented and verified.
+The persistence architecture specifications are fully implemented and verified.
