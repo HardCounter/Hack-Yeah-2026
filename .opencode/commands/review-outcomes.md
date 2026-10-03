@@ -1,0 +1,8 @@
+---
+description: Check independent outcome verification and negative-test coverage.
+agent: verification-auditor
+subtask: true
+---
+
+Review outcome verification and test adequacy. Scope: $ARGUMENTS
+If no scope is given, inspect current contracts, verifiers, state adapters, and tests. Check trusted approved state, independently queried persisted outcomes, duplicates, false success, retries, and unavailable state. Return prioritized findings and a concrete positive/negative test matrix. Do not edit files or claim tests were executed.
