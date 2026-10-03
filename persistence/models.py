@@ -38,6 +38,11 @@ class ActionType(str, Enum):
     ALERT = "ALERT"
     USER_INPUT = "USER_INPUT"
     SYSTEM = "SYSTEM"
+    MCP_TOOL = "MCP_TOOL"
+    EGRESS_HTTP = "EGRESS_HTTP"
+    SESSION = "SESSION"
+    APPROVAL = "APPROVAL"
+    CONTROL = "CONTROL"
 
 
 class AuditorVerdict(str, Enum):
@@ -218,15 +223,27 @@ class ActionDetails:
     result: Optional[Any] = None
     error: Optional[str] = None
     bytes_returned: Optional[int] = None
+    # Optional, typed v2.1 fields. These are sanitized by privacy.py before
+    # persistence and kept separate from untrusted body content.
+    side_effect: Optional[str] = None
+    transport: Optional[str] = None
+    wire_details: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "name": self.name,
             "parameters": self.parameters,
             "result": self.result,
             "error": self.error,
             "bytes_returned": self.bytes_returned,
         }
+        if self.side_effect is not None:
+            data["side_effect"] = self.side_effect
+        if self.transport is not None:
+            data["transport"] = self.transport
+        if self.wire_details:
+            data["wire_details"] = self.wire_details
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ActionDetails":
@@ -236,6 +253,9 @@ class ActionDetails:
             result=data.get("result"),
             error=data.get("error"),
             bytes_returned=data.get("bytes_returned"),
+            side_effect=data.get("side_effect"),
+            transport=data.get("transport"),
+            wire_details=data.get("wire_details", {}) or {},
         )
 
     def to_json(self, indent: Optional[int] = None) -> str:
@@ -320,9 +340,11 @@ class ActionEventEnvelope:
     ts: str = field(default_factory=generate_utc_iso_timestamp)
     source: str = "gateway"
     context: AuditContext = field(default_factory=AuditContext)
+    # Assigned by Layer 2 during the durable insert transaction.
+    seq: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "event_id": self.event_id,
             "schema_version": self.schema_version,
             "trace_id": self.trace_id,
@@ -337,6 +359,9 @@ class ActionEventEnvelope:
             "interception_metadata": self.interception_metadata.to_dict(),
             "context": self.context.to_dict(),
         }
+        if self.seq is not None:
+            data["seq"] = self.seq
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ActionEventEnvelope":
@@ -368,6 +393,7 @@ class ActionEventEnvelope:
             action_details=action_details,
             interception_metadata=interception_metadata,
             context=AuditContext.from_dict(data.get("context", {})),
+            seq=data.get("seq"),
         )
 
     def to_json(self, indent: Optional[int] = None) -> str:

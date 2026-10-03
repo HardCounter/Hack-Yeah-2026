@@ -15,7 +15,7 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 from persistence.models import (
     ActionEventEnvelope,
@@ -173,15 +173,39 @@ class EventStore:
             event.interception_metadata.total_latency_ms, payload,
         )
 
-    def _insert_event_row(self, row):
+    def _insert_event_row(self, row, *, assign_seq: bool = True):
         conn = self._get_connection()
         previous = conn.execute(
-            "SELECT payload_json FROM events WHERE event_id = ?", (row[0],)
+            "SELECT payload_json, seq FROM events WHERE event_id = ?", (row[0],)
         ).fetchone()
         if previous is not None:
-            if previous[0] != row[-1]:
+            incoming = json.loads(row[-1])
+            incoming["seq"] = previous[1]
+            if json.dumps(incoming, sort_keys=True, separators=(",", ":")) != previous[0]:
                 raise ConflictingRecordError("Conflicting immutable audit record")
             return False
+
+        session_id = row[2]
+        seq = None
+        if assign_seq:
+            conn.execute(
+                "INSERT OR IGNORE INTO session_sequences(session_id,next_seq) VALUES(?,0)",
+                (session_id,),
+            )
+            seq = conn.execute(
+                "SELECT next_seq FROM session_sequences WHERE session_id = ?", (session_id,)
+            ).fetchone()[0]
+        supplied = json.loads(row[-1])
+        if supplied.get("seq") is not None and not assign_seq:
+            raise ValueError("Layer 2 owns event seq; caller-supplied seq is forbidden")
+        supplied["seq"] = seq
+        payload = json.dumps(supplied, sort_keys=True, separators=(",", ":"))
+        row = row[:-1] + (payload,)
+        if assign_seq:
+            conn.execute(
+                "UPDATE session_sequences SET next_seq = next_seq + 1 WHERE session_id = ?",
+                (session_id,),
+            )
 
         # Allocate monotonic ingest_offset from store_metadata
         offset_row = conn.execute(
@@ -195,14 +219,14 @@ class EventStore:
         else:
             offset = 1
 
-        full_row = row + (offset,)
+        full_row = row[:9] + (seq, row[9], offset)
         self._insert_immutable("events", (
             "event_id", "trace_id", "session_id", "case_id", "agent_id",
-            "action_type", "status", "ts", "total_latency_ms", "payload_json", "ingest_offset",
+            "action_type", "status", "ts", "total_latency_ms", "seq", "payload_json", "ingest_offset",
         ), full_row)
 
         context = json.loads(row[-1])["context"]
-        if context["run_id"] is not None:
+        if context["run_id"] is not None and context["action_index"] is not None:
             prev = conn.execute(
                 "SELECT event_id FROM run_order WHERE run_id = ? AND action_index = ?",
                 (context["run_id"], context["action_index"])).fetchone()
@@ -389,6 +413,12 @@ class EventStore:
                 WHERE o.consumer_name IN ({placeholders})
                   AND c.status = 'ACTIVE'
                   AND o.available_at <= ? AND o.lease_until <= ?
+                  AND NOT EXISTS (
+                    SELECT 1 FROM outbox prior
+                    JOIN events pe ON pe.event_id = prior.event_id
+                    WHERE prior.consumer_name = o.consumer_name
+                      AND pe.session_id = e.session_id AND pe.seq < e.seq
+                  )
                 ORDER BY e.rowid, o.consumer_name LIMIT 1""", [*names, now, now]).fetchone()
             if row is None:
                 return None
@@ -609,6 +639,126 @@ class EventStore:
             return await self._offload(
                 self._sync_get_events_by_column, "session_id", session_id
             )
+
+    async def get_events_by_session_seq(self, session_id: str) -> List[ActionEventEnvelope]:
+        """Read persisted session history in Layer 2 sequence order."""
+        async with self._lock:
+            def read():
+                rows = self._get_connection().execute(
+                    "SELECT payload_json FROM events WHERE session_id=? ORDER BY seq ASC",
+                    (session_id,),
+                ).fetchall()
+                return [sanitize_event(ActionEventEnvelope.from_json(r[0])) for r in rows]
+            return await self._offload(read)
+
+    @staticmethod
+    def _finding_projection(payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist only structured finding metadata; discard free-text summaries/details."""
+        from persistence.privacy import number, token
+        safe = {}
+        for key in ("rule_id", "plugin", "plugin_version", "method", "run_id", "session_id",
+                    "agent_id", "case_id", "trigger_event_id", "policy_version"):
+            if payload.get(key) is not None:
+                safe[key] = token(payload[key], required=True)
+        severity = payload.get("severity")
+        if severity not in {"low", "medium", "high", "critical"}:
+            raise ValueError("Invalid finding severity")
+        safe["severity"] = severity
+        ids = payload.get("evidence_event_ids", ())
+        if not isinstance(ids, (list, tuple)):
+            raise ValueError("Finding evidence_event_ids must be a sequence")
+        safe["evidence_event_ids"] = [token(x, required=True) for x in ids]
+        confidence = payload.get("confidence")
+        if confidence is not None:
+            confidence = number(confidence)
+            if confidence > 1:
+                raise ValueError("Finding confidence must be between 0 and 1")
+            safe["confidence"] = confidence
+        return safe
+
+    async def write_consumer_finding(self, finding_id: str, payload: Mapping[str, Any]) -> bool:
+        """Store a privacy-projected finding idempotently; return True on first insert."""
+        from persistence.privacy import token
+        finding_id = token(finding_id, required=True)
+        safe = self._finding_projection(payload)
+        session_id = safe.get("session_id")
+        if not session_id:
+            raise ValueError("Finding requires session_id")
+        raw = json.dumps(safe, sort_keys=True, separators=(",", ":"))
+        async with self._lock:
+            def write():
+                conn = self._get_connection()
+                with conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    old = conn.execute("SELECT session_id,payload_json FROM consumer_findings WHERE finding_id=?", (finding_id,)).fetchone()
+                    if old:
+                        if (old[0], old[1]) != (session_id, raw):
+                            raise ConflictingRecordError("Conflicting finding ID")
+                        return False
+                    conn.execute("INSERT INTO consumer_findings VALUES(?,?,?)", (finding_id,session_id,raw))
+                    return True
+            return await self._offload(write)
+
+    async def list_consumer_findings(self, session_id: str) -> list[dict[str, Any]]:
+        async with self._lock:
+            def read():
+                rows = self._get_connection().execute(
+                    "SELECT payload_json FROM consumer_findings WHERE session_id=? ORDER BY rowid",
+                    (session_id,),
+                ).fetchall()
+                return [json.loads(r[0]) for r in rows]
+            return await self._offload(read)
+
+    @staticmethod
+    def _verification_projection(payload: Mapping[str, Any]) -> dict[str, Any]:
+        from persistence.privacy import token
+        status = payload.get("verification_status")
+        if status not in {"VERIFIED_SUCCESS", "FAILED_POSTCONDITIONS", "VERIFICATION_INCOMPLETE"}:
+            raise ValueError("Invalid verification_status")
+        checks = []
+        for check in payload.get("checks", ()):
+            if not isinstance(check, Mapping):
+                raise ValueError("Verification checks must be objects")
+            check_status = check.get("status")
+            if check_status not in {"PASS", "FAIL", "INCOMPLETE"}:
+                raise ValueError("Invalid verification check status")
+            item = {"id": token(check.get("id"), required=True), "status": check_status}
+            if check.get("detail") is not None:
+                # Verifier details must be fixed opaque reason codes. This
+                # rejects prose that could contain PII or raw exception text.
+                item["detail"] = token(check["detail"], required=True)
+            if check.get("evidence_source") is not None:
+                item["evidence_source"] = token(check["evidence_source"], required=True)
+            checks.append(item)
+        return {"verification_status": status, "checks": checks}
+
+    async def write_verification(self, session_id: str, payload: Mapping[str, Any]) -> bool:
+        from persistence.privacy import token
+        session_id = token(session_id, required=True)
+        safe = self._verification_projection(payload)
+        raw = json.dumps(safe, sort_keys=True, separators=(",", ":"))
+        async with self._lock:
+            def write():
+                conn = self._get_connection()
+                with conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    old = conn.execute("SELECT payload_json FROM verification_results WHERE session_id=?", (session_id,)).fetchone()
+                    if old:
+                        if old[0] != raw:
+                            raise ConflictingRecordError("Conflicting verification result for session")
+                        return False
+                    conn.execute("INSERT INTO verification_results VALUES(?,?)", (session_id,raw))
+                    return True
+            return await self._offload(write)
+
+    async def get_verification(self, session_id: str) -> dict[str, Any] | None:
+        async with self._lock:
+            def read():
+                row = self._get_connection().execute(
+                    "SELECT payload_json FROM verification_results WHERE session_id=?", (session_id,)
+                ).fetchone()
+                return json.loads(row[0]) if row else None
+            return await self._offload(read)
 
     def _sync_get_run_events(self, run_id):
         rows = self._get_connection().execute("""SELECT e.payload_json

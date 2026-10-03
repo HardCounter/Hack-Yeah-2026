@@ -8,7 +8,7 @@ import uuid
 
 from persistence.settings import PersistenceSettings
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 def migrate_audit_schema(conn: sqlite3.Connection, settings: PersistenceSettings) -> None:
@@ -91,6 +91,57 @@ def migrate_audit_schema(conn: sqlite3.Connection, settings: PersistenceSettings
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_case_ts ON events(case_id, ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type_status ON events(action_type, status)")
 
+        # Durable per-session order. The counter intentionally survives event
+        # pruning so a session never reuses a sequence value after retention.
+        event_cols = [col[1] for col in conn.execute("PRAGMA table_info(events)").fetchall()]
+        if "seq" not in event_cols:
+            conn.execute("ALTER TABLE events ADD COLUMN seq INTEGER")
+            rows = conn.execute("SELECT event_id, session_id, payload_json FROM events ORDER BY rowid").fetchall()
+            counters = {}
+            for event_id, session_id, payload_json in rows:
+                seq = counters.get(session_id, 0)
+                payload = json.loads(payload_json)
+                payload["seq"] = seq
+                conn.execute("UPDATE events SET seq = ?, payload_json = ? WHERE event_id = ?",
+                             (seq, json.dumps(payload, sort_keys=True, separators=(",", ":")), event_id))
+                counters[session_id] = seq + 1
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_events_session_seq ON events(session_id, seq)")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS session_sequences (
+                session_id TEXT PRIMARY KEY,
+                next_seq INTEGER NOT NULL CHECK(next_seq >= 0)
+            )"""
+        )
+        for session_id, next_seq in conn.execute(
+            "SELECT session_id, COALESCE(MAX(seq), -1) + 1 FROM events GROUP BY session_id"
+        ).fetchall():
+            conn.execute(
+                "INSERT INTO session_sequences(session_id,next_seq) VALUES(?,?) "
+                "ON CONFLICT(session_id) DO UPDATE SET next_seq=MAX(next_seq,excluded.next_seq)",
+                (session_id, next_seq),
+            )
+
+        # Immutable trusted contract snapshot keyed by its authenticated session.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS task_contracts (
+                session_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL UNIQUE,
+                contract_id TEXT NOT NULL UNIQUE,
+                contract_json TEXT NOT NULL
+            )"""
+        )
+        # Optional sanitized body store. The event envelope stores references only.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS agent_content (
+                content_id TEXT PRIMARY KEY,
+                sha256 TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+                redacted INTEGER NOT NULL CHECK(redacted IN (0,1)),
+                trust TEXT NOT NULL CHECK(trust IN ('trusted','untrusted')),
+                body BLOB NOT NULL
+            )"""
+        )
+
         # Ingest offset column & unique index on events
         table_info = [col[1] for col in conn.execute("PRAGMA table_info(events)").fetchall()]
         if "ingest_offset" not in table_info:
@@ -110,6 +161,17 @@ def migrate_audit_schema(conn: sqlite3.Connection, settings: PersistenceSettings
             WHERE singleton = 1
             """
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS policy_signals (
+                signal_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                signal_json TEXT NOT NULL,
+                applied INTEGER NOT NULL DEFAULT 0 CHECK(applied IN (0,1))
+            )"""
+        )
+        signal_cols = [col[1] for col in conn.execute("PRAGMA table_info(policy_signals)").fetchall()]
+        if "applied" not in signal_cols:
+            conn.execute("ALTER TABLE policy_signals ADD COLUMN applied INTEGER NOT NULL DEFAULT 0")
 
         # Alerts
         conn.execute(
@@ -126,6 +188,19 @@ def migrate_audit_schema(conn: sqlite3.Connection, settings: PersistenceSettings
                 evidence_json TEXT NOT NULL
             )
             """
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS consumer_findings (
+                finding_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS verification_results (
+                session_id TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL
+            )"""
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_session_ts ON alerts(session_id, ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_case_ts ON alerts(case_id, ts)")
