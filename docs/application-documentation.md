@@ -1,6 +1,6 @@
 # Local Agent Gateway & Control Plane: Architecture
 
-Status: **proposed interfaces, not implemented**. The MVP is one KYC workflow; AML,
+Status: **proposed runtime interfaces, not yet integrated**. Standalone SQLite persistence primitives are implemented; see [persistence.md](persistence.md) for their scope. The MVP is one KYC workflow; AML,
 multi-provider fallback, arbitrary plugins and broad protocol support are deferred.
 [architecture-contract.md](architecture-contract.md) defines the required trust,
 decision, persistence and verification boundaries. Examples below are not runtime evidence.
@@ -55,7 +55,7 @@ flowchart TB
         subgraph LAYER2["Layer 2: Persistence Layer (Document Store & Reliable Dispatcher)"]
             direction TB
             PERSIST_WORKER["Persistence Worker"]
-            DOC_STORE[("Document Store<br/>(MongoDB / JSON Append Store)")]
+            DOC_STORE[("SQLite Evidence Store<br/>+ Durable Outbox")]
             Q2_DISPATCHER["Consumer Dispatcher & Retry Supervisor"]
             Q2[("Queue 2: Consumer Queue<br/>(With Exponential Retries & DLQ)")]
 
@@ -292,7 +292,7 @@ routing:
 
 ### 2.4 Event Packaging & Queue Handoff
 
-Once an action completes (or is blocked), the gateway packages the complete interaction into an **Application-Level Action Event** and asynchronously enqueues it into `Queue 1`. 
+The future gateway packages allowlisted sanitized evidence, not the complete raw interaction. Critical intent/decision evidence commits before dispatch; completion and blocked-attempt events use the same durable storage path. Ordinary optional telemetry can use a separate volatile buffer.
 
 **Critical Invariant:** High-impact dispatch waits for a durable sanitized intent/decision;
 business writes atomically persist effect receipts and uniqueness constraints. Async
@@ -303,14 +303,14 @@ retries; pause writes if durable evidence cannot be stored. Persist blocked atte
 
 ## 3. Layer 2: Persistence Layer (Document Store & Queueing Pipeline)
 
-The Persistence Layer ensures that every action is reliably preserved for local querying and auditing, while safely decoupling storage workloads from asynchronous consumer processing.
+The standalone `persistence/` module provides a file-backed SQLite event/outbox transaction through `await emit_action()`. Registered analytics consumers receive leased, retried jobs with durable DLQ exhaustion. `emit_action_nowait()` and live subscriber feeds are best effort and must not provide critical evidence. The gateway still needs to integrate the durable API before dispatch, and business receipts must be committed separately with the banking transaction. See [persistence.md](persistence.md).
 
 ```mermaid
 flowchart LR
-    Q1[("Queue 1: Ingest Buffer")] --> WORKER["Persistence Worker"]
-    WORKER -->|"Append (Batch / Bulk Write)"| MONGO[("Document Store<br/>(MongoDB / Local JSON)")]
-    WORKER -->|"Enqueue Normalized Event"| DISPATCHER["Reliable Consumer Dispatcher"]
-    DISPATCHER --> Q2[("Queue 2: Consumer Channel")]
+    INTENT["Trusted emitter: await emit_action"] -->|"Atomic commit before dispatch"| STORE[("SQLite Evidence + Durable Outbox")]
+    Q1[("Optional Volatile Telemetry Buffer")] --> WORKER["Persistence Worker"]
+    WORKER -->|"Commit retained batch"| STORE
+    STORE -->|"Leased analytics delivery"| Q2[("Durable Consumer Jobs")]
     
     subgraph RETRY_MANAGEMENT["Failure Supervision"]
         Q2 --> CONSUMERS["Consumer Modules"]
@@ -321,11 +321,13 @@ flowchart LR
     end
 ```
 
-### 3.1 Document Store (MongoDB / Append-Optimized Store)
+### 3.1 Implemented SQLite Evidence Store
 
-The final storage choice is open; SQLite is sufficient for a small local slice. Only
-sanitized allowlisted event fields are persisted, not arbitrary raw prompts/arguments/results.
-MongoDB is an optional future choice, not an installed dependency. JSON-oriented storage can offer:
+The local persistence component uses stdlib SQLite with WAL and `synchronous=FULL`. Only
+sanitized allowlisted evidence is persisted. Identical event-ID retries are idempotent;
+conflicting reuse raises instead of overwriting prior evidence. Run-index conflicts are
+rejected; run trajectory reads use the supplied gateway index. No MongoDB dependency is
+installed. The examples below describe optional future MongoDB indexing, not executed code:
 1. **Flexible Sanitized Document JSON:** Persists allowlisted, sanitized structured events and metadata without complex relational migrations, strictly excluding raw secrets, unchecked PII, and raw prompt blobs.
 2. **High-Throughput Append Workloads:** MongoDB handles rapid append-only writes via time-bucketed collections or capped collections with minimal write latency.
 3. **Rich Local Querying:** Easily query action histories by session, trace, tool name, or risk attributes for local debugging and dashboard exploration.
@@ -605,13 +607,13 @@ The architecture is designed to be set up on a developer's machine in minutes, w
 |  |  ├── Interception Engine (FastAPI / ASGI / Go Daemon)               |  |
 |  |  ├── In-Process Policy Registry & Dynamic Policy Cache             |  |
 |  |  ├── Transparent LLM & MCP Provider Routing Table                 |  |
-|  |  └── Queue 1 Ingestion Buffer (In-memory ring / SQLite / Redis)    |  |
+|  |  └── Critical Evidence Commit + SQLite Outbox                    |  |
 |  +────────────────────────────────────────────────────────────────────+  |
 |        │                                                                 |
 |        ▼                                                                 |
 |  +────────────────────────────────────────────────────────────────────+  |
 |  | Local Persistence Worker                                            |  |
-|  |  ├── Appends to Local MongoDB (localhost:27017)                    |  |
+|  |  ├── Appends sanitized immutable SQLite evidence                    |  |
 |  |  └── Feeds Queue 2 (with backoff & Dead-Letter Queue)              |  |
 |  +────────────────────────────────────────────────────────────────────+  |
 |        │                                                                 |

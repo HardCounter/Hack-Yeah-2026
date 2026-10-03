@@ -1,6 +1,8 @@
 # Runtime architecture contract
 
-Status: **required design, not implemented or runtime-tested**. This document resolves
+Status: **required runtime design, not yet integrated or demonstrated**. Standalone
+evidence/outbox primitives exist in `persistence/`; see [persistence.md](persistence.md)
+for their tested boundaries. They do not establish runtime enforcement. This document resolves
 the architecture contradictions identified in the October 3 review. It specializes
 [project-direction.md](project-direction.md); competition documents remain unchanged.
 The MVP is **one KYC workflow**. AML, broad provider compatibility, distributed queues,
@@ -137,8 +139,8 @@ arguments, tool receipts alone, event traces or an agent's “done” message. Q
 writes before verification and read a consistent snapshot. Use a disposable database copy
 per run; concurrency tests explicitly share an application to test global uniqueness.
 
-Required KYC schema additions (not present in the generator yet): application-to-created-client
-linkage with a unique application key; durable decision/effect receipts with action/run IDs;
+The generator already has `clients.application_id` linkage. Required remaining KYC schema
+additions are a unique non-null application key for created clients; durable decision/effect receipts with action/run IDs;
 server-recorded screening evidence bound to normalized subject, DOB, source/version and time;
 and decision document/registry/UBO provenance. Enforce a unique client per application and
 atomic related account/status writes. `audit_actions` records fake bait execution only;

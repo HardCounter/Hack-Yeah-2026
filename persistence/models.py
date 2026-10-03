@@ -24,7 +24,7 @@ def parse_utc_iso_timestamp(ts: str) -> datetime:
     clean_ts = ts.replace("Z", "+00:00")
     dt = datetime.fromisoformat(clean_ts)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        raise ValueError("Audit timestamp requires an explicit timezone")
     return dt.astimezone(timezone.utc)
 
 
@@ -43,6 +43,7 @@ class ActionType(str, Enum):
 class AuditorVerdict(str, Enum):
     """Decision verdict produced by an auditor or interception gate."""
     ALLOWED = "ALLOWED"
+    WARNED = "WARNED"
     BLOCKED = "BLOCKED"
     REDACTED = "REDACTED"
     ESCALATED = "ESCALATED"
@@ -76,6 +77,9 @@ def _parse_auditor_verdict(val: Any) -> AuditorVerdict:
     synonyms = {
         "ALLOW": AuditorVerdict.ALLOWED,
         "ALLOWED": AuditorVerdict.ALLOWED,
+        "WARN": AuditorVerdict.WARNED,
+        "WARNED": AuditorVerdict.WARNED,
+        "ALERT": AuditorVerdict.WARNED,
         "BLOCK": AuditorVerdict.BLOCKED,
         "BLOCKED": AuditorVerdict.BLOCKED,
         "REDACT": AuditorVerdict.REDACTED,
@@ -83,9 +87,12 @@ def _parse_auditor_verdict(val: Any) -> AuditorVerdict:
         "ESCALATE": AuditorVerdict.ESCALATED,
         "ESCALATED": AuditorVerdict.ESCALATED,
         "REQUIRE_APPROVAL": AuditorVerdict.ESCALATED,
+        "APPROVE": AuditorVerdict.ESCALATED,
         "ERROR": AuditorVerdict.ERROR,
     }
-    return synonyms.get(s, AuditorVerdict.ALLOWED)
+    if s not in synonyms:
+        raise ValueError("Invalid auditor verdict")
+    return synonyms[s]
 
 
 def _parse_action_type(val: Any) -> ActionType:
@@ -95,7 +102,7 @@ def _parse_action_type(val: Any) -> ActionType:
     try:
         return ActionType(s)
     except ValueError:
-        return ActionType.TOOL_CALL
+        raise ValueError("Invalid action type") from None
 
 
 def _parse_severity(val: Any) -> Severity:
@@ -105,7 +112,7 @@ def _parse_severity(val: Any) -> Severity:
     try:
         return Severity(s)
     except ValueError:
-        return Severity.INFO
+        raise ValueError("Invalid severity") from None
 
 
 def _parse_action_status(val: Any) -> ActionStatus:
@@ -115,7 +122,7 @@ def _parse_action_status(val: Any) -> ActionStatus:
     try:
         return ActionStatus(s)
     except ValueError:
-        return ActionStatus.PENDING
+        raise ValueError("Invalid action status") from None
 
 
 @dataclass
@@ -142,7 +149,7 @@ class AuditorDecision:
     def from_dict(cls, data: Dict[str, Any]) -> "AuditorDecision":
         return cls(
             auditor_name=data.get("auditor_name", ""),
-            verdict=_parse_auditor_verdict(data.get("verdict", AuditorVerdict.ALLOWED)),
+            verdict=_parse_auditor_verdict(data.get("verdict")),
             reason=data.get("reason", ""),
             latency_ms=float(data.get("latency_ms", 0.0)),
             modifications=data.get("modifications"),
@@ -162,7 +169,7 @@ class InterceptionMetadata:
     """Composite interception metadata across all auditors."""
     verdict: AuditorVerdict
     auditor_decisions: List[AuditorDecision] = field(default_factory=list)
-    policy_version: str = "1.0.0"
+    policy_version: Optional[str] = None
     total_latency_ms: float = 0.0
     fault_injected: bool = False
     sanitized_fields: List[str] = field(default_factory=list)
@@ -179,17 +186,19 @@ class InterceptionMetadata:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "InterceptionMetadata":
+        if not isinstance(data.get("fault_injected", False), bool):
+            raise ValueError("fault_injected must be a boolean")
         raw_decisions = data.get("auditor_decisions", [])
         decisions = [
             d if isinstance(d, AuditorDecision) else AuditorDecision.from_dict(d)
             for d in raw_decisions
         ]
         return cls(
-            verdict=_parse_auditor_verdict(data.get("verdict", AuditorVerdict.ALLOWED)),
+            verdict=_parse_auditor_verdict(data.get("verdict")),
             auditor_decisions=decisions,
-            policy_version=data.get("policy_version", "1.0.0"),
+            policy_version=data.get("policy_version"),
             total_latency_ms=float(data.get("total_latency_ms", 0.0)),
-            fault_injected=bool(data.get("fault_injected", False)),
+            fault_injected=data.get("fault_injected", False),
             sanitized_fields=list(data.get("sanitized_fields", [])),
         )
 
@@ -238,6 +247,38 @@ class ActionDetails:
 
 
 @dataclass
+class AuditContext:
+    """References supplied by a trusted gateway, never evidence of authority alone.
+
+    None denotes unavailable binding; persistence does not invent a contract or
+    authenticate its issuer. No raw baseline/objective belongs in general logs.
+    """
+    contract_id: Optional[str] = None
+    run_id: Optional[str] = None
+    action_id: Optional[str] = None
+    principal_id: Optional[str] = None
+    action_index: Optional[int] = None
+    policy_hash: Optional[str] = None
+    feed_version: Optional[str] = None
+    approval_id: Optional[str] = None
+    intervention_id: Optional[str] = None
+    effect_receipt_id: Optional[str] = None
+    verification_status: Optional[str] = None
+    semantic_model: Optional[str] = None
+    semantic_model_version: Optional[str] = None
+    reason_code: Optional[str] = None
+    reserved_usage: Dict[str, Any] = field(default_factory=dict)
+    actual_usage: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AuditContext":
+        return cls(**data)
+
+
+@dataclass
 class ActionEventEnvelope:
     """Canonical envelope for all persisted action events."""
     trace_id: str
@@ -252,6 +293,7 @@ class ActionEventEnvelope:
     case_id: Optional[str] = None
     ts: str = field(default_factory=generate_utc_iso_timestamp)
     source: str = "gateway"
+    context: AuditContext = field(default_factory=AuditContext)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -267,6 +309,7 @@ class ActionEventEnvelope:
             "status": self.status.value,
             "action_details": self.action_details.to_dict(),
             "interception_metadata": self.interception_metadata.to_dict(),
+            "context": self.context.to_dict(),
         }
 
     @classmethod
@@ -298,6 +341,7 @@ class ActionEventEnvelope:
             status=_parse_action_status(data.get("status", ActionStatus.PENDING)),
             action_details=action_details,
             interception_metadata=interception_metadata,
+            context=AuditContext.from_dict(data.get("context", {})),
         )
 
     def to_json(self, indent: Optional[int] = None) -> str:

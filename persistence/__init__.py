@@ -1,12 +1,13 @@
 """Layer 2: Persistence Layer for AI Control Layer.
 
-Reliably preserves structured events, alerts, and audit records with
-an asynchronous, non-blocking ingestion buffer, SQLite WAL document store,
-and reliable downstream consumer pub/sub dispatcher.
+Sanitized immutable audit records and atomic SQLite outbox commits. Durable
+analytics are at least once; volatile live feeds and nowait telemetry are
+explicitly best effort. Critical dispatch must await the file-backed store.
 """
 
 from persistence.models import (
     ActionDetails,
+    AuditContext,
     ActionEventEnvelope,
     ActionStatus,
     ActionType,
@@ -21,11 +22,14 @@ from persistence.models import (
     parse_utc_iso_timestamp,
 )
 from persistence.queue import ConsumerDispatcher, IngestBuffer
-from persistence.store import EventStore
+from persistence.store import EventStore, AuditBackpressureError, ConflictingRecordError
 from persistence.worker import PersistenceEngine, PersistenceWorker
 
 __all__ = [
     "ActionDetails",
+    "AuditContext",
+    "AuditBackpressureError",
+    "ConflictingRecordError",
     "ActionEventEnvelope",
     "ActionStatus",
     "ActionType",

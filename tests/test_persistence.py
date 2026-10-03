@@ -1,4 +1,4 @@
-"""Comprehensive unit and integration tests for Layer 2 Persistence Layer.
+"""Unit and integration tests for the local persistence component.
 
 Tests coverage:
 1. TestModels: Dataclass serialization, deserialization (JSON and dict), ISO 8601 UTC timestamps,
@@ -11,8 +11,8 @@ Tests coverage:
    dispatch_with_retry transient failure recovery, DLQ routing on retry exhaustion.
 5. TestPersistenceWorkerAndEngine: Async context manager lifecycle, worker batch flushing,
    case timeline queries, aggregate stats, graceful shutdown with inflight draining.
-6. TestPersistenceBenchmark: Concurrent enqueue of 500 events via asyncio.gather,
-   sub-millisecond latency verification, complete persistence verification.
+6. TestPersistenceBenchmark: Concurrent durable appends of 500 events;
+   reports measured latency and checks every persisted event ID.
 """
 
 from __future__ import annotations
@@ -276,6 +276,8 @@ class TestModels:
         assert meta_escalate.verdict == AuditorVerdict.ESCALATED
         meta_redact = InterceptionMetadata.from_dict({"verdict": "redacted"})
         assert meta_redact.verdict == AuditorVerdict.REDACTED
+        assert InterceptionMetadata.from_dict({"verdict": "WARN"}).verdict == AuditorVerdict.WARNED
+        assert InterceptionMetadata.from_dict({"verdict": "APPROVE"}).verdict == AuditorVerdict.ESCALATED
 
         # Tolerant severity parsing
         alert = AlertEvent.from_dict(
@@ -820,7 +822,7 @@ class TestConsumerDispatcher:
         assert len(records) == 1
         assert records[0].consumer_name == "permanent_failing_service"
         assert records[0].retry_count == 2
-        assert records[0].error_message == "Permanent downstream crash"
+        assert records[0].error_message == "CONSUMER_DELIVERY_FAILED"
 
         await store.close()
 
@@ -981,11 +983,11 @@ class TestPersistenceWorkerAndEngine:
 # 6. Concurrency / Performance Smoke Benchmark
 # ============================================================================
 class TestPersistenceBenchmark:
-    """Concurrency and performance benchmark validating sub-millisecond enqueue and integrity."""
+    """Measured local throughput and durable append integrity; no hardware SLA."""
 
     @async_test
     async def test_concurrency_smoke_benchmark_500_events(self, tmp_path: Path) -> None:
-        """Enqueue 500 events concurrently via asyncio.gather, verify <1ms enqueue and clean persistence."""
+        """Append 500 events concurrently and verify persisted identity/integrity."""
         db_path = tmp_path / "benchmark_500.db"
         total_events_count = 500
 
@@ -1015,15 +1017,12 @@ class TestPersistenceBenchmark:
             # Verify all enqueued successfully
             assert all(enqueue_results)
 
-            # Sub-millisecond latency per call verification
+            # Measure durable append throughput without a hardware-dependent SLA.
             mean_latency_ms = (t_elapsed / total_events_count) * 1000.0
             print(
-                f"\n[Benchmark] Enqueued {total_events_count} events in {t_elapsed*1000:.2f}ms "
+                f"\n[Benchmark] Committed {total_events_count} events in {t_elapsed*1000:.2f}ms "
                 f"({mean_latency_ms:.4f}ms/call)"
             )
-            assert (
-                mean_latency_ms < 1.0
-            ), f"Expected sub-millisecond enqueue latency, got {mean_latency_ms:.3f}ms"
 
             # Wait for background worker to flush all 500 events
             await engine.worker.flush(timeout=10.0)
