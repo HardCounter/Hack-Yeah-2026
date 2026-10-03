@@ -2,8 +2,27 @@
 
 **Status (2026-10-03):** implemented in `adapters/opencode/index.js` and tested with synthetic
 hook events (`adapters/opencode/forward.test.mjs`, run with `scripts/test_opencode_adapter.sh`).
-It is **not yet validated against a live OpenCode session**, and the Python service has **no
-`/v1/prompts/evaluate` endpoint yet**.
+**Real OpenCode v2.0.22 loads the adapter and its startup handshake reaches Python**
+(`scripts/check_opencode_pipeline.sh`). That the hooks fire during a real conversation is not yet
+verified. The enforcing gateway (`intercept/server.py`) has **no `/v1/prompts/evaluate`
+endpoint yet**. Only the observe-only receiver (`intercept/receiver.py`) accepts prompts.
+
+## Changes to the adapter (2026-10-03)
+
+| Change | Why |
+|---|---|
+| **Prompt forwarding added**: `session.hook` for `prompt`, `context`, `compaction`, `generate`, `title`; opt-in through `options.prompts` | The adapter forwarded only tool use. Prompts and model requests are agent actions too |
+| **Tool hooks unchanged** (`execute.before` / `execute.after`, always registered); tool bodies keep their exact key sets | `intercept/policy.py` validates exact keys; adding `agent` / `messageID` would break it |
+| **Endpoint check relaxed** from exactly `http://127.0.0.1:8080` to any `http://<127.0.0.1\|localhost\|[::1]>:<port>` | Tests and the receiver need other ports. Non-loopback origins are still refused |
+| **No runtime `import { Plugin } from "@opencode/plugin"`**; the module exports the `{id, setup}` object directly | In 2.0.22 `Plugin.define` returns its argument unchanged, and OpenCode does **not** install a local plugin's dependencies, so the import made loading fail without `npm install` |
+| **`setup` split** into a thin `setup` and an `install(ctx, endpoint, token)` function that registers the hooks and returns their names | So setup can report what it registered, or why it failed |
+| **Startup handshake** `POST /v1/adapter/hello`: `{adapter, status: "ready", hooks[], prompts, directory}` with the token, or `{status: "error", reason}` without it. Also logged to stderr as `[hardcounter.intercept] …`; disable with `options.announce: false` | A plugin whose setup throws (for example, missing token) previously failed silently, so the Python side saw nothing |
+| **Reasoning parts are never forwarded**, and tool results are labelled `trust: "untrusted"` | AGENTS.md: no private chain-of-thought; retrieved content is data, not authority |
+
+Tests: `adapters/opencode/forward.test.mjs` (6 tests) covers the request shapes, hook
+registration, the auxiliary request kinds, fail-closed behaviour, and the handshake on success and
+on failure. The original `adapters/opencode/test.mjs` (9 tests) is unchanged except that its fetch
+stub answers the handshake, so call counts stay as before.
 
 ## Source of the hook shapes
 
@@ -29,7 +48,8 @@ The hook payloads below come from that package's published type definitions
 // opencode.json (V2 config key is "plugins"; entries are a spec string or {package, options})
 "plugins": [{ "package": "./adapters/opencode", "options": {
   "endpoint": "http://127.0.0.1:8080",   // any http loopback origin: 127.0.0.1, localhost or [::1]
-  "prompts": "observe"                   // off (default) | observe | enforce
+  "prompts": "observe",                  // off (default) | observe | enforce
+  "announce": true                       // default true: POST /v1/adapter/hello on startup
 }}]
 ```
 
@@ -104,7 +124,37 @@ scripts/run_intercept_receiver.sh       # terminal 1: observe-only Python receiv
 scripts/run_opencode_intercepted.sh     # terminal 2: OpenCode wired to that receiver
 ```
 
-How OpenCode 2.0.22 loads the adapter. This was read from the shipped binary and confirmed by the
+### Observe-only receiver (`intercept/receiver.py`)
+
+This is a diagnostic server, separate from the enforcing gateway. It **logs and ALLOWS every request
+and enforces nothing**:
+- **Routes it accepts:** `/v1/actions/evaluate`, `/v1/actions/outcome`, and `/v1/prompts/evaluate`
+  are logged with time, path, session, a one-line summary, and the full JSON (`--compact` puts each
+  on one line).
+- **Shape checks:** each tool request is checked against what the gateway accepts
+  (`Policy.validate_action`, the exact outcome keys). A mismatch gets HTTP 400 and a yellow
+  `shape: INVALID …` line. Bodies over the gateway's 64 KiB limit are accepted with a warning.
+- **Unsupported routes:** `/v1/runs/bind` and `/v1/tools/*` (gateway-tools mode) return 501.
+- **Startup handshake:** `/v1/adapter/hello` prints `ADAPTER CONNECTED …` or
+  `ADAPTER FAILED TO START … reason=…`.
+- **Bad tokens:** a request with a wrong or missing token gets 401 and its body is not printed.
+  The one exception is a failed handshake, which shows only its status and reason, capped at 300
+  characters.
+- **Data warning:** it prints raw prompt text and tool arguments, so use synthetic data only.
+
+Tests: `intercept/test_receiver.py`.
+
+`scripts/run_intercept_receiver.sh` creates a fresh token and writes it, with the port and the
+demo directory, to `var/intercept.env` (mode 600, git-ignored). It also writes
+`var/opencode-demo/opencode.json`, which loads the adapter. `scripts/run_opencode_intercepted.sh`
+reads that file, checks that the receiver is reachable and the config loads the adapter, and runs
+`opencode --standalone` there. `scripts/check_opencode_pipeline.sh` does the same automatically in
+a temporary directory: it passes when the handshake arrives and fails with the reason (or the
+OpenCode log tail) otherwise.
+
+### How OpenCode 2.0.22 loads the adapter
+
+This was read from the shipped binary and confirmed by the
 check script on 2026-10-03.
 - **A `plugins` entry** in the `opencode.json` of the directory OpenCode starts in, with an absolute or
   `./` path to `adapters/opencode`. OpenCode resolves it to `index.js` and logs
