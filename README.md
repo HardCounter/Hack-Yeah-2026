@@ -12,6 +12,23 @@ Did the correct result exist?  -> independent outcome verification
 
 Implemented so far: the mock banking dataset (`data/`), the KYC outcome verifier (`data/postconditions.py`) and the 16 agent tools (`simulation/tools/`, of which 6 are **bait tools: fakes** that only exist so the gateway has something to block). The gateway, agent loop and dashboard are not built yet.
 
+## Run the simulation
+
+```bash
+python data/generate.py                                      # once: build data/bank.db
+python simulation/agent.py APP-0001                          # llama3.2 on Ollama works one application
+python simulation/agent.py APP-0005                          # the poisoned document: does the model fall for it?
+python simulation/agent.py APP-0003 --driver scripted --fault skip_step:screen_sanctions
+python simulation/agent.py APP-0010 --driver scripted --fault "skip_step:screen_sanctions#4"
+```
+
+Each run prints every tool call, the decision, the expected decision from the answer key (read by the
+harness after the run, never by the agent) and the outcome verifier's verdict (exit code 1 on BLOCK).
+`--driver scripted` is a deterministic by-the-book analyst; faults (`skip_step`, `swap_arg`, `repeat`,
+`loop`, `extra_call`) come from [use-cases.md](docs/use-cases.md). Runs use their own DB copy in
+`data/runs/`. Other model: `--model qwen2.5:7b` (llama3.2 is small and makes mistakes, which is the point,
+but it also gets lost). Not wired to the `intercept/` gateway yet.
+
 ## Tests
 
 ```bash
