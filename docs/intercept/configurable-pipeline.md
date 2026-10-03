@@ -8,7 +8,7 @@ to `adapters/opencode/`. Read `intercept/AGENTS.md` before contributing.
 With `uv` available and a securely supplied `INTERCEPT_TOKEN`:
 
 ```sh
-uv run --locked python -m intercept.server --policy config/intercept.demo.yaml --audit /tmp/opencode/intercept-demo.jsonl --trace
+uv run --locked python -m intercept.service.server --policy config/intercept.demo.yaml --audit /tmp/opencode/intercept-demo.jsonl --trace
 uv run --locked python -m unittest intercept.test_policy intercept.test_server intercept.test_auditors -v
 node --experimental-vm-modules --test adapters/opencode/test.mjs
 ```
@@ -27,7 +27,7 @@ is returned to the adapter for execution, not logged.
 ## Configuration and actual controls
 
 `config/intercept.demo.yaml` selects an ordered pipeline. Runtime validation is in
-`intercept.config` and `intercept.auditors`; `config/intercept.schema.json` is the
+`intercept.policy.config` and `intercept.policy.auditors`; `config/intercept.schema.json` is the
 editor/documentation schema. Duplicate YAML keys, unknown fields/types, duplicate
 auditor ids, malformed configurations, and invalid webhook responses fail closed.
 The legacy `{runs: ...}` JSON policy still works with an empty optional pipeline.

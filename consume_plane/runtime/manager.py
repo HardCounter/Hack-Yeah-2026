@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Callable, Sequence
 
 from .. import __version__
-from ..model.actions import AgentAction
+from contracts.action import AgentAction
 from ..model.outputs import Finding, FindingDraft, finding_id
 from ..ports.event_source import Delivery, EventSource, source_is_idle
 from ..ports.sinks import FindingSink

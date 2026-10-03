@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from ..model.actions import AgentAction
+from contracts.action import AgentAction
 from ..ports.plugin import SetupContext, Subscription
 from .config import ConsumePlaneConfig
 from .loader import PluginLoadError, discover, load_handler, validate_plugin_class

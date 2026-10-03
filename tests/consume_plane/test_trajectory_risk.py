@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from conftest import action
-from consume_plane.model.contract import Budget, TaskContract
+from contracts.task_contract import Budget, TaskContract
 from consume_plane.plugins.trajectory_risk import RiskModel, Signal, TrajectoryRisk
 from consume_plane.runtime.config import FeedbackConfig
 

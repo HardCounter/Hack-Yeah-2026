@@ -17,9 +17,9 @@ Layer 2 yet, and no built-in detection plugins exist.
 
 | Area | Path | Tested by |
 |---|---|---|
-| `AgentAction` model and payloads | `consume_plane/model/actions.py` | `test_decode.py` |
-| Wire decoder, envelope v2.1 ([spec](consumer-plane-event-envelope.md)) | `consume_plane/model/decode.py` | `test_decode.py` |
-| Task Contract, findings, proposals, signals | `consume_plane/model/contract.py`, `outputs.py` | `test_feedback.py`, `test_manager.py` |
+| `AgentAction` model and payloads | `contracts/action.py` | `test_decode.py` |
+| Wire decoder, envelope v2.1 ([spec](consumer-plane-event-envelope.md)) | `contracts/wire.py` | `test_decode.py` |
+| Task Contract, findings, proposals, signals | `contracts/task_contract.py`, `consume_plane/model/outputs.py` | `test_feedback.py`, `test_manager.py` |
 | Ports (protocols) | `consume_plane/ports/` | indirectly |
 | Plugin SDK surface | `consume_plane/sdk.py` | `plugins/velocity_guard.py` |
 | Memory and JSONL adapters | `consume_plane/adapters/` | all tests |

@@ -4,7 +4,7 @@ import io
 import json
 import unittest
 
-from .receiver import RECEIVER_VERSION, Receiver, check_shape
+from intercept.service.receiver import RECEIVER_VERSION, Receiver, check_shape
 
 TOKEN = "x" * 32
 

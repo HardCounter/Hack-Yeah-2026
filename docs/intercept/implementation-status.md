@@ -24,9 +24,9 @@
 > - **New options:** `options.prompts` (`off` default, `observe`, `enforce`) adds prompt and
 >   model-request forwarding to `/v1/prompts/evaluate`. `options.announce` (default `true`) controls
 >   the handshake. Tool request bodies are unchanged.
-> - **New `intercept/receiver.py`:** an observe-only diagnostic server for manual OpenCode runs.
+> - **New `intercept/service/receiver.py`:** an observe-only diagnostic server for manual OpenCode runs.
 >   It logs every request and ALLOWs it, and checks the request shapes against this gateway.
->   `intercept/server.py` itself was not changed and still has no prompt endpoint.
+>   `intercept/service/server.py` itself was not changed and still has no prompt endpoint.
 > - **Current test counts:** `intercept/` 35 Python tests; `adapters/opencode` 9 (`test.mjs`) + 6
 >   (`forward.test.mjs`) Node tests (`scripts/test_opencode_adapter.sh`).
 
@@ -35,11 +35,11 @@ Work now takes place on `main`, per the team's latest instruction; the older pla
 
 ## Implemented source (not yet runtime-demonstrated)
 
-- `intercept.policy`: validated trusted JSON run configuration, fixed policy hash,
+- `intercept.policy.runs`: validated trusted JSON run configuration, fixed policy hash,
   exact tool allowlist, argument equality constraints, atomic tool-call admission
   budget, and replay rejection. A run is pre-bound to an OpenCode session by the
   operator's config. Unknown sessions are denied; the model cannot register runs.
-- `intercept.server`: authenticated loopback-only asyncio HTTP endpoint with body,
+- `intercept.service.server`: authenticated loopback-only asyncio HTTP endpoint with body,
   header, and timeout limits. Admissions enqueue metadata-only JSONL evidence.
   Queue overflow or known disk-writer failure returns 503 (adapter denies).
 - `adapters/opencode`: **JavaScript**, opt-in V2 plugin. Await the Python decision
@@ -63,7 +63,7 @@ ASCII characters) to both the service and the OpenCode process; do not put it in
 policy or plugin options, logs, or repository files.
 
 ```sh
-uv run --locked python -m intercept.server --policy intercept/example-policy.json --audit /tmp/opencode/intercept-audit.jsonl
+uv run --locked python -m intercept.service.server --policy intercept/example-policy.json --audit /tmp/opencode/intercept-audit.jsonl
 uv run --locked python -m unittest intercept.test_policy intercept.test_server
 node --experimental-vm-modules --test adapters/opencode/test.mjs
 ```

@@ -4,11 +4,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from .policy import Policy
-from .server import Evidence, Gateway
-from .test_policy import action, configuration
-from .test_auditors import scanner
-from .auditors import Pipeline
+from intercept.policy.runs import Policy
+from intercept.service.server import Evidence, Gateway
+from intercept.test_policy import action, configuration
+from intercept.test_auditors import scanner
+from intercept.policy.auditors import Pipeline
 
 
 class ServerTests(unittest.IsolatedAsyncioTestCase):

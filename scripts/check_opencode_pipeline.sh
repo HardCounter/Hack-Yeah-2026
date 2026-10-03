@@ -35,7 +35,7 @@ cat > "$WORK/project/opencode.json" <<EOF
 EOF
 
 echo "== starting receiver on 127.0.0.1:$PORT"
-uv run python -m intercept.receiver --port "$PORT" --no-color > "$WORK/receiver.log" 2>&1 &
+uv run python -m intercept.service.receiver --port "$PORT" --no-color > "$WORK/receiver.log" 2>&1 &
 RX_PID=$!
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break; sleep 0.1; done
 

@@ -8,9 +8,9 @@ import json
 import pytest
 
 from contracts import Budget, TaskContract
-from consume_plane.model.decode import decode_event
-from intercept.auditors import Pipeline
-from intercept.prompts import PromptGateway
+from contracts.wire import decode_event
+from intercept.policy.auditors import Pipeline
+from intercept.governed.prompts import PromptGateway
 from persistence.governed import GovernedPersistence
 from persistence.store import EventStore
 

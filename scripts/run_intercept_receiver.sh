@@ -70,4 +70,4 @@ EOF
 
 args=(--port "$PORT")
 [[ "${COMPACT:-0}" == "1" ]] && args+=(--compact)
-exec uv run python -m intercept.receiver "${args[@]}"
+exec uv run python -m intercept.service.receiver "${args[@]}"

@@ -1,8 +1,8 @@
 import pytest
 
 from conftest import wire_event
-from consume_plane.model.actions import PromptPayload, SessionPayload, ToolUsePayload, UnknownPayload
-from consume_plane.model.decode import DecodeError, decode_event
+from contracts.action import PromptPayload, SessionPayload, ToolUsePayload, UnknownPayload
+from contracts.wire import DecodeError, decode_event
 
 
 def test_tool_call_decodes_to_tool_use():

@@ -1,7 +1,8 @@
 """Canonical synchronous decision vocabulary."""
 from dataclasses import asdict, dataclass
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
+Decision = Literal["ALLOW", "BLOCK", "REDACT", "REQUIRE_APPROVAL", "ALERT"]
 DECISIONS = frozenset({"ALLOW", "BLOCK", "REDACT", "REQUIRE_APPROVAL", "ALERT"})
 
 

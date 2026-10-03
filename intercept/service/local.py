@@ -1,6 +1,6 @@
 """Local OpenCode HTTP adapter for the integrated synthetic KYC runtime.
 
-Run with ``uv run python -m intercept.local --help``. The trusted operator pins
+Run with ``uv run python -m intercept.service.local --help``. The trusted operator pins
 one application and contract; model requests cannot select a bank or authority.
 """
 from __future__ import annotations
@@ -14,8 +14,8 @@ from pathlib import Path
 import sqlite3
 
 from contracts import ActionProposal
-from intercept.policy import IDENTIFIER, Policy
-from intercept.server import Gateway
+from intercept.policy.runs import IDENTIFIER, Policy
+from intercept.service.server import Gateway
 from simulation.governed import GovernedRuntime, POLICY_PATH
 
 

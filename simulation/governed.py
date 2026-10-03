@@ -11,8 +11,8 @@ from pathlib import Path
 import uuid
 
 from contracts import ActionProposal, Budget, TaskContract
-from intercept.auditors import Pipeline
-from intercept.policy import Policy
+from intercept.policy.auditors import Pipeline
+from intercept.policy.runs import Policy
 from persistence.store import EventStore
 from persistence.governed import GovernedPersistence
 from consume_plane.runtime.config import ConsumePlaneConfig, FeedbackConfig, PluginEntry, SourceConfig
@@ -60,8 +60,8 @@ class GovernedRuntime:
         return runtime
 
     async def _start(self):
-        from intercept.governed import GovernedGateway, InProcessFeedbackChannel
-        from intercept.prompts import PromptGateway
+        from intercept.governed.gateway import GovernedGateway, InProcessFeedbackChannel
+        from intercept.governed.prompts import PromptGateway
         from consume_plane.adapters.persistence import PersistenceEventSource, PersistenceTrajectoryReader, PersistenceFindingSink
         from consume_plane.plugins.outcome_verifier import OutcomeVerifier
         from consume_plane.plugins.trajectory_risk import TrajectoryRisk

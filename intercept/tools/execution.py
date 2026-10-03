@@ -16,8 +16,8 @@ class ToolExecutor:
 
     async def execute(self, action):
         process = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "intercept.tool_worker",
-            cwd=str(Path(__file__).resolve().parents[1]), env={},
+            sys.executable, "-m", "intercept.tools.worker",
+            cwd=str(Path(__file__).resolve().parents[2]), env={},
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -39,7 +39,7 @@ class ToolExecutor:
 
     async def catalog(self, tools):
         process = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "intercept.tool_worker", cwd=str(Path(__file__).resolve().parents[1]),
+            sys.executable, "-m", "intercept.tools.worker", cwd=str(Path(__file__).resolve().parents[2]),
             env={}, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         try:
             body = json.dumps({"operation": "catalog", "tools": tools, "agent": self.agent}).encode()

@@ -3,8 +3,8 @@ import hashlib
 import json
 from pathlib import Path
 import yaml
-from .auditors import Pipeline
-from .policy import Policy
+from intercept.policy.auditors import Pipeline
+from intercept.policy.runs import Policy
 
 
 class UniqueLoader(yaml.SafeLoader):

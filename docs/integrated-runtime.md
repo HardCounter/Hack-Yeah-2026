@@ -18,6 +18,9 @@ agent proposal -> contracts.ActionProposal -> intercept.GovernedGateway
 persisted session ended -> read-only bank snapshot -> VerificationResult
 ```
 
+One action model and one translation path connect the planes; see
+[agent-action-model.md](agent-action-model.md) for the single sources and the code layout.
+
 ## Run and test
 
 ```sh
@@ -94,7 +97,7 @@ per-check details. A failure discovered after execution is not called a block.
 
 ## OpenCode controlled tool mode
 
-`intercept.local` reuses the HTTP transport and the same governed runtime. The
+`intercept.service.local` reuses the HTTP transport and the same governed runtime. The
 operator selects the synthetic source bank, application and contract. An admin
 binding creates one isolated run; model input cannot choose the bank path.
 
@@ -103,12 +106,12 @@ scripts/setup_opencode_pipeline.sh
 scripts/run_pipeline.sh APP-0001 --model provider/model
 ```
 
-`scripts/run_pipeline.sh` is the operator entry. It generates a fresh synthetic bank unless `--bank-db` is set, starts `intercept.local` on a loopback port, binds one trusted session, and runs the pinned OpenCode CLI with gateway-backed tools. Artifacts land in ignored `var/pipeline-runs/`, including `verification.json`. Exit status is 0 for `VERIFIED_SUCCESS`, 2 when the agent finishes with `VERIFICATION_INCOMPLETE`, and 1 when the run fails. Provider credentials stay in the environment; `--provider-config` accepts a providers-only JSON file that references them with `{env:NAME}` and must not contain inline secrets.
+`scripts/run_pipeline.sh` is the operator entry. It generates a fresh synthetic bank unless `--bank-db` is set, starts `intercept.service.local` on a loopback port, binds one trusted session, and runs the pinned OpenCode CLI with gateway-backed tools. Artifacts land in ignored `var/pipeline-runs/`, including `verification.json`. Exit status is 0 for `VERIFIED_SUCCESS`, 2 when the agent finishes with `VERIFICATION_INCOMPLETE`, and 1 when the run fails. Provider credentials stay in the environment; `--provider-config` accepts a providers-only JSON file that references them with `{env:NAME}` and must not contain inline secrets.
 
 The same gateway can be started directly:
 
 ```sh
-uv run python -m intercept.local --bank-db data/bank.db --application APP-0001 \
+uv run python -m intercept.service.local --bank-db data/bank.db --application APP-0001 \
   --contract-id contract_APP0001_v1 --runs-dir data/runs
 ```
 
@@ -122,7 +125,7 @@ stable `action_id` and injects trusted identity. `/v1/session/finish` persists t
 lifecycle boundary and returns independent verification. The new HTTP integration
 test exercises authentication, execution, denial, persistence, consumption and finish.
 
-The merged `intercept.receiver` remains an observe-only diagnostic server. It is
+The merged `intercept.service.receiver` remains an observe-only diagnostic server. It is
 not the integrated enforcement service. OpenCode prompt-hook forwarding and live
 hook behavior are separate from the governed simulation's model execution.
 

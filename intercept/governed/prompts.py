@@ -14,20 +14,12 @@ import time
 import uuid
 from typing import Any, Awaitable, Callable, Mapping, Sequence
 
-from contracts import GatewayDecision, TaskContract
-from persistence import (
-    ActionDetails, ActionEventEnvelope, ActionStatus, ActionType, AuditContext,
-    AuditorDecision, AuditorVerdict, InterceptionMetadata,
-)
+from contracts import DECISIONS, GatewayDecision, TaskContract
+from persistence import ActionEventEnvelope, ActionStatus, ActionType
+from persistence.events import build_action_event
+from persistence.vocabulary import is_intent, storage_status
 
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
-_VERDICT = {
-    "ALLOW": AuditorVerdict.ALLOWED,
-    "BLOCK": AuditorVerdict.BLOCKED,
-    "REDACT": AuditorVerdict.REDACTED,
-    "REQUIRE_APPROVAL": AuditorVerdict.ESCALATED,
-    "ALERT": AuditorVerdict.WARNED,
-}
 
 
 class PromptGateway:
@@ -65,7 +57,7 @@ class PromptGateway:
         # but tool allowlist auditors govern tool dispatch, not model selection.
         specs = getattr(pipeline, "specs", None)
         if specs is not None and hasattr(pipeline, "evaluate"):
-            from intercept.auditors import Pipeline
+            from intercept.policy.auditors import Pipeline
             self.pipeline = Pipeline([s for s in specs if s.get("type") != "tool_allowlist"])
         else:
             self.pipeline = pipeline
@@ -84,11 +76,7 @@ class PromptGateway:
 
     @staticmethod
     def _status_for_decision(decision: str) -> ActionStatus:
-        if decision == "REQUIRE_APPROVAL":
-            return ActionStatus.ESCALATED
-        if decision in ("BLOCK", "REDACT"):
-            return ActionStatus.BLOCKED if decision == "BLOCK" else ActionStatus.REDACTED
-        return ActionStatus.EXECUTED
+        return storage_status(decision)
 
     async def _load_usage(self) -> int:
         if self._used_tokens is not None:
@@ -102,7 +90,7 @@ class PromptGateway:
         for event in events:
             if event.action_type != ActionType.LLM_INVOCATION:
                 continue
-            if event.status == ActionStatus.PENDING:
+            if is_intent(event):
                 reserved = event.context.reserved_usage.get("reserved_tokens", 0)
                 if type(reserved) is int and reserved >= 0:
                     used += reserved
@@ -125,7 +113,7 @@ class PromptGateway:
             "decision": str(row.get("decision", "ALLOW")),
             "rule_id": str(row.get("code")) if row.get("code") else None,
             "latency_ms": float(row.get("latency_ms", 0.0)),
-        } for row in rows if row.get("decision") in _VERDICT)
+        } for row in rows if row.get("decision") in DECISIONS)
 
     @staticmethod
     def _final_decision(verdict: str, changed: bool, rows: Sequence[Mapping[str, Any]]) -> str:
@@ -197,35 +185,11 @@ class PromptGateway:
                input_bound: int = 0, output_bound: int = 0,
                requested: Sequence[Mapping[str, Any]] = (), stop_reason: str | None = None,
                intent: bool = False) -> ActionEventEnvelope:
-        verdict = _VERDICT.get(decision, AuditorVerdict.ALLOWED)
-        decisions = []
-        for row in rows:
-            mapped = _VERDICT.get(str(row.get("decision")))
-            if mapped is not None:
-                decisions.append(AuditorDecision(
-                    auditor_name=str(row.get("auditor", "unknown")), verdict=mapped,
-                    rule=str(row.get("code")) if row.get("code") else None,
-                    latency_ms=float(row.get("latency_ms", 0.0)),
-                ))
-        context = AuditContext(
-            contract_id=self.contract.contract_id,
-            run_id=self.contract.run_id,
-            action_id=action_id,
-            principal_id=self.contract.principal_id,
-            policy_hash=self.contract.policy_hash,
-            feed_version=self.contract.feed_version,
-            reason_code=reason,
-            reserved_usage={"reserved_tokens": input_bound + output_bound},
-            # These are conservative charge estimates unless trusted usage is
-            # returned separately by the backend callback.
-            actual_usage={"input_tokens": input_bound, "output_tokens": output_bound,
-                          "latency_ms": max(0.0, backend_latency_ms)},
-        )
-        details = ActionDetails(
-            name=model,
-            parameters={},
-            side_effect="read",
-            transport="inproc",
+        """One model-request record. Prompt and completion bodies are never included."""
+        return build_action_event(
+            contract=self.contract, action_type="llm_call", action_id=action_id, name=model,
+            status=status, decision=decision, intent=intent, auditor_rows=rows,
+            latency_ms=latency_ms, reason_code=reason, event_id=f"evt_{uuid.uuid4().hex}",
             wire_details={
                 "model": model,
                 "provider": "ollama",
@@ -234,24 +198,10 @@ class PromptGateway:
                 "tool_calls_requested": list(requested),
                 "stop_reason": stop_reason,
             },
-        )
-        metadata = InterceptionMetadata(
-            verdict=verdict,
-            auditor_decisions=decisions,
-            policy_version=self.contract.policy_version,
-            total_latency_ms=max(0.0, latency_ms),
-        )
-        return ActionEventEnvelope(
-            event_id=f"evt_{uuid.uuid4().hex}",
-            trace_id=self.contract.run_id or self.contract.session_id,
-            session_id=self.contract.session_id,
-            case_id=self.contract.case_id,
-            agent_id=self.contract.agent_id,
-            action_type=ActionType.LLM_INVOCATION,
-            status=ActionStatus.PENDING if intent else status,
-            action_details=details,
-            interception_metadata=metadata,
-            context=context,
+            reserved_usage={"reserved_tokens": input_bound + output_bound},
+            # Conservative charge estimates unless trusted usage is returned by the backend callback.
+            actual_usage={"input_tokens": input_bound, "output_tokens": output_bound,
+                          "latency_ms": max(0.0, backend_latency_ms)},
         )
 
     async def execute(

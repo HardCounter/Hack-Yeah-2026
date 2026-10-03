@@ -10,7 +10,9 @@ from typing import Any, Iterable, Mapping
 
 from contracts import PolicyAdjustmentSignal, TaskContract
 
-from persistence.adapters.consumer_v21 import consumer_kind, to_consumer_v21
+from contracts.action import kind_for_action_type
+from persistence.adapters.consumer_v21 import to_consumer_v21
+from persistence.vocabulary import is_intent
 from persistence.models import (
     ActionEventEnvelope, AuditContext, RunBinding,
 )
@@ -210,13 +212,13 @@ class GovernedPersistence:
 
     async def append(self, candidate: ActionEventEnvelope) -> ActionEventEnvelope:
         """Commit final evidence and consumer jobs atomically."""
-        if candidate.status.value == "PENDING":
+        if is_intent(candidate):
             raise ValueError("Intent-only PENDING evidence must use intent()")
         return await self._append_bound(candidate, deliver=True)
 
     async def intent(self, candidate: ActionEventEnvelope) -> ActionEventEnvelope:
         """Durably commit a not-yet-executed intent without consumer delivery."""
-        if candidate.status.value != "PENDING":
+        if not is_intent(candidate):
             raise ValueError("Intent evidence must have PENDING status")
         return await self._append_bound(candidate, deliver=False)
 
@@ -228,17 +230,17 @@ class GovernedPersistence:
 
     async def wire_session(self, session_id: str) -> list[dict[str, Any]]:
         events = await self.store.get_events_by_session_seq(session_id)
-        return [to_consumer_v21(event) for event in events if event.status.value != "PENDING"]
+        return [to_consumer_v21(event) for event in events if not is_intent(event)]
 
     async def events(self, session_id: str, up_to_seq: int | None = None,
                      kinds: Iterable[str] | None = None, limit: int | None = None) -> list[dict[str, Any]]:
         rows = await self.store.get_events_by_session_seq(session_id)
         wire = [to_consumer_v21(row) for row in rows if row.seq is not None
                 and (up_to_seq is None or row.seq <= up_to_seq)
-                and row.status.value != "PENDING"]
+                and not is_intent(row)]
         if kinds is not None:
             allowed = set(kinds)
-            wire = [row for row in wire if consumer_kind(row["action_type"]) in allowed]
+            wire = [row for row in wire if kind_for_action_type(row["action_type"]) in allowed]
         if limit is not None:
             if limit < 0:
                 raise ValueError("limit must be non-negative")

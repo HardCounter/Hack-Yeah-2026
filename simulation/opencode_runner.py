@@ -123,7 +123,7 @@ def run_pipeline(args):
         child_env = _child_env(work / 'config', token, admin)
         gateway_log = _log(output, 'gateway.log')
         gateway = subprocess.Popen([
-            sys.executable, '-m', 'intercept.local', '--bank-db', str(bank),
+            sys.executable, '-m', 'intercept.service.local', '--bank-db', str(bank),
             '--application', args.application, '--contract-id', contract_id,
             '--runs-dir', str(bank_runs), '--port', endpoint.rsplit(':', 1)[1],
             *(['--catalog-all'] if args.free else []),

@@ -5,6 +5,9 @@ from datetime import datetime
 from typing import Any, Literal, Mapping
 
 AdjustmentAction = Literal["ALERT", "REQUIRE_APPROVAL_FOR", "BLOCK_TOOLS", "STRICT_MODE", "HALT_SESSION"]
+# Tighten-only lattice, weakest first (docs/consumer-plane.md section 9.3).
+ADJUSTMENT_ORDER: tuple[str, ...] = ("ALERT", "REQUIRE_APPROVAL_FOR", "BLOCK_TOOLS", "STRICT_MODE", "HALT_SESSION")
+SEMANTIC_ALLOWED_ADJUSTMENTS = frozenset({"ALERT", "REQUIRE_APPROVAL_FOR"})
 
 @dataclass(frozen=True, kw_only=True)
 class PolicyAdjustmentSignal:

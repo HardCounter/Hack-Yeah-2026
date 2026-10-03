@@ -7,7 +7,8 @@ explicitly best effort. Critical dispatch must await the file-backed store.
 
 from persistence.business import EffectReceipt, record_effect, replicate_effects
 from persistence.governed import GovernedPersistence
-from persistence.adapters.consumer_v21 import to_consumer_v21
+from persistence.adapters.consumer_v21 import to_agent_action, to_consumer_v21
+from persistence.events import build_action_event
 from persistence.models import (
     ActionDetails,
     AuditContext,
@@ -46,6 +47,8 @@ from persistence.worker import EngineState, PersistenceEngine, PersistenceWorker
 from persistence.writer import BoundAuditWriter
 
 __all__ = [
+    "build_action_event",
+    "to_agent_action",
     "ActionDetails",
     "AuditContext",
     "AuditBackpressureError",

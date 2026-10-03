@@ -5,10 +5,10 @@ import hmac
 import json
 import os
 from pathlib import Path
-from .policy import Policy
-from .auditors import Pipeline
-from .config import load
-from .execution import ToolExecutor
+from intercept.policy.runs import Policy
+from intercept.policy.auditors import Pipeline
+from intercept.policy.config import load
+from intercept.tools.execution import ToolExecutor
 
 
 class Evidence:
