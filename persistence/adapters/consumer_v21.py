@@ -142,7 +142,7 @@ def to_consumer_v21(event: ActionEventEnvelope) -> dict[str, Any]:
         "metrics": {
             "input_tokens": event.context.actual_usage.get("input_tokens", 0),
             "output_tokens": event.context.actual_usage.get("output_tokens", 0),
-            "latency_ms": meta.total_latency_ms,
+            "latency_ms": event.context.actual_usage.get("latency_ms", meta.total_latency_ms),
             "cost_usd": event.context.actual_usage.get("actual_cost", 0),
         },
         "fault_injected": meta.fault_injected,

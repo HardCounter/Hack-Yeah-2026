@@ -130,7 +130,7 @@ async function install(ctx, endpoint, token) {
               })
               if (!response.ok) throw new Error("Gateway execution unavailable; do not retry an ambiguous write")
               const result = await response.json()
-              if (result.decision !== "ALLOW" || result.session_id !== context.sessionID ||
+              if (!["ALLOW", "REDACT", "ALERT"].includes(result.decision) || result.session_id !== context.sessionID ||
                   result.call_id !== context.id || result.tool !== definition.name || !result.tool_result ||
                   typeof result.tool_result !== "object" || Array.isArray(result.tool_result)) {
                 throw new Error("Gateway execution denied or invalid")

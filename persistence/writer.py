@@ -132,11 +132,17 @@ class BoundAuditWriter:
                 effect_receipt_id=effect_receipt_id,
             )
 
+            contract_row = conn.execute(
+                "SELECT contract_json FROM task_contracts WHERE session_id=? AND run_id=?",
+                (binding.session_id, run_id),
+            ).fetchone()
+            case_id = json.loads(contract_row[0]).get("case_id") if contract_row else None
             envelope = ActionEventEnvelope(
                 event_id=event_id,
                 trace_id=run_id,
                 session_id=binding.session_id,
                 agent_id=binding.agent_id,
+                case_id=case_id,
                 action_type=ActionType.TOOL_CALL,
                 status=status,
                 action_details=details,
@@ -198,8 +204,10 @@ class BoundAuditWriter:
         """Import a committed banking notice recording an executed side effect."""
         details = ActionDetails(
             name="create_client",
-            parameters={"application_id": application_id},
-            result={"client_id": client_id, "receipt_id": receipt_id},
+            parameters={"app_id": application_id},
+            result=None,
+            side_effect="irreversible",
+            transport="inproc",
         )
         metadata = InterceptionMetadata(verdict=AuditorVerdict.ALLOWED)
         async with self.store._lock:

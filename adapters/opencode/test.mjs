@@ -136,6 +136,22 @@ test("registered tools dispatch once through Python without duplicate admission"
   assert.deepEqual(requests.map(r => r.url.split("/").at(-1)), ["catalog", "execute"])
 })
 
+test("registered tools accept executed redaction and alert outcomes", async () => {
+  for (const decision of ["REDACT", "ALERT"]) {
+    let executions = 0
+    const hooks = await harness(async (url) => {
+      if (url.endsWith("catalog")) return response({ tools: [{ name: "write", description: "write", input: { type: "object" } }] })
+      executions++
+      return response({ ...allow, decision, tool_result: { status: "done" } })
+    }, { endpoint: "http://127.0.0.1:8080", registerTools: true, contractId: "contract-1" })
+    const result = await hooks.registered.get("write").execute(event.input, {
+      sessionID: event.sessionID, id: event.id, signal: new AbortController().signal,
+    })
+    assert.equal(executions, 1)
+    assert.equal(result.content, '{"status":"done"}')
+  }
+})
+
 test("operator command binds actual session before forwarding prompt", async () => {
   const requests = []
   const hooks = await harness(async (url, options) => {
