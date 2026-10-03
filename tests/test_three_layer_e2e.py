@@ -60,7 +60,8 @@ def test_happy_path_persisted_ordered_verified_once(sessions):
     assert decoded[0].payload.phase == "started"
     assert decoded[-1].payload.phase == "ended"
     assert len([e for e in decoded if e.kind == "tool_use"]) == s.n
-    assert all(d.decision == "ALLOW" for d in s.runtime.decisions)
+    assert all(d.decision in {"ALLOW", "REDACT"} for d in s.runtime.decisions)
+    assert any(d.decision == "ALLOW" for d in s.runtime.decisions)
     assert not s.runtime.manager.feedback.log
     assert s.runtime.runner.run(s.runtime.store.pending_deliveries()) == 0
     persisted = s.runtime.runner.run(s.runtime.reader.session(s.id))

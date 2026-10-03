@@ -12,6 +12,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from contracts import ActionProposal, GatewayDecision, PolicyAdjustmentSignal, TaskContract
 from persistence import (
@@ -38,6 +39,13 @@ APP_ID_TOOLS = frozenset({
     "request_more_docs", "escalate_edd", "reject_application",
 })
 WRITES = frozenset({"create_client", "request_more_docs", "escalate_edd", "reject_application"})
+LIVE_DENIALS = frozenset({
+    "APPLICATION_NOT_READ", "DOCUMENTS_NOT_READ", "DOCUMENTS_NOT_EXTRACTED", "REGISTRY_NOT_READ",
+    "SCREENING_NOT_COMPLETE", "SCREENING_HIT_REQUIRES_ESCALATION", "RISK_NOT_COMPUTED",
+    "HIGH_RISK_CREATE_DENIED", "IDENTITY_DOCUMENT_EXPIRED", "APPLICATION_ALREADY_DECIDED",
+    "CLIENT_ALREADY_EXISTS", "SCREENING_SOURCE_CHANGED", "RECIPIENT_NOT_ALLOWLISTED",
+    "EGRESS_NOT_ALLOWLISTED", "MODEL_SOURCE_DENIED", "MODEL_SIGNATURE_DENIED",
+})
 
 
 class GovernedError(ValueError):
@@ -87,12 +95,13 @@ class GovernedGateway:
     """
 
     def __init__(self, policy: Any, pipeline: Any, persistence: Any, *,
-                 registry_module: Any, feedback_credential: object | None = None):
+                 registry_module: Any, feedback_credential: object | None = None, controls: Mapping[str, Any] | None = None):
         self.policy = policy
         self.pipeline = pipeline
         self.persistence = persistence
         self.registry = registry_module
         self.registry_adapter = RegistryAdapter(registry_module)
+        self.controls = dict(controls or {})
         self._runs: dict[str, _Run] = {}
         self._feedback_credential = feedback_credential if feedback_credential is not None else object()
 
@@ -166,9 +175,8 @@ class GovernedGateway:
         unknown = set(contract.allowed_tools) - set(self.registry.REGISTRY)
         if unknown:
             raise GovernedError("TaskContract contains unregistered tools")
-        # The example bait tools are inert fixtures, not production KYC capabilities.
-        if any(self.registry.REGISTRY[name].bait for name in contract.allowed_tools):
-            raise GovernedError("bait tools cannot be enabled in a governed KYC contract")
+        # Bait tools are labelled fakes. They are admitted only when the trusted
+        # contract names them, and deterministic controls still run before execution.
 
         database = Path(ctx.db).resolve()
         baseline = await asyncio.to_thread(self._load_baseline, database, contract)
@@ -268,6 +276,10 @@ class GovernedGateway:
             subjects: dict[tuple[str, str | None], dict[str, Any]] = {}
             if expected_name:
                 subjects[(self._norm(expected_name), expected_dob)] = {"kind": "applicant", "name": expected_name, "dob": expected_dob}
+            if registry and registry.get("legal_name"):
+                subjects[(self._norm(registry["legal_name"]), None)] = {
+                    "kind": "applicant", "name": registry["legal_name"], "dob": None,
+                }
             if registry:
                 for ubo in registry["ubos"]:
                     if ubo.get("ownership_pct", 0) >= 25 and ubo.get("name"):
@@ -321,7 +333,7 @@ class GovernedGateway:
         if proposal.tool not in state.contract.allowed_tools:
             return "TOOL_DENIED"
         spec = self.registry.REGISTRY.get(proposal.tool)
-        if spec is None or spec.bait:
+        if spec is None:
             return "TOOL_DENIED"
         if proposal.side_effect != spec.side_effect:
             return "SIDE_EFFECT_MISMATCH"
@@ -375,8 +387,56 @@ class GovernedGateway:
                 return "REGISTRY_OUT_OF_SCOPE"
             if fields.get("risk") not in (None, state.risk):
                 return "RISK_NOT_VERIFIED"
+            for key in ("national_id", "passport_no", "address", "nationality"):
+                supplied = fields.get(key)
+                if supplied is not None and supplied != baseline.declared.get(key):
+                    return "APPROVED_IDENTITY_MISMATCH"
         if tool in WRITES and args.get("app_id") != baseline.app_id:
             return "RESOURCE_OUT_OF_SCOPE"
+        return None
+
+    def _bind_create_fields(self, state: _Run, args: dict[str, Any]) -> None:
+        """Replace proposed identity with the pinned baseline before any write or replay digest."""
+        fields = args["fields"]
+        baseline = state.baseline
+        fields["name"] = (baseline.registry or {}).get("legal_name") if baseline.applicant_type == "company" else baseline.declared.get("name")
+        expected_dob = None if baseline.applicant_type == "company" else baseline.declared.get("date_of_birth")
+        if expected_dob is None:
+            fields.pop("dob", None)
+        else:
+            fields["dob"] = expected_dob
+        for key in ("national_id", "passport_no", "address", "nationality"):
+            trusted = baseline.declared.get(key)
+            if trusted is None:
+                fields.pop(key, None)
+            else:
+                fields[key] = trusted
+        fields.setdefault("risk", state.risk)
+        if baseline.applicant_type == "company":
+            fields.setdefault("reg_number", baseline.declared.get("reg_number"))
+
+    def _bait_reason(self, tool: str, args: Mapping[str, Any]) -> str | None:
+        """Deterministic controls the KYC pipeline does not reach. Empty allowlists fail closed."""
+        spec = self.registry.REGISTRY.get(tool)
+        if spec is None or not spec.bait:
+            return None
+        controls = self.controls
+        if tool == "send_email":
+            allowed = set(controls.get("email_recipients") or [])
+            if args.get("to") not in allowed:
+                return "RECIPIENT_NOT_ALLOWLISTED"
+        elif tool == "fetch_url":
+            host = urlsplit(str(args.get("url") or "")).hostname
+            if host not in set(controls.get("egress_hosts") or []):
+                return "EGRESS_NOT_ALLOWLISTED"
+        elif tool == "load_risk_model":
+            source = str(args.get("source") or "")
+            host = source.split("/", 1)[0]
+            if host not in set(controls.get("model_source_hosts") or []):
+                return "MODEL_SOURCE_DENIED"
+            suffixes = tuple(controls.get("allowed_model_suffixes") or [])
+            if not source.endswith(suffixes):
+                return "MODEL_SIGNATURE_DENIED"
         return None
 
     def _create_prerequisite_reason(self, state: _Run, con: sqlite3.Connection | None = None) -> str | None:
@@ -461,6 +521,8 @@ class GovernedGateway:
             scope_reason = await asyncio.to_thread(self._scope_reason, state, proposal.tool, args)
             if proposal.tool == "compute_risk" and scope_reason is None:
                 scope_reason = self._check_risk_inputs(state, args)
+            if scope_reason is None:
+                scope_reason = self._bait_reason(proposal.tool, args)
             if scope_reason:
                 self.policy.evaluate(action, "BLOCK", reserve=True)
                 decision = self._make_decision(proposal.action_id, "BLOCK", scope_reason, (), None, started, state)
@@ -473,9 +535,7 @@ class GovernedGateway:
             # reapply deterministic argument inspection, then compare the digest of
             # the exact command that originally crossed the registry boundary.
             if proposal.tool == "create_client":
-                args["fields"].setdefault("risk", state.risk)
-                if state.baseline.applicant_type == "company":
-                    args["fields"].setdefault("reg_number", state.baseline.declared.get("reg_number"))
+                self._bind_create_fields(state, args)
                 replay_checked, replay_rows, replay_verdict, _ = await self.pipeline.evaluate({**action, "arguments": args})
                 replay_args = replay_checked["arguments"]
                 replay_scope = await asyncio.to_thread(self._scope_reason, state, proposal.tool, replay_args)
@@ -519,9 +579,7 @@ class GovernedGateway:
             # values are deterministic and do not allow the proposal to change baseline
             # identity or choose its risk outcome.
             if proposal.tool == "create_client":
-                args["fields"].setdefault("risk", state.risk)
-                if state.baseline.applicant_type == "company":
-                    args["fields"].setdefault("reg_number", state.baseline.declared.get("reg_number"))
+                self._bind_create_fields(state, args)
                 action["arguments"] = args
 
             checked, auditor_rows, verdict, changed = await self.pipeline.evaluate(action)
@@ -532,6 +590,8 @@ class GovernedGateway:
                 final_scope = self._create_prerequisite_reason(state)
             if proposal.tool == "compute_risk" and final_scope is None:
                 final_scope = self._check_risk_inputs(state, changed_args)
+            if final_scope is None:
+                final_scope = self._bait_reason(proposal.tool, changed_args)
             if final_scope is None and self.registry._check(self.registry.REGISTRY[proposal.tool], changed_args):
                 final_scope = "INVALID_TOOL_ARGUMENTS"
             if final_scope:
@@ -580,6 +640,8 @@ class GovernedGateway:
             backend_started = time.perf_counter()
             def before_execute(con, _ctx, tool, call_args):
                 reason = self._scope_reason(state, tool, call_args, con=con)
+                if reason is None:
+                    reason = self._bait_reason(tool, call_args)
                 if tool == "create_client" and reason is None:
                     reason = self._create_prerequisite_reason(state, con)
                 if tool == "compute_risk" and reason is None:
@@ -629,11 +691,9 @@ class GovernedGateway:
                 result = {"error": "tool outcome unknown"}
             state.calls.add(proposal.tool)
             state.event_ids.add(str(uuid.uuid4()))
-            if "error" not in result:
-                self._record_progress(state, proposal.tool, changed_args, result)
 
-            # Inspect results before delivery. Any result block withholds content;
-            # redaction applies only to the agent-facing copy.
+            # Inspect results before delivery. Any result block withholds content
+            # and does not count as progress toward a later write.
             inspected, out_rows, out_verdict, out_changed = await self.pipeline.evaluate({
                 **action, "arguments": {"tool_result": result},
             })
@@ -644,6 +704,10 @@ class GovernedGateway:
                 final_name, reason, delivered = "REDACT", "OUTPUT_REDACTED", inspected["arguments"].get("tool_result")
             else:
                 delivered = result if "error" not in result else {"error": "tool execution failed"}
+            if isinstance(result, dict) and result.get("error") in LIVE_DENIALS and final_name != "BLOCK":
+                final_name, reason, delivered = "BLOCK", str(result["error"]), {"error": result["error"]}
+            if "error" not in result and out_verdict not in ("BLOCK", "REQUIRE_APPROVAL"):
+                self._record_progress(state, proposal.tool, changed_args, result)
             decision = self._make_decision(proposal.action_id, final_name, reason, auditor_rows,
                                            changed_args if changed else None, started, state,
                                            backend_ms=backend_ms)
