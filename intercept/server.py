@@ -40,13 +40,16 @@ class Evidence:
 
 
 class Gateway:
-    def __init__(self, policy, token, evidence, pipeline=None, trace=False, executor=None):
+    def __init__(self, policy, token, evidence, pipeline=None, trace=False, executor=None, admin_token=None):
         if not isinstance(token, str) or len(token) < 32 or not token.isascii():
             raise ValueError("a local ASCII bearer token of at least 32 characters is required")
         self.policy, self.token, self.evidence = policy, token, evidence
         self.pipeline = pipeline or Pipeline([])
         self.trace = trace
         self.executor = executor
+        if admin_token is not None and (len(admin_token) < 32 or not admin_token.isascii() or hmac.compare_digest(admin_token, token)):
+            raise ValueError("admin token must be distinct and at least 32 ASCII characters")
+        self.admin_token = admin_token
 
     async def handle(self, reader, writer):
         status, result = 400, {"code": "INVALID_REQUEST"}
@@ -68,11 +71,12 @@ class Gateway:
                     headers[key] = value.strip()
                 if "transfer-encoding" in headers or protocol != "HTTP/1.1":
                     raise ValueError("unsupported framing")
-                if not hmac.compare_digest(headers.get("authorization", ""), "Bearer " + self.token):
+                expected_token = self.admin_token if path == "/v1/runs/bind" else self.token
+                if expected_token is None or not hmac.compare_digest(headers.get("authorization", ""), "Bearer " + expected_token):
                     status, result = 401, {"code": "UNAUTHORIZED"}
-                elif method != "POST" or path not in ("/v1/actions/evaluate", "/v1/actions/outcome", "/v1/tools/execute"):
+                elif method != "POST" or path not in ("/v1/actions/evaluate", "/v1/actions/outcome", "/v1/tools/execute", "/v1/tools/catalog", "/v1/runs/bind"):
                     status, result = 404, {"code": "NOT_FOUND"}
-                elif path == "/v1/tools/execute" and self.executor is None:
+                elif path in ("/v1/tools/execute", "/v1/tools/catalog") and self.executor is None:
                     status, result = 503, {"code": "TOOL_EXECUTION_DISABLED"}
                 else:
                     size = int(headers.get("content-length", "0"))
@@ -80,6 +84,23 @@ class Gateway:
                         status, result = 413, {"code": "BODY_LIMIT"}
                     else:
                         action = json.loads(await reader.readexactly(size))
+                        if path == "/v1/tools/catalog":
+                            if action != {}:
+                                raise ValueError("catalog body must be empty object")
+                            result = {"tools": await self.executor.catalog(self.policy.catalog_tools(self.pipeline)),
+                                      "policy_version": self.policy.version}
+                            status = 200
+                            return
+                        if path == "/v1/runs/bind":
+                            if not isinstance(action, dict) or set(action) != {"session_id", "contract_id"}:
+                                raise ValueError("invalid run binding")
+                            result = self.policy.bind_session(action["session_id"], action["contract_id"])
+                            event = {"event_type": "run_bound", **result}
+                            self.evidence.enqueue(event)
+                            if self.trace:
+                                print(json.dumps(event), flush=True)
+                            status = 200
+                            return
                         event_type = "observation" if path.endswith("outcome") else "admission"
                         modified = None
                         if event_type == "admission":
@@ -134,7 +155,8 @@ async def serve(policy_path, audit_path, port, trace=False, database=None, tool_
     policy, pipeline = load(policy_path)
     evidence = Evidence(audit_path)
     executor = ToolExecutor(database, tool_agent) if database else None
-    gateway = Gateway(policy, os.environ.get("INTERCEPT_TOKEN", ""), evidence, pipeline, trace, executor)
+    gateway = Gateway(policy, os.environ.get("INTERCEPT_TOKEN", ""), evidence, pipeline, trace, executor,
+                      os.environ.get("INTERCEPT_ADMIN_TOKEN"))
     worker = asyncio.create_task(evidence.worker())
     server = await asyncio.start_server(gateway.handle, "127.0.0.1", port, limit=8192)
     try:

@@ -36,3 +36,21 @@ class ToolExecutor:
             if process.returncode is None:
                 process.kill()
                 await process.wait()
+
+    async def catalog(self, tools):
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "intercept.tool_worker", cwd=str(Path(__file__).resolve().parents[1]),
+            env={}, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        try:
+            body = json.dumps({"operation": "catalog", "tools": tools, "agent": self.agent}).encode()
+            stdout, _ = await asyncio.wait_for(process.communicate(body), 2)
+            if process.returncode != 0 or len(stdout) > 65536:
+                raise RuntimeError("tool catalog unavailable")
+            result = json.loads(stdout)
+            if not isinstance(result, list):
+                raise RuntimeError("invalid tool catalog")
+            return result
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()

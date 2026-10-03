@@ -6,6 +6,7 @@
   "required": ["schema_version", "runs", "auditors"],
   "properties": {
     "schema_version": {"const": 1},
+    "contracts": {"$ref": "#/properties/runs"},
     "runs": {
       "type": "object",
       "propertyNames": {"pattern": "^[A-Za-z0-9_.:-]{1,160}$"},
