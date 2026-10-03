@@ -12,6 +12,7 @@ jobs:
         os: [ubuntu-24.04, windows-2025]  # pinned: "latest" images move under us
     runs-on: ${{ matrix.os }}
     steps:
+      - run: git config --global init.defaultBranch main  # silences git's hint inside checkout
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
