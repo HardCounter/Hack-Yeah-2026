@@ -10,7 +10,20 @@ Does it serve the task?         -> trajectory supervision
 Did the correct result exist?  -> independent outcome verification
 ```
 
-This repository currently contains the competition documents, recorded project direction, and OpenCode development/review configuration. Runtime implementation and executable product tests are not present yet.
+Implemented so far: the mock banking dataset (`data/`), the KYC outcome verifier (`data/postconditions.py`) and the 16 agent tools (`sim/tools/`, of which 6 are **bait tools: fakes** that only exist so the gateway has something to block). The gateway, agent loop and dashboard are not built yet.
+
+## Tests
+
+```bash
+python data/generate.py        # build the dataset (self-checks + determinism)
+python -m pytest               # whole suite (needs pytest: pip install pytest, or uv sync)
+```
+
+CI (`.github/workflows/tests.yml`) runs the same on every push, on Linux and Windows. A red build means
+something broke; fix it before building on top. `sim/tools/test_ollama.py` talks to a local model
+(`ollama pull llama3.2`) and skips itself when Ollama is not running, as in CI.
+
+Add a test with every change: a `test_*` function next to the code it checks (`data/`, `sim/`).
 
 - [Project direction](docs/project-direction.md)
 - [Monitored banking use cases](docs/use-cases.md)
