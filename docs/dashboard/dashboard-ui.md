@@ -23,21 +23,6 @@ Anything that does not serve one of these beats stays off the main view.
 
 ---
 
-## Visual identity: audit ledger
-
-Domain is banking compliance (KYC, AML), so the UI looks like a printed audit report brought to life.
-
-- Off-white paper background, black ink, thin hairline rules, no cards with shadows.
-- Monospace for numbers, IDs, latencies and payloads; a plain sans for prose.
-- Color carries meaning only: **red = BLOCK**, **amber = REDACT / ESCALATE**, **muted green = ALLOW**. Nothing else is colored.
-- Verdicts are shown as **rubber stamps**: `BLOCKED`, `REDACTED`, `ESCALATED TO HUMAN`, `ALLOWED`.
-- Light theme only (bright arena, varied laptop screens).
-
-### Explicitly avoid (generic AI dashboard look)
-Dark navy with purple/blue gradients, glassmorphism, rows of KPI tiles with sparklines, emoji icons,
-donut charts of fake traffic, world maps, a chatbot bubble.
-
----
 
 ## Layout
 

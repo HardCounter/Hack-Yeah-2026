@@ -5,6 +5,9 @@ deployed somewhere via docker or whatever, publicly accessible,  for examle aws 
 
 a deployed website connected to the container with teh app, it is a must have for the judging procedures.
 
+build in html, css, and js + FastAPI + backend in python
+
+
 automated testy
 agent --> proxy --> dashboard
 
@@ -19,8 +22,8 @@ widoczne:
 
 ## Dwie ścieżki dla testow: 
 
-1. bez AI po prostu, leci duzo automatycznych wywoaln tooli i innych zmockokwanych usecasow naszego guardraila. 
-2. agentowy track gdzie faktycznie AI wywołuje te toole, tam jes tpodpeity rzecczywiscie ai. 
+1. bez AI po prostu, leci duzo automatycznych wywołań tooli i innych zmockowanych usecase'ów naszego guardraila. 
+2. agentowy track gdzie faktycznie AI wywołuje te toole, tam jest podpięty rzeczywiście AI. 
 
 
 proces biznesowy
