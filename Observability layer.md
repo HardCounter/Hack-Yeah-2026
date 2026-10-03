@@ -1,588 +1,532 @@
-# LLM Observability Platform: Architecture
+# Local Agent Gateway & Control Plane: Architecture
 
-A production-grade **LLM/agent interception proxy** with durable event persistence and a **plug-and-play consumer layer** for metrics, monitoring and alerting. It is workflow-agnostic: any agent that can point at a base URL (or emit a small event) is observable. The earlier reconciliation simulation becomes a *separate test project* that exercises this platform end to end.
+A lightweight, locally runnable **interception, persistence, and consumer gateway** designed to run on the same system (or sidecar) as the agentic loop. 
 
----
-
-## 1. Goals and non-goals
-
-### Goals
-
-| # | Goal | What it means in practice |
-|---|---|---|
-| G1 | **Low-overhead interception** | The proxy adds minimal latency, streams pass through untouched, and observation never blocks the request path |
-| G2 | **Never lose an action** | Every LLM request and observed action is persisted durably (at-least-once), even if downstream systems are down |
-| G3 | **Fail open** | If logging, the broker or storage is unhealthy, agent traffic keeps flowing |
-| G4 | **Plug-and-play consumers** | A new metric, alert or sink is a self-contained plugin deployed independently, with no change to the proxy |
-| G5 | **Replayable** | New consumers can be run over historical events to backfill metrics |
-| G6 | **Workflow-agnostic** | No assumptions about agent framework, language or orchestration |
-| G7 | **Cheap to run** | Tiered storage, payload dedupe and sampling keep storage and compute proportional to value |
-
-### Non-goals (v1)
-
-- Not an eval or prompt-management product, though consumers can implement evals.
-- Not a policy engine in the hot path. Budgets, rate limits and guardrails are an optional extension (section 12), kept out of the critical path by default.
-- Not a replacement for in-process tracing of arbitrary code. See the capture-coverage limits in section 4.
+Unlike heavy distributed enterprise platforms, this architecture provides a **clean, modular, and maintainable local control layer** that unifies:
+1. **Synchronous Action Interception & Auditing** (inspect, evaluate, block, or transparently route LLM and MCP/tool actions).
+2. **Decoupled Document Persistence** (buffered, non-blocking append to a JSON/MongoDB document store with reliable consumer queueing and retry management).
+3. **Asynchronous Consumer & Risk Intelligence** (pluggable metric calculation, agent trajectory risk grading, and a **dynamic feedback loop** that tightens interception rules in real-time).
 
 ---
 
-## 2. High-level architecture
+## 1. Core Architectural Overview
 
-The platform has three planes with hard boundaries:
-
-- **Capture plane:** proxies and SDK shims that observe and emit events.
-- **Transport and storage plane:** durable log, archive, hot store, blob store.
-- **Consumer plane:** independent plugins that read events and produce metrics, derived events and alerts.
+The system operates across three tightly scoped layers connected by asynchronous queues and a dynamic policy feedback channel:
 
 ```mermaid
 flowchart TB
-    subgraph AGENTS["Any agent workflow (external project)"]
-        AG1[Agent A]
-        AG2[Agent B]
+    subgraph LOCAL_HOST["Local Host / Agent Environment"]
+        subgraph AGENT_ENV["Agent Execution Plane"]
+            AGENT["Agentic Loop / Runtime"]
+        end
+
+        subgraph LAYER1["Layer 1: Interception Layer (Gateway & Policy Guard)"]
+            direction TB
+            ENTRY["Gateway Listener<br/>(LLM HTTP / MCP JSON-RPC / Tool Proxy)"]
+            AUDIT_PIPE["Synchronous Policy Pipeline<br/>(In-Process Callbacks & Webhook Auditors)"]
+            ROUTER["Transparent Router & Fallback<br/>(Primary Provider -> Fallback Provider)"]
+            UPSTREAM[("Configured Upstream<br/>LLM Providers / MCP Servers")]
+            PACKER["Event Normalizer & Packager"]
+            Q1[("Queue 1: Ingestion Buffer<br/>(In-Memory / Local Queue)")]
+
+            ENTRY --> AUDIT_PIPE
+            AUDIT_PIPE -- "BLOCK / REJECT" --> ENTRY
+            AUDIT_PIPE -- "ALLOW" --> ROUTER
+            ROUTER <--> UPSTREAM
+            ROUTER --> PACKER
+            PACKER --> Q1
+        end
+
+        subgraph LAYER2["Layer 2: Persistence Layer (Document Store & Reliable Dispatcher)"]
+            direction TB
+            PERSIST_WORKER["Persistence Worker"]
+            DOC_STORE[("Document Store<br/>(MongoDB / JSON Append Store)")]
+            Q2_DISPATCHER["Consumer Dispatcher & Retry Supervisor"]
+            Q2[("Queue 2: Consumer Queue<br/>(With Exponential Retries & DLQ)")]
+
+            Q1 --> PERSIST_WORKER
+            PERSIST_WORKER --> DOC_STORE
+            PERSIST_WORKER --> Q2_DISPATCHER
+            Q2_DISPATCHER --> Q2
+        end
+
+        subgraph LAYER3["Layer 3: Consumer Layer (Risk Intelligence & Observability)"]
+            direction TB
+            CONSUMER_RUNTIME["Consumer Manager"]
+            subgraph PLUGINS["Pluggable Consumer Modules"]
+                P_METRICS["Metrics & Cost Observer"]
+                P_LOOP["Loop & Anomaly Detector"]
+                P_RISK["Trajectory Risk Grader"]
+                P_CUSTOM["Custom Webhook / Callback"]
+            end
+            SINKS["Observability Sinks<br/>(Dashboard / Logs / Exports)"]
+            FEEDBACK_GEN["Policy Feedback Controller"]
+
+            Q2 --> CONSUMER_RUNTIME
+            CONSUMER_RUNTIME --> PLUGINS
+            PLUGINS --> SINKS
+            P_RISK & P_LOOP --> FEEDBACK_GEN
+        end
+
+        FEEDBACK_GEN -. "Dynamic Policy Update<br/>(Escalate Rules / Strict Mode / Block)" .-> AUDIT_PIPE
     end
 
-    subgraph CAPTURE["Capture plane"]
-        LLMGW["LLM gateway (data plane)<br/>Anthropic / OpenAI-compatible"]
-        EGRESS["Tool / egress gateway<br/>HTTP forward proxy, MCP proxy"]
-        INGEST["Ingest API / SDK shim<br/>custom actions, OTLP"]
-        WAL[("Local WAL<br/>disk, per instance")]
-        SHIP[Shipper]
-    end
-
-    subgraph TRANSPORT["Transport and storage plane"]
-        BROKER[("Durable log<br/>events.raw")]
-        BLOB[("Blob store<br/>content-addressed payloads")]
-        ARCH[("Raw archive<br/>Parquet on object storage")]
-        HOT[("Hot analytics store")]
-    end
-
-    subgraph CONSUME["Consumer plane (plug and play)"]
-        RUNTIME[Consumer runtime]
-        P1[cost / tokens]
-        P2[latency / TTFT]
-        P3[error-rate alert]
-        P4[loop detector]
-        P5[custom plugin ...]
-    end
-
-    subgraph OUT["Outputs"]
-        PROM[Metrics backend]
-        ALERT[Alert routing<br/>Slack / PagerDuty / webhook]
-        DASH[Dashboards]
-        DERIVED[("events.derived")]
-    end
-
-    CTRL[Control plane<br/>config, keys, plugin registry]
-    UP[(LLM providers)]
-
-    AG1 --> LLMGW
-    AG2 --> LLMGW
-    AG1 --> EGRESS
-    AG2 --> INGEST
-    LLMGW --> UP
-    LLMGW --> WAL
-    EGRESS --> WAL
-    INGEST --> WAL
-    WAL --> SHIP --> BROKER
-    SHIP --> BLOB
-    BROKER --> RUNTIME
-    RUNTIME --> P1 & P2 & P3 & P4 & P5
-    BROKER --> ARCH
-    BROKER --> HOT
-    P1 & P2 --> PROM
-    P3 & P4 --> ALERT
-    P1 & P2 & P3 & P4 & P5 --> DERIVED
-    DERIVED --> BROKER
-    HOT --> DASH
-    PROM --> DASH
-    CTRL -.-> LLMGW
-    CTRL -.-> RUNTIME
-    ARCH -. replay/backfill .-> RUNTIME
+    AGENT <--> ENTRY
 ```
 
----
+### Architectural Highlights
 
-## 3. LLM gateway (data plane)
-
-### 3.1 Responsibilities
-
-1. Accept provider-compatible requests (Anthropic `/v1/messages`, OpenAI-compatible chat/responses endpoints; add others by adapter).
-2. Forward to the upstream provider with minimal modification.
-3. Return the response (including SSE streams) with minimal added latency.
-4. Build one event per call and hand it to the WAL, off the request path.
-
-### 3.2 Hot-path design rules
-
-| Rule | Rationale |
-|---|---|
-| **Stream passthrough, tee in memory** | Forward each SSE chunk to the client immediately; copy it to a bounded buffer for later parsing. Never wait for the full response before forwarding |
-| **Parse after the response is done** | Token counts, tool-use blocks and stop reasons are extracted in a background task, not between chunks |
-| **No synchronous I/O to anything but upstream** | The request path never touches the broker, blob store, database or control plane. Config and keys are cached in memory and refreshed asynchronously |
-| **Bounded memory per request** | Cap the capture buffer per request (configurable). On overflow, truncate the stored payload and set `payload_truncated=true`. Never truncate what the client receives |
-| **Backpressure never reaches the client** | If the WAL queue is full, drop to the configured policy (section 5.3) and count it, rather than slowing the call |
-| **Client disconnects handled** | If the client aborts mid-stream, cancel upstream, record a partial event (`status=client_aborted`, tokens so far) |
-| **Timeouts and retries are explicit** | The proxy does not silently retry non-idempotent calls. Retry policy is opt-in and every attempt is its own recorded span |
-
-### 3.3 Timing captured
-
-`t_received`, `t_upstream_sent`, `t_first_byte` (TTFT), `t_last_byte`, plus derived `proxy_overhead_ms` (time spent in the gateway excluding upstream). The overhead metric is the platform's most important self-measurement.
-
-### 3.4 Identity and correlation
-
-Agents add headers; the gateway also accepts the W3C `traceparent` header so it joins existing traces.
-
-| Header | Meaning |
-|---|---|
-| `traceparent` | W3C trace context (preferred) |
-| `X-Obs-Session-Id` | Long-lived grouping (a user task or run) |
-| `X-Obs-Agent-Id` | Logical agent identity |
-| `X-Obs-Tags` | Free-form `k=v` pairs (experiment, version, case id) |
-
-If none are provided, the gateway assigns a trace ID and returns it in `X-Obs-Trace-Id` so clients can adopt it. The proxy strips `X-Obs-*` headers before forwarding upstream.
-
-### 3.5 Credentials
-
-Two supported modes:
-
-- **Passthrough (default):** the client's provider key is forwarded and never stored or logged. Authorization headers are always redacted from events.
-- **Virtual keys:** clients get gateway-issued keys, mapped to real provider keys held in a secret manager. This gives per-agent identity that cannot be spoofed by a header.
-
-### 3.6 Implementation language
-
-Recommended: **Go** (or Rust) for the gateway. It gives predictable tail latency, cheap concurrency for long-lived streams, and a small static binary. A Python (FastAPI/uvicorn) gateway is acceptable for a first iteration, but GC pauses and per-request overhead will show up in the `proxy_overhead_ms` p99 once streaming concurrency grows. Keep the event contract language-neutral so the gateway can be rewritten without touching consumers.
+- **Local-First & Resource-Lean:** Runs as an embedded process or lightweight local daemon on the agent's host. No heavy distributed message brokers (Kafka/Zookeeper) or multi-tier object storage clusters required.
+- **Fail-Safe & Low Latency:** The hot interception path performs fast deterministic evaluations and transparent routing without waiting for database operations or complex analytics.
+- **Bi-Directional Risk Supervision:** Consumers don't just passively log metrics—they calculate compound risk and actively feed updated policies back into the interception layer to constrain rogue agents dynamically.
 
 ---
 
-## 4. Capture coverage: what a proxy can and cannot see
+## 2. Layer 1: Interception Layer (Gateway & Policy Enforcement)
 
-Being honest about this shapes the design. A proxy sees only what crosses it.
+The Interception Layer sits directly in the path between the agent and external resources (LLMs, MCP servers, tools). It is responsible for intercepting requests, evaluating actions against synchronous audit rules, handling transparent upstream routing with fallback, and pushing normalized action records to the persistence layer.
 
-| Agent activity | Visible how |
-|---|---|
-| LLM requests and responses | Directly, via the LLM gateway |
-| Tool calls the model *requests* (tool-use blocks) | Directly, parsed from LLM responses. This is **intent**, not execution |
-| Tool calls that run over HTTP or MCP | Via the **tool/egress gateway**, if the agent routes through it (configure `HTTP(S)_PROXY` or an MCP proxy) |
-| In-process function calls, file I/O, shell commands | **Not visible** to any network proxy |
-| Anything custom the agent wants to record | Via the **ingest API / SDK shim** (a thin client that posts events) |
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Agent as Agent / Tool Caller
+    participant Interceptor as Interception Gateway
+    participant Auditor as Synchronous Auditor Plugins
+    participant Router as Transparent Router
+    participant Upstream as Primary / Fallback Provider
+    participant Q1 as Queue 1 (Persistence)
 
-So there are three capture modes, all producing the same event envelope:
-
-1. **LLM gateway:** zero code change for agents.
-2. **Egress/tool gateway:** zero code change if tools are network-based.
-3. **Ingest API + thin SDK (and OTLP receiver):** a few lines of code for in-process actions. Accepting OTLP spans means agents already instrumented with OpenTelemetry can send directly.
-
-The event model deliberately distinguishes `tool.call.requested` (seen in the LLM response) from `tool.call.executed` (seen at egress or reported by the SDK). Comparing the two is itself a valuable metric: tool calls requested but never executed, or executed without being requested.
-
----
-
-## 5. Event model and persistence
-
-### 5.1 Envelope
-
-Every event, from every source, shares one versioned envelope.
-
-```json
-{
-  "schema_version": "1.0",
-  "event_id": "01J9ZK3Q8W2M5N7R4T6V8X0Y1A",
-  "type": "llm.call.completed",
-  "ts": "2026-10-03T10:15:42.123Z",
-  "tenant_id": "team-a",
-  "source": "llm_gateway",
-  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
-  "span_id": "00f067aa0ba902b7",
-  "parent_span_id": "a1b2c3d4e5f60718",
-  "session_id": "run_0042",
-  "agent_id": "investigator",
-  "tags": { "experiment": "baseline", "case": "0317" },
-  "attributes": {
-    "provider": "anthropic",
-    "model": "claude-sonnet-4-6",
-    "input_tokens": 1820,
-    "output_tokens": 410,
-    "cache_read_tokens": 1200,
-    "stop_reason": "tool_use",
-    "status": 200,
-    "stream": true,
-    "ttft_ms": 480,
-    "total_ms": 2310,
-    "proxy_overhead_ms": 1.4,
-    "payload_truncated": false
-  },
-  "payload_refs": {
-    "request": "blob://sha256/9f2c...",
-    "response": "blob://sha256/ab41..."
-  },
-  "capture_mode": "redacted"
-}
+    Agent->>Interceptor: Request (LLM prompt, MCP tool call, egress action)
+    Interceptor->>Auditor: Evaluate Action (Context, Tool, Arguments)
+    
+    alt Action is Blocked (Policy Violation)
+        Auditor-->>Interceptor: Decision: BLOCK (reason, violation_code)
+        Interceptor-->>Agent: Immediate Error Response (403 / MCP Error)
+        Interceptor->>Q1: Publish Blocked Action Event
+    else Action is Approved
+        Auditor-->>Interceptor: Decision: ALLOW (or REDACT / MODIFY)
+        Interceptor->>Router: Forward Action
+        Router->>Upstream: Forward to Primary Provider
+        alt Primary Fails (timeout / 5xx / rate limit)
+            Router->>Upstream: Fallback to Secondary Provider
+        end
+        Upstream-->>Router: Response (stream or payload)
+        Router-->>Agent: Return Response to Agent
+        Interceptor->>Q1: Publish Completed Action Event
+    end
 ```
 
-Notes:
+### 2.1 Interception Scope
 
-- `event_id` is a ULID: unique, time-sortable, and the **idempotency key** for consumers.
-- The shape of `attributes` follows OpenTelemetry's GenAI semantic conventions where they exist, so exports to OTel-based tooling are straightforward. Those conventions have been evolving, so check the current spec before freezing field names.
-- Large bodies are never inline in the envelope. They go to the blob store and are referenced.
+The gateway intercepts agent actions at three natural boundary interfaces:
+1. **LLM API Proxy:** Exposes standard OpenAI (`/v1/chat/completions`) and Anthropic (`/v1/messages`) compatible endpoints. Supports both buffered requests and streaming Server-Sent Events (SSE).
+2. **MCP (Model Context Protocol) Proxy:** Intercepts JSON-RPC tool invocations (`tools/call`, `resources/read`, `prompts/get`) between agents and MCP servers.
+3. **HTTP Egress / In-App Tool Callbacks:** Acts as an egress proxy for REST tools, or provides a lightweight programmatic SDK wrapper for in-process function execution.
 
-### 5.2 Event types (initial set)
+### 2.2 Synchronous Action Auditing & Pluggable Policies
 
-| Type | Source | Notes |
-|---|---|---|
-| `llm.call.started` | LLM gateway | Optional (config flag). Enables detection of hung or in-flight calls; doubles event volume, so off by default |
-| `llm.call.completed` | LLM gateway | One per call, emitted at end of response. Includes failures via `status` |
-| `llm.call.failed` | LLM gateway | Upstream error, timeout, client abort |
-| `tool.call.requested` | LLM gateway | Parsed from tool-use blocks |
-| `tool.call.executed` | Egress gateway / SDK | Actual execution with result status and latency |
-| `action.custom` | Ingest API | Free-form, namespaced (`app.reconcile.adjustment_applied`) |
-| `proxy.internal` | Any gateway | Self-telemetry: drops, WAL lag, config reloads |
-| `derived.*` | Consumers | Metrics, alerts, trace summaries produced by plugins |
+Before any action is sent to an external provider or executed on a tool, it passes through an extensible **Action Auditor Pipeline**.
 
-### 5.3 Durability pipeline
+#### The Decision Contract
+Each auditor plugin evaluates the proposed action and returns a deterministic evaluation:
+- `ALLOW`: The action complies with policies; forward immediately.
+- `BLOCK`: The action violates policy; reject immediately and return a structured error to the agent.
+- `REDACT`: Sanitize sensitive fields (e.g., tokens, PII) in arguments before forwarding.
+- `REQUIRE_APPROVAL`: Pause execution until an external local confirmation is provided.
+
+#### Dual Plugin Delivery Mechanisms
+To make the system easily extendable and polyglot-friendly, two plugin integration modes are supported:
+1. **In-Application Callbacks (In-Process):** Fast, zero-overhead Python/Go functions implementing a standard `ActionAuditor` interface. Ideal for fast local regex, allowlists, argument bounds checking, and token budgets.
+2. **Webhook Callbacks (HTTP/gRPC):** Configured HTTP endpoints that receive the action payload and return a decision JSON. Ideal for running isolated policy checkers, local LLM-based guard models, or existing external policy daemons.
+
+#### Example Auditor Configuration (`gateway_config.yaml`)
+```yaml
+interception:
+  port: 8080
+  strict_mode: false # Can be dynamically toggled by Layer 3 feedback
+  
+  auditors:
+    # 1. In-process deterministic validator (ordered chain)
+    - name: "tool-allowlist"
+      type: "in_process"
+      handler: "core.auditors.allowlist:ToolAllowlistAuditor"
+      config:
+        allowed_tools: ["search_docs", "calculate_margin", "query_portfolio"]
+        block_action: "reject"
+
+    # 2. Secret & PII scanner
+    - name: "credential-shield"
+      type: "in_process"
+      handler: "core.auditors.security:CredentialShieldAuditor"
+      config:
+        patterns: ["aws_secret", "private_key", "password"]
+
+    # 3. External Webhook for complex or polyglot rule checks
+    - name: "compliance-evaluator"
+      type: "webhook"
+      endpoint: "http://127.0.0.1:9090/audit/action"
+      timeout_ms: 150
+      on_timeout: "fail_closed" # 'fail_closed' or 'fail_open'
+```
+
+### 2.3 Transparent Backend Routing & Fallback
+
+The interception layer decouples the agent from specific hardcoded LLM endpoints or MCP servers, enabling resilient transparent fallback:
+
+- **Provider Routing:** Maps abstract model names requested by the agent (e.g., `primary-reasoning-model`) to specific backends (e.g., local Ollama, vLLM, Anthropic, OpenAI).
+- **Automated Fallback:** If the primary backend returns a `429 (Rate Limit)`, `5xx (Server Error)`, or times out, the router automatically fails over to the configured secondary backend without breaking the agentic loop.
+- **MCP Backend Gateway:** Maps tool calls to either local stdio MCP processes, local HTTP/SSE servers, or fallback endpoints.
+
+```yaml
+routing:
+  llm:
+    providers:
+      anthropic_primary:
+        type: "anthropic"
+        base_url: "https://api.anthropic.com"
+        api_key_env: "ANTHROPIC_API_KEY"
+      ollama_local_fallback:
+        type: "openai_compatible"
+        base_url: "http://127.0.0.1:11434/v1"
+        api_key_env: "EMPTY"
+
+    routes:
+      "claude-3-5-sonnet":
+        primary: "anthropic_primary"
+        fallback: "ollama_local_fallback"
+        timeout_seconds: 30
+        retry_on_status: [429, 500, 502, 503, 504]
+```
+
+### 2.4 Event Packaging & Queue Handoff
+
+Once an action completes (or is blocked), the gateway packages the complete interaction into an **Application-Level Action Event** and asynchronously enqueues it into `Queue 1`. 
+
+**Critical Invariant:** Enqueuing to `Queue 1` is completely non-blocking (in-memory ring buffer or fast local queue). The agent request path **never** waits for database disk writes.
+
+---
+
+## 3. Layer 2: Persistence Layer (Document Store & Queueing Pipeline)
+
+The Persistence Layer ensures that every action is reliably preserved for local querying and auditing, while safely decoupling storage workloads from asynchronous consumer processing.
 
 ```mermaid
 flowchart LR
-    A[Gateway request path] -->|in-memory ring buffer, non-blocking| B[Event builder]
-    B -->|batched append + periodic fsync| C[(Local WAL)]
-    C --> D[Shipper]
-    D -->|payloads| E[(Blob store)]
-    D -->|envelopes| F[(Durable log)]
-    F --> G[Consumers, archiver, hot-store writer]
+    Q1[("Queue 1: Ingest Buffer")] --> WORKER["Persistence Worker"]
+    WORKER -->|"Append (Batch / Bulk Write)"| MONGO[("Document Store<br/>(MongoDB / Local JSON)")]
+    WORKER -->|"Enqueue Normalized Event"| DISPATCHER["Reliable Consumer Dispatcher"]
+    DISPATCHER --> Q2[("Queue 2: Consumer Channel")]
+    
+    subgraph RETRY_MANAGEMENT["Failure Supervision"]
+        Q2 --> CONSUMERS["Consumer Modules"]
+        CONSUMERS -- "Ack" --> DONE[("Completed")]
+        CONSUMERS -- "Nack / Crash" --> RETRY_LOGIC["Exponential Backoff Retry"]
+        RETRY_LOGIC --> Q2
+        RETRY_LOGIC -- "Max Attempts Exceeded" --> DLQ[("Dead Letter Queue (DLQ)")]
+    end
 ```
 
-- **Local WAL** on each gateway instance (append-only segment files). This decouples the request path from the network and guarantees events survive a broker outage or a gateway crash (within the fsync interval).
-- **Shipper** (a goroutine or separate sidecar process) reads the WAL, uploads payloads to the blob store first, then publishes the envelope. Publishing after payload upload means a published envelope never has a dangling reference.
-- **Delivery is at-least-once.** Duplicates are possible; consumers dedupe on `event_id`.
-- **Ordering:** the log topic is keyed by `trace_id`, so all events of a trace land in one partition, in order.
-- **Backpressure policy** (configurable): when the in-memory buffer or WAL is full, either `drop_payloads_keep_metadata` (default), `drop_newest`, or `block` (opt-in; breaks fail-open and is not recommended). Every drop increments a counter and emits a `proxy.internal` event once the system recovers.
+### 3.1 Document Store (MongoDB / Append-Optimized Store)
 
-### 5.4 Storage tiers
+Agent actions represent rich, dynamic, nested documents (prompts, tool parameters, structured responses, JSON-RPC payloads). **MongoDB (or a local document store)** is the ideal persistence target because:
+1. **Schema Agnostic & Natural JSON:** Arbitrary tool arguments and provider-specific attributes map 1:1 without relational schema migrations.
+2. **High-Throughput Append Workloads:** MongoDB handles rapid append-only writes via time-bucketed collections or capped collections with minimal write latency.
+3. **Rich Local Querying:** Easily query action histories by session, trace, tool name, or risk attributes for local debugging and dashboard exploration.
 
-| Tier | Contents | Technology (suggested) | Retention |
-|---|---|---|---|
-| **Durable log** | Envelopes in flight | Redpanda/Kafka (or NATS JetStream for smaller footprint) | Days: enough to replay and absorb consumer outages |
-| **Raw archive** | All envelopes, immutable | Parquet on S3/MinIO, partitioned by `tenant/date/hour` | Long: the source of truth for replay and backfill |
-| **Hot store** | Recent envelopes, queryable | ClickHouse (DuckDB or Postgres at small scale) | Weeks to months |
-| **Blob store** | Request/response bodies | S3/MinIO, content-addressed by SHA-256 | Per policy, usually shorter than the archive |
+#### Indexing Strategy
+```javascript
+// Primary query patterns for local observability
+db.agent_actions.createIndex({ "trace_id": 1, "ts": 1 });
+db.agent_actions.createIndex({ "session_id": 1, "ts": 1 });
+db.agent_actions.createIndex({ "action_type": 1, "status": 1 });
+db.agent_actions.createIndex({ "risk_metadata.risk_level": 1 });
+```
 
-### 5.5 Cost controls for payloads
+### 3.2 Reliable Queue 2 & Consumer Supervision
 
-Agent loops resend an ever-growing conversation on every call, so naive full-request logging grows quadratically. Controls:
-
-- **Message-level content addressing:** hash each message and store each unique message once. A request payload becomes a list of message hashes plus the new messages. Repeated history costs almost nothing.
-- **Capture modes** per tenant, agent or tag: `full`, `redacted`, `metadata_only`.
-- **Sampling** of payloads (not metadata): e.g. 100% of errors and slow calls, N% of successes. Metadata is always kept so metrics stay exact.
-- **Compression** (zstd) for blobs and Parquet.
-- **Lifecycle rules:** payloads expire earlier than envelopes.
-
-### 5.6 Redaction and privacy
-
-- Redaction runs **in the gateway before anything is written to the WAL**, so unredacted data never reaches durable storage unless `capture_mode=full` is explicitly enabled for that scope.
-- Always strip auth headers and API keys. Configurable regex and detector rules for emails, card numbers, national IDs and secrets, with hash-replacement so values can still be correlated.
-- Encrypt at rest and in transit. Tenant ID is part of every storage key and enforced in queries.
-- Retention and deletion by tenant, session or trace to support data-subject deletion requests (e.g. GDPR). Content addressing complicates deletion of shared blobs: use reference counting or per-tenant blob namespaces.
+After the persistence worker commits an event to the document store, it pushes the event to **Queue 2** for downstream evaluation:
+- **Decoupled Failure Domains:** A failure, bug, or slow execution in a consumer module never impacts the persistence layer or the interception gateway.
+- **At-Least-Once Delivery:** Events in Queue 2 require explicit consumer acknowledgment (`ACK`).
+- **Retry Mechanism with Exponential Backoff:** If a consumer fails or times out (e.g., an external webhook consumer is temporarily unreachable), the dispatcher retries delivery with jittered exponential backoff.
+- **Dead Letter Queue (DLQ):** Messages exceeding `max_retries` are moved to a local dead-letter store for offline inspection without stalling the consumer pipeline.
 
 ---
 
-## 6. Consumer plane (plug and play)
+## 4. Layer 3: Consumer Layer (Risk Intelligence & Feedback Control)
 
-### 6.1 Model
+The Consumer Layer executes in the background. It consumes persisted events from Queue 2, calculates rolling metrics, evaluates agent behavior across multiple steps, and—critically—**exerts dynamic feedback control back onto Layer 1**.
 
-Each consumer is an **independent deployable** that:
+```mermaid
+flowchart TD
+    Q2[("Queue 2 Events")] --> RUNTIME["Consumer Dispatcher"]
 
-- subscribes to a set of event types (via manifest),
-- has its **own consumer group and offsets** (so a slow or broken plugin never affects others),
-- may keep local state (windows, per-trace buffers),
-- emits outputs through a fixed set of channels: **metrics**, **derived events**, **alerts**, **logs**.
+    subgraph CONSUMERS["Pluggable Consumer Modules"]
+        C1["Cost & Token Accountant<br/>(Calculates burn rate, spend limits)"]
+        C2["Loop & Anomaly Detector<br/>(Identifies repetitive or oscillating tool calls)"]
+        C3["Trajectory Risk Grader<br/>(Calculates drift, unauthorized access risk)"]
+        C4["Webhook Consumer<br/>(External grader / Custom security model)"]
+    end
 
-Adding a metric means shipping a new plugin container or package. Nothing else changes.
+    RUNTIME --> C1 & C2 & C3 & C4
 
-### 6.2 Consumer manifest
+    subgraph OUTPUTS["Observability & Analytics"]
+        METRICS_STORE["Local Metrics / Time-Series"]
+        UI_DASH["Local Web Dashboard"]
+    end
 
-```yaml
-# plugins/loop-detector/plugin.yaml
-name: loop-detector
-version: 1.2.0
-runtime: python            # python | go | wasm (future)
-subscribes:
-  - llm.call.completed
-  - tool.call.requested
-  - tool.call.executed
-group_by: trace_id          # state partitioning key
-state:
-  backend: local             # local | redis
-  ttl: 30m
-config:
-  max_identical_tool_calls: 4
-outputs:
-  metrics:
-    - name: agent_loop_detected_total
-      type: counter
-      labels: [agent_id, tool]
-  alerts:
-    - name: AgentLoopSuspected
-      severity: warning
-      dedupe_key: [trace_id]
-  derived_events:
-    - derived.loop.detected
-replay:
-  supported: true            # safe to run over history
+    C1 & C2 & C3 --> METRICS_STORE --> UI_DASH
+
+    subgraph FEEDBACK_LOOP["Closed-Loop Control"]
+        RISK_EVAL["Risk Policy Evaluator"]
+        FEEDBACK_CHANNEL[("Dynamic Policy Control Channel<br/>(In-Memory / IPC Bus)")]
+        DYNAMIC_CACHE["Layer 1 Dynamic Policy Cache"]
+
+        C2 & C3 & C4 --> RISK_EVAL
+        RISK_EVAL -->|"Emit PolicyAdjustmentSignal<br/>(Severity >= THRESHOLD)"| FEEDBACK_CHANNEL
+        FEEDBACK_CHANNEL --> DYNAMIC_CACHE
+    end
 ```
 
-### 6.3 Plugin interface
+### 4.1 Pluggable Consumer Modules
+
+Consumers are designed as isolated, plug-and-play plugins implementing an asynchronous processor interface:
+- **In-Process Modules:** Python/Go worker coroutines that run in the background consumer process.
+- **Webhook Consumers:** HTTP endpoints that receive streaming batches of events, allowing external tools, evaluation frameworks, or specialized microservices to analyze traces.
+
+#### Reference Consumer Implementations
+1. **Loop & Oscillation Detector:** Tracks tool invocations within a rolling window (`trace_id`). If an agent calls the same tool with identical or alternating parameters more than $N$ times, flags an infinite loop risk.
+2. **Trajectory & Drift Grader:** Analyzes the sequence of actions against the expected workflow or contract. Detects deviations (e.g., agent was tasked with data retrieval but suddenly attempts file deletion or network discovery).
+3. **Spend & Velocity Accountant:** Aggregates token consumption and cost per session. Tracks rate-of-burn to catch runaway recursive agent loops before resource exhaustion.
+
+### 4.2 Dynamic Feedback Loop: Influencing the Interception Layer
+
+Traditional observability is purely passive; by the time a human reads a dashboard, the agent has already executed unwanted actions. 
+
+This architecture introduces a **closed-loop feedback mechanism**:
+1. When a consumer (e.g., `Trajectory Risk Grader` or `Loop Detector`) identifies suspicious, risky, or anomalous behavior, it synthesizes a **`PolicyAdjustmentSignal`**.
+2. The signal is dispatched over a local fast IPC channel (in-memory state, local event bus, or unix domain socket) to the Interception Layer's **Dynamic Policy Cache**.
+3. Layer 1 immediately updates its runtime policy for the affected `session_id` or `agent_id`:
+   - **Enforce Strict Allowlist:** Disable optional or potentially dangerous tools.
+   - **Enforce Human Approval:** Convert automatic tool execution into `REQUIRE_APPROVAL` mode.
+   - **Throttle / Rate-Limit:** Add synthetic delay or limit token budget for the session.
+   - **Hard Halt:** Issue a session-wide `BLOCK` for all subsequent LLM or tool requests.
+
+```json
+// Example: PolicyAdjustmentSignal emitted by Trajectory Risk Grader
+{
+  "signal_id": "sig_01J9ZK49B...",
+  "ts": "2026-10-03T15:45:00.120Z",
+  "target_scope": {
+    "session_id": "session_trade_execution_981",
+    "agent_id": "execution_agent_v2"
+  },
+  "action": "ESCALATE_POLICY",
+  "policy_modifications": {
+    "strict_mode": true,
+    "require_approval_for": ["execute_trade", "transfer_funds"],
+    "blocked_tools": ["shell_exec", "eval_code"]
+  },
+  "reason": "Anomalous tool call velocity detected (5 attempts in 2 seconds) with parameter drift.",
+  "ttl_seconds": 600
+}
+```
+
+---
+
+## 5. Unified Data Contracts & Interfaces
+
+To maintain clean separation and make the system truly extendable, all components communicate via standardized schemas and programming interfaces.
+
+### 5.1 Application Action Event Envelope (Stored in DB & Queues)
+
+```json
+{
+  "schema_version": "2.0",
+  "event_id": "evt_01J9ZK3Q8W2M5N7R4T6V8X0Y1A",
+  "trace_id": "tr_4bf92f3577b34da6a3ce929d0e0e4736",
+  "session_id": "sess_reconcile_0042",
+  "agent_id": "financial_reconciler",
+  "ts": "2026-10-03T15:42:10.500Z",
+  "action_type": "tool_call", 
+  "source": "mcp_proxy",
+  "status": "completed", 
+  
+  "action_details": {
+    "name": "adjust_ledger_balance",
+    "parameters": {
+      "account_id": "ACC-9921",
+      "adjustment_cents": 125000,
+      "reason": "Variance reconciliation"
+    },
+    "result": {
+      "success": true,
+      "ledger_entry_id": "LED-55102"
+    }
+  },
+
+  "interception_metadata": {
+    "auditor_decisions": [
+      {
+        "auditor": "credential-shield",
+        "decision": "ALLOW",
+        "latency_ms": 0.8
+      }
+    ],
+    "routed_upstream": "mcp-accounting-service",
+    "fallback_triggered": false,
+    "interception_overhead_ms": 1.2
+  },
+
+  "metrics": {
+    "input_tokens": 450,
+    "output_tokens": 85,
+    "latency_ms": 142.5
+  },
+
+  "risk_metadata": {
+    "initial_score": 0.15,
+    "flagged_by_feedback": false
+  }
+}
+```
+
+### 5.2 Layer 1: Synchronous Auditor Plugin Interface
+
+Any custom audit plugin (in-process or webhook) adheres to this simple contract:
 
 ```python
-class Processor(Protocol):
-    def setup(self, ctx: Context) -> None: ...
-    def on_event(self, event: Event, ctx: Context) -> None: ...
-    def on_timer(self, now: datetime, ctx: Context) -> None: ...   # windows, trace-close timeouts
-    def teardown(self, ctx: Context) -> None: ...
+from typing import Protocol, Literal
+from dataclasses import dataclass
 
-# ctx provides: state store, emit_metric(), emit_alert(), emit_event(),
-#               log(), clock (event-time aware), config, blob.get(ref)
+@dataclass
+class AuditContext:
+    trace_id: str
+    session_id: str
+    agent_id: str
+    action_type: Literal["llm_call", "mcp_tool", "egress_http"]
+    action_name: str
+    payload: dict
+    current_policy_level: str  # "standard", "strict", "quarantine"
+
+@dataclass
+class AuditDecision:
+    decision: Literal["ALLOW", "BLOCK", "REDACT", "REQUIRE_APPROVAL"]
+    reason: str | None = None
+    violation_code: str | None = None
+    modified_payload: dict | None = None
+
+class ActionAuditorPlugin(Protocol):
+    """Interface for synchronous Layer 1 policy auditors."""
+    
+    def evaluate(self, ctx: AuditContext) -> AuditDecision:
+        """Evaluates an agent action before it reaches upstream or executes."""
+        ...
 ```
 
-Runtime guarantees to plugin authors:
+### 5.3 Layer 3: Consumer Plugin Interface
 
-- Events arrive **at least once** and **ordered per `trace_id`**; the runtime dedupes on `event_id` before calling the plugin.
-- A clock abstraction supplies **event time**, not wall time, so the same plugin gives the same result live and during replay.
-- Exceptions are isolated: a poison event goes to a per-plugin **dead-letter queue** after N attempts; the plugin keeps running.
-- `blob.get(ref)` lets plugins fetch payloads lazily (most metrics need only the envelope).
+```python
+from typing import Protocol
+from dataclasses import dataclass
 
-### 6.4 Reference plugins (shipped with the platform)
+@dataclass
+class ConsumerContext:
+    consumer_name: str
+    feedback_bus: "FeedbackControlChannel"
 
-| Plugin | Type | Output |
-|---|---|---|
-| `cost-and-tokens` | Stateless | Cost per call/agent/session from a versioned price table; token counters |
-| `latency` | Stateless | Latency, TTFT and proxy-overhead histograms per model |
-| `error-rate` | Windowed | Rolling error/429/timeout rates; alert on threshold breach |
-| `trace-summarizer` | Per-trace state | On trace close, emits `derived.trace.summary` (calls, tokens, cost, tools, duration, outcome) |
-| `loop-detector` | Per-trace state | Repeated identical tool calls or near-identical prompts |
-| `tool-gap` | Cross-event | Tools requested but never executed, or executed without a request |
-| `budget-guard` | Windowed | Spend per agent/tenant vs budget; alert at 80%/100% |
-| `pii-scan` | Stateless | Post-hoc detection of sensitive data in payloads |
-| `log-sink` | Sink | Structured logs to a stdout/Loki/ELK pipeline |
-
-Workflow-specific scoring (such as the reconciliation precision/recall from the earlier design) is simply **another plugin**, living in the test project and joining events to its own ground truth. This is the proof that the plug-and-play model works.
-
-### 6.5 Chaining
-
-Plugins can consume `derived.*` events from other plugins (for example an alerting plugin that reads `derived.trace.summary`). Keep the graph acyclic; the runtime validates subscriptions at registration time and rejects cycles.
-
-### 6.6 Replay and backfill
-
-- **Live:** the consumer group tails the durable log.
-- **Backfill:** register a plugin with `--from=<timestamp>`; the runtime reads the **raw archive** (and the log for the recent tail), feeding events through the same code path in event-time order.
-- **Idempotent outputs:** metrics and derived events carry deterministic IDs (hash of plugin, version, input event IDs), so re-running does not double count. Alerts are suppressed during backfill unless explicitly enabled.
-- Bumping a plugin version can trigger a re-run to produce corrected history.
-
-### 6.7 Plugin deployment
-
-| Option | Notes |
-|---|---|
-| Container per plugin (default) | Strong isolation, independent scaling, any language |
-| In-process runtime hosting multiple Python plugins | Simpler for small setups; shares a failure domain |
-| WASM plugins (future) | Sandboxed, language-neutral, cheap to host many |
-
-A **plugin registry** in the control plane records name, version, manifest, owner, and health. Rolling upgrades and canary versions run as separate consumer groups on the same topic.
-
----
-
-## 7. Metrics, monitoring and alerting
-
-### 7.1 Metrics path
-
-Plugins emit metrics through the runtime, which exposes a Prometheus scrape endpoint (or writes OTLP). Label cardinality is controlled by the runtime: plugins declare allowed labels in the manifest and the runtime rejects unknown or high-cardinality ones (trace_id, raw prompts). High-cardinality investigation goes to the hot store, not the metrics backend.
-
-### 7.2 Two kinds of alerts
-
-| Kind | Evaluated by | Examples |
-|---|---|---|
-| **Metric alerts** | Metrics backend (Prometheus rules / Alertmanager) | Error rate > 5% for 5m, p99 latency, spend rate |
-| **Event alerts** | Consumer plugins | Loop suspected on a trace, tool executed that was never requested, PII detected, call to unexpected host |
-
-Event alerts are emitted as `derived.alert.*` events, then routed by an **alert router** consumer: dedupe and grouping by key, severity mapping, silences, and fan-out to Slack, PagerDuty or webhooks. Routing rules live in config, not plugin code.
-
-### 7.3 Dashboards
-
-- Operational (metrics backend): throughput, error rates, latency, cost per agent/model, and **platform health** (section 8).
-- Investigative (hot store): drill from an alert to the trace, to the individual calls, to payloads. Link every alert to a trace view.
-
----
-
-## 8. Self-observability and SLOs
-
-The platform monitors itself with the same machinery.
-
-| Signal | Why |
-|---|---|
-| `proxy_overhead_ms` histogram | Core promise (G1); alert if p99 regresses |
-| WAL depth and age of oldest unshipped event | Detects shipper or broker trouble before data is at risk |
-| Events dropped (by reason) | Should be zero; any drop is an incident |
-| Shipper publish latency and error rate | Broker health |
-| Consumer lag per plugin | Slow or stuck plugins |
-| DLQ size per plugin | Poison events and bugs |
-| Archive write lag | Replay completeness |
-| End-to-end freshness: request time to queryable in hot store | User-facing data latency |
-
-**Design targets** (to be validated by load tests, not assumed):
-
-- Added latency p99 under a few milliseconds for non-streaming calls and under about a millisecond added to time-to-first-token.
-- Zero request failures attributable to observability components during broker or storage outage.
-- Event loss near zero while within WAL capacity (size the WAL for several hours of peak traffic).
-- Data queryable in the hot store within seconds under normal operation.
-
----
-
-## 9. Deployment topology
-
-| Topology | Pros | Cons |
-|---|---|---|
-| **Central gateway cluster** (stateless replicas behind a load balancer) | One place to operate; simple client config | Extra network hop; shared blast radius |
-| **Sidecar per agent/service** | No extra hop to a remote gateway, strong isolation | More processes; config distribution |
-| **Hybrid** | Sidecar for latency-critical, central for the rest | More to operate |
-
-Start with a central cluster. Gateway replicas are stateless apart from their local WAL, so scale horizontally and give each instance durable local disk (or a persistent volume) for the WAL. On graceful shutdown, drain in-flight streams and flush the WAL. On crash, the shipper resumes from the last acknowledged WAL offset on restart.
-
-Everything else (broker, consumers, stores) is deployed as ordinary services. Kubernetes is the natural target; the same design works with Docker Compose for local development.
-
----
-
-## 10. Control plane
-
-Small and **off the hot path**:
-
-- Tenant and agent registry, virtual keys, capture-mode and redaction config.
-- Plugin registry and rollout state.
-- Price tables and model metadata (versioned, so cost metrics are reproducible).
-- Alert routing rules.
-
-Gateways and the consumer runtime pull config on an interval and cache it. If the control plane is down, they keep running on the last known config.
-
----
-
-## 11. Security
-
-- TLS everywhere; mTLS between gateway, shipper, broker and consumers.
-- Gateway never logs credentials; secrets in a secret manager.
-- Per-tenant isolation in storage keys, topics (or topic ACLs) and query layer.
-- Role-based access to payload viewing, separate from metric viewing. Most users see metadata only.
-- The proxy itself is a high-value target: it handles provider keys and prompts. Minimize its dependencies, run it with least privilege, keep the image small, and scan and pin dependencies.
-- Prompt and response bodies can contain adversarial content. Treat all payloads as untrusted data in consumers and dashboards (escape on render; never execute or interpret as instructions).
-
----
-
-## 12. Optional extension: policy in the proxy
-
-Because the gateway sees every call, it can also enforce budgets, rate limits, model allowlists or guardrails. To keep G1 and G3 intact:
-
-- Evaluate only **local, in-memory** rules on the hot path (token buckets, allowlists). No network calls.
-- Distribute decisions computed by consumers (for example, `budget-guard` marking an agent as over budget) to gateways via the control plane as cached state, with a short propagation delay.
-- Define a **fail-open or fail-closed** setting per rule, defaulting to open, and make every enforcement action an event.
-
----
-
-## 13. Testing strategy
-
-| Layer | Approach |
-|---|---|
-| **Contract** | JSON Schema for the envelope and each event type; CI fails on breaking changes; consumers tested against fixture events from every schema version |
-| **Gateway correctness** | Golden tests with recorded provider responses (including streaming, tool use, errors, truncated streams, client aborts); assert client-visible bytes are identical to upstream |
-| **Deterministic upstream** | A **mock LLM provider** with configurable latency, token counts, errors, and slow-streaming behavior, so tests need no real API and cost nothing |
-| **Performance** | Load tests measuring `proxy_overhead_ms`, TTFT delta vs direct-to-upstream, memory per concurrent stream, throughput at N concurrent streams |
-| **Chaos** | Kill the broker, fill the disk, kill the shipper, restart the gateway mid-stream; assert agent traffic is unaffected and no events are lost within WAL limits |
-| **Consumer** | Plugin unit tests with the runtime's test harness; replay tests asserting live and backfill outputs are identical |
-| **End to end** | The **separate example workflow project** (the reconciliation simulation) runs against the platform with known ground truth. Its scoring plugin verifies that the platform captured everything: every injected scenario appears in the events with correct token counts and trace linkage |
-
----
-
-## 14. Repository layout
-
-```
-llm-observability/
-├── contract/                    # source of truth for events
-│   ├── envelope.schema.json
-│   ├── events/                  # one schema per event type
-│   └── fixtures/                # sample events per version
-├── gateway/                     # LLM gateway + egress proxy (Go)
-│   ├── providers/               # anthropic, openai-compatible adapters
-│   ├── capture/                 # tee, event builder, redaction
-│   ├── wal/
-│   ├── shipper/
-│   └── cmd/
-├── ingest/                      # ingest API + OTLP receiver
-├── sdk/                         # thin client shims (python, ts)
-├── runtime/                     # consumer runtime
-│   ├── dispatcher/              # subscriptions, dedupe, ordering, DLQ
-│   ├── state/                   # local/redis backends
-│   ├── outputs/                 # metrics, alerts, derived events
-│   └── replay/                  # archive reader, event-time clock
-├── plugins/                     # reference plugins, each self-contained
-│   ├── cost-and-tokens/
-│   ├── latency/
-│   ├── error-rate/
-│   ├── trace-summarizer/
-│   ├── loop-detector/
-│   ├── tool-gap/
-│   ├── budget-guard/
-│   └── log-sink/
-├── alerting/                    # router: dedupe, silences, channels
-├── storage/                     # archiver, hot-store writer, schemas, lifecycle
-├── control-plane/               # config API, registry
-├── testing/
-│   ├── mock-provider/
-│   ├── load/
-│   └── chaos/
-├── deploy/                      # helm charts, compose
-└── docs/
-
-# Separate repository
-reconciliation-workflow-sim/     # the example agent workflow + its scoring plugin
+class ConsumerModule(Protocol):
+    """Interface for asynchronous Layer 3 observers and risk graders."""
+    
+    def setup(self, ctx: ConsumerContext) -> None:
+        """Initialize local state, thresholds, or models."""
+        ...
+        
+    def process_event(self, event: dict, ctx: ConsumerContext) -> None:
+        """
+        Process persisted action event.
+        Can emit metrics, store derived observations, or trigger dynamic feedback.
+        """
+        ...
+        
+    def teardown(self) -> None:
+        """Flush state and cleanup resources."""
+        ...
 ```
 
 ---
 
-## 15. Technology summary
+## 6. Operability & Local Deployment Model
 
-| Concern | Recommended | Lighter alternative |
+The architecture is designed to be set up on a developer's machine in minutes, without requiring cloud accounts or complex orchestrators.
+
+### 6.1 Local Architecture Topology
+
+```
++--------------------------------------------------------------------------+
+| Single Local Host / Developer Machine                                   |
+|                                                                          |
+|  [Agent Process]  (Python / Node / AutoGen / LangGraph / Claude Code)    |
+|        │                                                                 |
+|        ▼ (localhost:8080)                                                |
+|  +────────────────────────────────────────────────────────────────────+  |
+|  | Local Control Gateway Process                                      |  |
+|  |  ├── Interception Engine (FastAPI / ASGI / Go Daemon)               |  |
+|  |  ├── In-Process Policy Registry & Dynamic Policy Cache             |  |
+|  |  ├── Transparent LLM & MCP Provider Routing Table                 |  |
+|  |  └── Queue 1 Ingestion Buffer (In-memory ring / SQLite / Redis)    |  |
+|  +────────────────────────────────────────────────────────────────────+  |
+|        │                                                                 |
+|        ▼                                                                 |
+|  +────────────────────────────────────────────────────────────────────+  |
+|  | Local Persistence Worker                                            |  |
+|  |  ├── Appends to Local MongoDB (localhost:27017)                    |  |
+|  |  └── Feeds Queue 2 (with backoff & Dead-Letter Queue)              |  |
+|  +────────────────────────────────────────────────────────────────────+  |
+|        │                                                                 |
+|        ▼                                                                 |
+|  +────────────────────────────────────────────────────────────────────+  |
+|  | Consumer & Risk Intelligence Daemon                                 |  |
+|  |  ├── Metric Aggregators & Cost Sinks                               |  |
+|  |  ├── Trajectory Anomaly & Loop Detectors                           |  |
+|  |  └── Feedback Signal Bus ───[IPC Socket / Shared Memory]───► (Cache)|
+|  +────────────────────────────────────────────────────────────────────+  |
+|        │                                                                 |
+|        ▼                                                                 |
+|  [Local Web UI / Observability Dashboard] (localhost:3000)               |
++--------------------------------------------------------------------------+
+```
+
+### 6.2 Deployment Options
+
+| Mode | Target Use Case | Components | Setup Simplicity |
+|---|---|---|---|
+| **All-in-One Local Daemon** | Quick local dev, unit & integration tests | Single Python/Go process running gateway, worker, and consumer threads + local MongoDB instance (or SQLite document JSON mode) | ⭐⭐⭐⭐⭐ (Zero overhead, single command) |
+| **Docker Compose** | Reproducible team environments, Hackathon demos | Containers: `gateway`, `persistence-worker`, `mongo:latest`, `consumer-runner`, `dashboard` | ⭐⭐⭐⭐ (Isolated, single `docker compose up`) |
+| **Sidecar Container** | Containerized agent deployment | Gateway runs in the same pod/network namespace as the agent container, binding to `localhost` | ⭐⭐⭐⭐ (Production-ready local isolation) |
+
+---
+
+## 7. Extensibility & Development Guide
+
+### How to Add a New Auditor Plugin to Layer 1
+1. **Implement the contract:** Write a class fulfilling `ActionAuditorPlugin` (or expose a simple HTTP POST endpoint returning JSON).
+2. **Register in configuration:** Add the plugin entry to `gateway_config.yaml` under `interception.auditors`.
+3. **Specify behavior on violation:** Choose whether to `BLOCK` (drop action and return error) or `REDACT` (cleanse arguments).
+
+### How to Add a New Risk Grader with Feedback to Layer 3
+1. **Implement `process_event`:** Track relevant historical actions for the session in memory or local cache.
+2. **Calculate risk heuristic:** Check for anomalous behavior (e.g., unexpected arguments, forbidden transitions).
+3. **Emit feedback signal:** Call `ctx.feedback_bus.emit_adjustment(PolicyAdjustmentSignal(...))` to dynamically tighten the gateway's rules.
+
+---
+
+## 8. Summary Comparison: Enterprise Spec vs. Local Gateway
+
+| Dimension | Previous Enterprise Spec | Refocused Local Gateway Architecture |
 |---|---|---|
-| Gateway | Go (or Rust) | Python FastAPI for v1 |
-| Durable log | Redpanda / Kafka | NATS JetStream, or Postgres outbox at very small scale |
-| Raw archive | Parquet on S3/MinIO | Local Parquet files |
-| Hot store | ClickHouse | DuckDB / Postgres |
-| Blob store | S3/MinIO | Local filesystem |
-| Metrics | Prometheus (+ Alertmanager) | OTLP to any backend |
-| Consumer plugins | Python (SDK), containerized | In-process Python |
-| Config/registry | Postgres | SQLite |
-| Tracing interop | W3C traceparent, OTLP in/out | |
-
----
-
-## 16. Build vs. buy
-
-Open-source and commercial LLM gateways and observability tools already exist (LiteLLM, Helicone, Langfuse and Portkey are examples). I haven't re-verified their current feature sets, so check them before committing. Building this is justified if you specifically want: the WAL-based fail-open durability guarantees, the replayable plug-in consumer model with event-time semantics, tool-execution capture alongside LLM calls, and full control over the data path. A reasonable hybrid is to adopt the OTel GenAI conventions and OTLP so your data stays portable and you can plug into existing tools at any point.
-
----
-
-## 17. Phased roadmap
-
-| Phase | Deliverable | Exit criterion |
-|---|---|---|
-| **0. Contract** | Envelope and event schemas, fixtures, mock provider | Schemas reviewed; mock provider streams correctly |
-| **1. Minimal gateway** | Anthropic + OpenAI-compatible passthrough, streaming tee, WAL to local files | Byte-identical responses vs. direct; overhead measured |
-| **2. Transport and storage** | Shipper, broker, blob store, archiver, hot-store writer | Events queryable end to end; broker-outage test passes |
-| **3. Consumer runtime** | Dispatcher, dedupe, state, DLQ, metrics output, 3 reference plugins | A new plugin deploys without touching other components |
-| **4. Alerting and replay** | Alert router, event-time clock, archive backfill | Backfill output equals live output |
-| **5. Wider capture** | Egress proxy, ingest API/OTLP, SDK, `tool-gap` plugin | Requested vs. executed tool calls reconciled |
-| **6. Hardening** | Redaction, virtual keys, RBAC, chaos and load suites, SLO dashboards | SLO targets validated under load |
-| **7. Integration test** | Example workflow project wired in, with its scoring plugin | Platform captures 100% of scenario events |
-
----
-
-## 18. Open decisions
-
-1. **Scale:** expected calls per second and concurrent streams? This decides broker, hot store and gateway topology.
-2. **Providers:** only Anthropic and OpenAI-compatible, or others (Bedrock, Vertex, local models)?
-3. **Payload policy:** full capture by default, or metadata-only with sampled payloads?
-4. **Tenancy:** single team, or multi-tenant with strict isolation from day one?
-5. **Fail-open vs. fail-closed:** is silently losing observability ever unacceptable (e.g. audit requirements)? If so, a `block` backpressure mode for specific tenants may be needed.
-6. **Plugin languages:** Python-only, or polyglot from the start?
-7. **Gateway language:** accept Go/Rust, or start in Python for speed of iteration?
+| **Deployment Target** | Distributed cloud cluster (K8s, Kafka, S3, ClickHouse) | **Locally run gateway/proxy** on the same host as the agentic loop |
+| **Interception Role** | Passive observation (post-hoc monitoring, streaming tee) | **Active Control**: Synchronous auditing, in-process/webhook policy guards, action blocking |
+| **Backend Routing** | Simple passthrough | **Transparent routing & provider fallback** (LLM & MCP failover) |
+| **Persistence** | Multi-tier (WAL -> Broker -> S3 Parquet -> ClickHouse) | **Document Store (MongoDB)** for rapid append-only JSON storage |
+| **Consumer Execution** | Distributed consumer groups on Kafka | **Supervised Local Queue 2** with exponential backoff & DLQ |
+| **Observability -> Control** | One-way pipeline (observe only) | **Closed-loop dynamic feedback**: consumers dynamically update Layer 1 policy cache |
