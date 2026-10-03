@@ -1,7 +1,7 @@
 ---
 description: Check hackathon requirements and submission evidence.
 agent: rules-auditor
-subtask: true
+subtask: false
 ---
 
 Check competition rules and technical challenge compliance. Scope: $ARGUMENTS

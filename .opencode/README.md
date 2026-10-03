@@ -13,7 +13,7 @@ These are development and review assistants for the hackathon repository, not ag
 | `security-auditor` | `subagent` | Trust boundaries, injection, leakage, policy/approval bypass, and budget enforcement. |
 | `verification-auditor` | `subagent` | Independent external-state postconditions, uniqueness, false success, and test gaps. |
 
-The builder is primary because implementation needs an ongoing conversation and ownership of changes. The architect uses `all` because interactive design and delegated design reviews are both useful. Auditors are subagents because their work is bounded, read-only, and produces a report rather than taking over implementation. They remain visible in `@` autocomplete.
+The builder is primary because implementation needs an ongoing conversation and ownership of changes. The architect uses `all` because interactive design and delegated design reviews are both useful. Auditors remain subagent-mode so they can be delegated to without cluttering primary-agent selection. They remain visible in `@` autocomplete. Their slash commands explicitly run directly under the auditor's read-only permissions, without an extra parent review pass.
 
 The builder's Task permission explicitly permits only these specialists, not unrestricted delegation to built-in agents with broader permissions. Auditors deny tools by default and permit repository reads/searches; they cannot edit, run shell commands, invoke other agents, or use unlisted MCP tools. Security/architecture web fetches require approval. The builder requires approval for shell commands and unlisted tools. Permissions are workflow controls, not a complete sandbox: search can still encounter sensitive content, and approved shell execution can access data outside a read-tool restriction. Keep real credentials out of the repository and use synthetic fixtures. OpenCode's built-in agents remain available when explicitly selected; these restrictions describe the custom agents, not every possible OpenCode session.
 
@@ -64,7 +64,17 @@ Convenience commands:
 /review-outcomes path/to/verifier
 ```
 
-Arguments are optional scopes or questions. The four specialist commands explicitly run as subtasks, keeping their work in child sessions. `/review-project` runs the architect in the main session so it can orchestrate the four auditors; it is intentionally not a subtask because OpenCode's default nesting depth prevents subagents from spawning further subagents. A delegated architect should perform its own bounded design review rather than rely on nested delegation.
+Arguments are optional scopes or questions. The four specialist commands use `subtask: false` to execute directly under their target auditor in the current session. This is supported even though those agents have `mode: subagent`. It avoids OpenCode 1.18.34's command-subtask continuation, which injects "Summarize the task tool output above and continue with your task" into the parent and can trigger a second, redundant review after the auditor has already finished. The auditor's final answer is the command result; there is no parent-model pass.
+
+Use a new session for an isolated standalone review. These direct commands share the current conversation context and may update its active agent; select the builder again before implementation. Do not use plain `opencode run --agent rules-auditor`: subagent-only agents are rejected by that CLI selector and fall back to the default agent. Use the specialist command instead:
+
+```sh
+opencode run --command review-rules "Architecture.md and Observability layer.md"
+opencode run --command review-direction "Architecture.md and Observability layer.md"
+opencode run --command review-outcomes "Architecture.md and Observability layer.md"
+```
+
+Normal builder delegation and `@auditor` invocations still use child Task sessions. `/review-project` runs the architect in the main session and intentionally collects/consolidates four child auditor results. It is not a subtask because OpenCode's default nesting depth prevents subagents from spawning further subagents. A delegated architect should perform its own bounded design review rather than rely on nested delegation.
 
 Use ordinary paths/questions as command arguments. OpenCode preprocesses shell-injection syntax and `@file` references in command templates, including expanded arguments, before reviewer tool execution. Do not pass shell-injection syntax or sensitive file references as scope text. Reviewer permissions do not sanitize command preprocessing or user-supplied attachments.
 
@@ -88,7 +98,7 @@ An automated harness is available with Node.js 22+ and OpenCode installed:
 node .opencode/tests/smoke.mjs
 ```
 
-It copies only the configuration and instruction documents into a disposable Git fixture, uses temporary HOME/XDG paths and a clean child-process environment, and redirects inference to a scripted loopback-only OpenAI-compatible endpoint. It checks loading, effective modes/permissions, shared instructions, each review command, and builder/architect delegation, including completed Task events linked to distinct child sessions and completed parent responses. It never needs a real API key or sends model requests to NVIDIA. This validates configuration and tool orchestration, not model quality, authenticated NVIDIA access, or product-runtime enforcement. The fixture is removed on normal completion and caught failures; forcibly interrupting the process can leave temporary artifacts. This isolation is not an OS-level filesystem/network sandbox; the harness refuses to run if macOS managed-preference storage is present because that may introduce configuration outside temporary HOME.
+It copies only the configuration and instruction documents into a disposable Git fixture, uses temporary HOME/XDG paths and a clean child-process environment, and redirects inference to a scripted loopback-only OpenAI-compatible endpoint. It checks loading, effective modes/permissions and shared instructions. Each specialist command is tested from both builder and architect: exactly one auditor session, a completed read followed by its final answer, zero child Tasks, and zero parent-model requests. Builder delegation and `/review-project` are separately checked for completed Tasks linked to distinct child sessions and final parent responses. This catches the redundant-parent regression instead of scripting the parent to finish politely. It never needs a real API key or sends model requests to NVIDIA. This validates configuration and tool orchestration, not model quality, authenticated NVIDIA access, or product-runtime enforcement. The fixture is removed on normal completion and caught failures; forcibly interrupting the process can leave temporary artifacts. This isolation is not an OS-level filesystem/network sandbox; the harness refuses to run if macOS managed-preference storage is present because that may introduce configuration outside temporary HOME.
 
 ## References
 

@@ -133,6 +133,7 @@ Each auditor plugin evaluates the proposed action and returns a deterministic ev
 - `BLOCK`: The action violates policy; reject immediately and return a structured error to the agent.
 - `REDACT`: Sanitize sensitive fields (e.g., tokens, PII) in arguments before forwarding.
 - `REQUIRE_APPROVAL`: Pause execution until an external local confirmation is provided.
+- `ALERT`: Allow the action to proceed, but emit a high-priority warning event to the dashboard and increase session risk score.
 
 #### Dual Plugin Delivery Mechanisms
 To make the system easily extendable and polyglot-friendly, two plugin integration modes are supported:
@@ -166,8 +167,13 @@ interception:
       type: "webhook"
       endpoint: "http://127.0.0.1:9090/audit/action"
       timeout_ms: 150
-      on_timeout: "fail_closed" # 'fail_closed' or 'fail_open'
 ```
+
+#### Dynamic Configuration Hot-Reloading
+The policy engine continuously monitors `gateway_config.yaml` / `policy.yaml` for file modification events (via inotify / file watcher). When configuration files are modified (e.g. judges adjusting thresholds, toggling allowlists, or updating token budgets during evaluation):
+- Updated policies are immediately validated and swapped in-memory.
+- In-flight and new requests immediately bind to the new policy without restarting the agentic loop.
+- A `policy_reloaded` event is emitted to the persistence layer with the new policy version hash.
 
 ### 2.3 Transparent Backend Routing & Fallback
 
@@ -410,7 +416,7 @@ class AuditContext:
 
 @dataclass
 class AuditDecision:
-    decision: Literal["ALLOW", "BLOCK", "REDACT", "REQUIRE_APPROVAL"]
+    decision: Literal["ALLOW", "BLOCK", "REDACT", "REQUIRE_APPROVAL", "ALERT"]
     reason: str | None = None
     violation_code: str | None = None
     modified_payload: dict | None = None

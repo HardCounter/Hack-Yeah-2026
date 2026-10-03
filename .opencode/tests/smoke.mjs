@@ -118,7 +118,7 @@ try {
   for (const [name, target] of Object.entries(commands)) {
     assert.equal(config.command[name].agent, target);
     assert(config.command[name].template.includes("$ARGUMENTS"));
-    assert.equal(config.command[name].subtask === true, name !== "review-project");
+    if (name !== "review-project") assert.equal(config.command[name].subtask, false);
   }
   for (const [name, mode] of Object.entries(agents)) {
     const agent = JSON.parse(await cli(["debug", "agent", name]));
@@ -152,6 +152,7 @@ try {
       const system = input.messages.filter((message) => message.role === "system").map((message) => message.content).join("\n");
       const name = Object.keys(signatures).find((agent) => system.includes(signatures[agent]));
       assert(name, "Request must include a known agent prompt");
+      if (scenario.direct) assert.equal(name, scenario.parent, "Specialist commands must not invoke a parent model");
       assert(system.includes("# Project Instructions"), "AGENTS.md must be loaded");
       assert(system.includes("# AI Control Layer: Project Direction"), "Configured direction must be loaded");
       const session = request.headers["x-opencode-session-id"];
@@ -162,6 +163,7 @@ try {
       const agentSessions = scenario.sessionsByAgent.get(name) || new Set();
       agentSessions.add(session);
       scenario.sessionsByAgent.set(name, agentSessions);
+      scenario.requests++;
       const available = (input.tools || []).map((tool) => tool.function.name);
       if (agents[name] !== "primary") {
         assert(!available.includes("edit") && !available.includes("write") && !available.includes("bash"));
@@ -169,7 +171,19 @@ try {
       if (agents[name] === "subagent") assert(!available.includes("task"));
       const results = input.messages.filter((message) => message.role === "tool");
       let calls;
-      if (scenario.delegate && name === scenario.parent && !scenario.called.has(session)) {
+      if (scenario.direct && !scenario.called.has(session)) {
+        assert(available.includes("read"));
+        scenario.called.add(session);
+        calls = [{
+          index: 0,
+          id: "call_read",
+          type: "function",
+          function: { name: "read", arguments: JSON.stringify({ filePath: path.join(fixture, "AGENTS.md"), limit: 1 }) },
+        }];
+      } else if (scenario.direct) {
+        assert.equal(results.length, 1);
+        assert(JSON.stringify(results[0].content).includes("# Project Instructions"), "Auditor must receive the completed read result");
+      } else if (scenario.delegate && name === scenario.parent && !scenario.called.has(session)) {
         assert(available.includes("task"), "Parent must have Task available");
         scenario.called.add(session);
         calls = scenario.delegate.map((target, index) => ({
@@ -220,8 +234,8 @@ try {
     },
   });
 
-  async function run(label, args, parent, delegate, expectedTasks = delegate || []) {
-    scenario = { parent, delegate, seen: new Set(), sessions: new Set(), sessionsByAgent: new Map(), called: new Set(), errors: [], completed: false };
+  async function run(label, args, parent, delegate, direct = false) {
+    scenario = { parent, delegate, direct, requests: 0, seen: new Set(), sessions: new Set(), sessionsByAgent: new Map(), called: new Set(), errors: [], completed: false };
     const output = await cli(["run", "--format", "json", "--title", "Synthetic agent harness", ...args]);
     assert.equal(scenario.errors.length, 0, scenario.errors.map((error) => error.message).join("\n"));
     assert(scenario.seen.has(parent), `${label}: wrong parent`);
@@ -233,7 +247,7 @@ try {
     assert.equal(parentSessions.size, 1, `${label}: expected a single parent session`);
     const [parentSession] = parentSessions;
     const childSessions = new Set();
-    for (const target of expectedTasks) {
+    for (const target of delegate || []) {
       const task = events.find((event) => event.type === "tool_use" && event.part.tool === "task" && event.part.state.input.subagent_type === target);
       assert(task, `${label}: missing Task event for ${target}`);
       assert.equal(task.sessionID, parentSession);
@@ -250,14 +264,26 @@ try {
       for (const target of delegate) assert(scenario.seen.has(target), `${label}: ${target} not invoked`);
       assert(scenario.sessions.size >= delegate.length + 1, `${label}: child sessions not isolated`);
     }
+    if (direct) {
+      assert.deepEqual([...scenario.seen], [parent], `${label}: duplicate parent work`);
+      assert.equal(scenario.sessions.size, 1, `${label}: must use one auditor session`);
+      assert.equal(scenario.requests, 2, `${label}: expected read followed by final response, with no extra inference`);
+      assert(!events.some((event) => event.type === "tool_use" && event.part.tool === "task"), `${label}: unexpected child Task`);
+      assert.equal(events.filter((event) => event.type === "tool_use" && event.part.tool === "read" && event.part.state.status === "completed").length, 1);
+    }
     console.log(`PASS ${label}: ${[...scenario.seen].join(", ")}`);
   }
 
   await run("default builder", ["SMOKE_DEFAULT"], "control-builder");
   await run("builder delegation", ["SMOKE_DELEGATE"], "control-builder", ["control-architect", ...auditors]);
   for (const [command, target] of Object.entries(commands)) {
-    await run(command, ["--command", command, "SMOKE_SCOPE"], command === "review-project" ? target : "control-builder", command === "review-project" ? auditors : undefined, command === "review-project" ? auditors : [target]);
-    assert(scenario.seen.has(target), `${command}: target was not invoked`);
+    if (command === "review-project") {
+      await run(command, ["--command", command, "SMOKE_SCOPE"], target, auditors);
+    } else {
+      for (const caller of ["control-builder", "control-architect"]) {
+        await run(`${command} from ${caller}`, ["--agent", caller, "--command", command, "SMOKE_SCOPE"], target, undefined, true);
+      }
+    }
   }
   console.log("PASS isolated local harness; no authenticated NVIDIA inference performed");
 } finally {

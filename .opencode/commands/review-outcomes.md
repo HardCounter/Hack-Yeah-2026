@@ -1,7 +1,7 @@
 ---
 description: Check independent outcome verification and negative-test coverage.
 agent: verification-auditor
-subtask: true
+subtask: false
 ---
 
 Review outcome verification and test adequacy. Scope: $ARGUMENTS

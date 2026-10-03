@@ -1,7 +1,7 @@
 ---
 description: Review runtime security boundaries and concrete bypass risks.
 agent: security-auditor
-subtask: true
+subtask: false
 ---
 
 Perform a read-only security review. Scope: $ARGUMENTS
