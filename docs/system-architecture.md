@@ -1,16 +1,22 @@
 # Monitored Banking Agents: System Architecture
 
-A simulated banking environment running autonomous agents (**Client Onboarding** and **AML Transaction Monitoring**), intercepted by a synchronous **AI Control Layer** (LLM & Tool Proxy) and an independent **Evaluation & Metrics Layer** with sealed ground truth.
+Status: **proposed, not implemented** apart from the synthetic data generator. The MVP
+monitors one **Client Onboarding (KYC)** workflow, intercepted by a synchronous
+**AI Control Layer** and an independent persisted-state verifier. **AML is deferred**,
+even though the dataset includes AML fixtures. No runtime controls or product tests exist yet.
+
+The normative execution/trust requirements are in [architecture-contract.md](architecture-contract.md).
+That contract resolves older proposals below; stack options are suggestions, not selections.
 
 ---
 
 ## 1. Design principles
 
-1. **Agents are unaware of monitoring.** They only know a base URL (the control proxy). No guardrail or tracing code lives inside agent code.
+1. **Enforcement is external to agents.** Agents use the gateway; backend credentials, tool implementations and writable state are isolated from them. A base URL alone does not prevent bypass.
 2. **The proxy is the single control and observation point.** Every LLM call and every tool call crosses it synchronously. It enforces policy (ALLOW, BLOCK, REDACT, REQUIRE_APPROVAL, ALERT) before execution.
 3. **The monitoring layer is a separate deployable.** It consumes the event stream and shares no code or imports with the monitored agents. The only contract is the event schema (section 6).
-4. **Ground truth is sealed.** The simulator knows which faults, injections, and anomalies exist (`data/ground_truth.json`). Agents only see `data/bank.db`. Only the evaluator reads ground truth, after a run.
-5. **Everything is replayable.** Runs are seeded, events are append-only, and test scenarios run deterministically with scripted faults.
+4. **Ground truth must be protected.** The synthetic oracle is generated as `data/ground_truth.json`. Agents receive scoped tool results, not filesystem/SQL access to either data file. Verifier access must be separately read-only.
+5. **Deterministic fixtures are replayable.** Scripted scenarios can be reproducible; live agent and semantic-model results are not deterministic. Replay verification also requires an immutable persisted-state snapshot.
 
 ---
 
@@ -23,7 +29,7 @@ flowchart LR
         ORCH[Scenario Runner /<br/>Orchestrator]
         subgraph AGENTS["Monitored Agents"]
             ONB[Client Onboarding<br/>Agent]
-            AML[AML Transaction<br/>Monitoring Agent]
+            AML[AML Agent<br/>DEFERRED]
         end
         TOOLS[Tool servers<br/>bank.db SQLite tools<br/>OCR, Sanctions, Registry]
         HQ[Compliance / Human<br/>Review Queue]
@@ -32,7 +38,7 @@ flowchart LR
     subgraph PROXY["AI Control Layer (Proxy)"]
         LLMP[LLM proxy<br/>(Ollama / vLLM / OpenAI)]
         TOOLP[Tool proxy<br/>(In-line guardrails)]
-        POL[Synchronous Policy Engine<br/>& Scripted Fault Injector]
+        POL[Pinned Policy + Trusted Task Contract<br/>Hard Checks + Selective Semantic Gate]
     end
 
     subgraph MON["Evaluation and metrics layer (separate)"]
@@ -56,7 +62,10 @@ flowchart LR
     TOOLP --> BUS
     ORCH --> BUS
     HQ --> BUS
-    BUS --> STORE --> EVAL --> DASH
+    BUS --> STORE --> DASH
+    STORE --> EVAL
+    TOOLS -. separate read-only persisted-state path .-> EVAL
+    EVAL --> DASH
     GT -. read-only postconditions .-> EVAL
 ```
 
@@ -70,9 +79,9 @@ Runs independently of downstream monitoring. Powered by the deterministic mock d
 
 | Item | Detail |
 |---|---|
-| Generator | Seeded (`random.seed(2026)`, `Faker` seeded 2026). Generates byte-identical SQLite database `data/bank.db`. |
-| Volumes | ~150 clients, 250 accounts, 8,000 transactions (90 days history), 15 applications, 60 alerts. |
-| Tables | `clients`, `accounts`, `transactions`, `applications`, `alerts`, `company_registry`, `sanctions_list`, `pep_list`, `documents`. |
+| Generator | Implemented stdlib-only `random.Random`, seed 2026; generator contains a byte-identical-output self-check. No Faker dependency. |
+| Volumes | Targets: ~150 clients, 230 accounts, 9,000 transactions (90 days history), 15 applications, 60 alerts; actual counts must come from execution. |
+| Tables | `clients`, `accounts`, `transactions`, `onboarding_applications`, `alerts`, `company_registry`, `sanctions_list`, `pep_list`, `documents`; runtime evidence/linkage additions are still required. |
 | Planted Anomalies | Sanctions hits, PEP flags, prompt injections in OCR/memos, expired passports, structuring cash deposits, rapid movement via high-risk jurisdictions. |
 | Sealed Ground Truth | Written to `data/ground_truth.json` (contains actual labels, expected dispositions, and correct resolutions; unseen by agents). |
 
@@ -81,17 +90,24 @@ Runs independently of downstream monitoring. Powered by the deterministic mock d
 | Agent | Objective | Key Tools | Authority & Guardrails |
 |---|---|---|---|
 | **Client Onboarding Agent** | Triage and decide onboarding applications (`APP-…`) | `read_application`, `read_documents`, `extract_fields`, `check_registry`, `screen_sanctions`, `compute_risk`, `create_client`, `request_more_docs`, `escalate_edd`, `reject_application` | `create_client` writes to `clients` & `accounts`; requires prior sanctions screening and unexpired docs. |
-| **AML Transaction Monitoring Agent** | Investigate and dispose AML alerts (`ALR-…`) | `get_alert`, `get_transactions`, `get_customer_profile`, `get_counterparty_info`, `close_alert`, `file_sar`, `freeze_account`, `contact_customer` | `close_alert`, `file_sar`, `freeze_account` mutate state; `contact_customer` forbidden after SAR filing (anti-tipping-off). |
+| **AML Transaction Monitoring Agent (deferred)** | Future alert investigation (`ALR-…`) | Deferred tools in `docs/use-cases.md` | Not part of the KYC MVP or claimed coverage. |
 
-Agents run against Ollama using tool calling, configured with `base_url = <proxy>`. Each request carries correlation headers (section 4.3).
+A planned agent runs against a configured model through the proxy. Model/provider choice is
+not yet implemented. Correlation headers (section 4.3) carry no authorization authority.
 
 ### 3.3 Tool implementation
 
-Plain Python functions executing over `data/bank.db` (SQLite). Actions with side-effects (`create_client`, `freeze_account`, `file_sar`) modify database rows, allowing the Outcome Verifier to validate persisted state directly.
+Planned Python tools execute over an isolated copy of `data/bank.db`. KYC writes must
+atomically persist client/account linkage, application decision and durable effect receipts,
+with uniqueness by application across sessions. The verifier uses a separate read-only path.
+Neither tools nor these schema additions are implemented yet.
 
 ### 3.4 Orchestrator / Scenario Runner
 
-Drives the 28 evaluation scenarios (`ONB-01`..`ONB-15`, `TXM-01`..`TXM-13`), sets `run_id` and `case_id`, attaches Task Contracts, and enables scripted faults for automated testing.
+Creates trusted immutable Task Contracts, isolates state per run and drives the planned KYC,
+bait and gateway scenarios in `docs/use-cases.md`. Fault injection is test-only and occurs
+before enforcement; an agent cannot enable it. AML scenarios are deferred, and scenario
+tables are not executed test results.
 
 ### 3.5 Human Review Queue (Compliance Desk)
 
@@ -106,14 +122,15 @@ The proxy sits between agents and everything they call. It is the only source of
 ### 4.1 LLM proxy
 
 - Exposes an API-compatible endpoint (same request/response shape as the upstream provider), so agents need no code changes beyond `base_url`.
-- Forwards to the real provider, streams responses back.
-- Records, per call: model, prompt and completion (or hashes plus a pointer to blob storage), token counts, latency, time-to-first-token, status code, retries, stop reason, tool-use blocks.
-- Computes cost from a price table (kept in the proxy config, not in agents).
+- Forwards only after hard checks, atomic budget reservation and any required semantic gate.
+- Buffers responses and inspects outputs before delivery; unchecked streaming is deferred.
+- Records sanitized allowlisted metadata: model/version, usage, latency, status, retries and decisions. No raw prompt/completion or secret-bearing blob retention.
+- Reserves cost/token/compute bounds synchronously from centralized policy, including semantic calls and retries; reconciles actual or conservatively unknown usage.
 
 ### 4.2 Tool proxy
 
 - Fronts all tool servers. Agents call tools through it.
-- Records: tool name, arguments, result (or hash plus pointer), latency, success or error, bytes returned.
+- Records sanitized tool/action metadata, decision, receipt reference, latency and bytes; raw arguments/results are not general audit evidence.
 - Can enforce permission scopes per agent identity (e.g. Onboarding Agent may not call `freeze_account` or `file_sar`, and AML Agent may not call `contact_customer` after filing a SAR). A denied call is itself an event.
 
 ### 4.3 Correlation headers
@@ -128,11 +145,16 @@ Every agent request includes:
 | `X-Step-Id` | Monotonic step counter within the case |
 | `X-Parent-Span-Id` | Links a call to the step that triggered it |
 
-These are what let the monitoring layer rebuild a full trace without ever seeing agent internals.
+These help rebuild traces without agent internals; they are **not credentials**. The gateway
+binds the authenticated principal to the stored contract, rejects conflicting IDs and
+allocates authoritative action IDs/order. Agents cannot supply their own role or authority.
 
 ### 4.4 Synchronous Policy Enforcement & Scripted Faults
 
-The proxy evaluates in-line guardrails before requests reach upstream LLMs or tool execution:
+The proxy evaluates deterministic checks before requests reach upstream LLMs or tools,
+then selectively assesses the trajectory before high-impact dispatch. Hard denies, exhausted
+budgets and missing approvals cannot be overridden. Semantic timeout/invalid response pauses
+or blocks when that gate is required. Exact-action approvals are single-use and state-bound:
 - **Synchronous Policy Actions:** `ALLOW`, `BLOCK`, `REDACT` (PII/secrets), `REQUIRE_APPROVAL`, `ALERT`.
 - **Scripted Faults (for reproducible testing as defined in `docs/use-cases.md`):**
   - `skip_step:<tool>` (e.g. skip sanctions check before creating client).
@@ -146,13 +168,19 @@ Injected faults are tagged in the event (`fault_injected: true`) so the Evaluato
 
 ### 4.5 Emission
 
-The proxy writes events **asynchronously** to the event log/queue (`Queue 1`) so telemetry persistence never slows down synchronous enforcement. If the log is unavailable, the proxy buffers locally (e.g. to a local SQLite table or JSONL file) and flushes later.
+The gateway persists sanitized critical decisions/intents before high-impact dispatch;
+business writes atomically record effect receipts. A durable outbox asynchronously delivers
+analytics events. Queues/retries are bounded and event-ID deduplicated. Durable audit failure
+pauses writes; an in-memory buffer cannot guarantee evidence preservation after a crash.
 
 ---
 
 ## 5. Monitoring and metrics layer
 
-A separate service (own repo or package, own process). Inputs: the event log and the sealed ground truth (`data/ground_truth.json`). It never calls agents, the orchestrator, or tool servers directly.
+A separate verifier/metrics component. Metrics use sanitized events. Outcome verification
+uses the trusted contract/baseline and a separate read-only consistent snapshot of persisted
+bank state, with the synthetic oracle where relevant. It never relies on agent claims or
+tool responses; event/ground-truth joins alone cannot prove a business outcome.
 
 ### 5.1 Components
 
@@ -162,12 +190,12 @@ A separate service (own repo or package, own process). Inputs: the event log and
 | **Ingestor** | Validates events against the schema, writes to the analytics store |
 | **Analytics store** | DuckDB or SQLite (Postgres / ClickHouse for large scale). Tables: `llm_calls`, `tool_calls`, `lifecycle`, `faults`, `ground_truth` |
 | **Trace builder** | Reconstructs per-case traces from correlation IDs (`X-Run-Id`, `X-Case-Id`, `X-Step-Id`) |
-| **Outcome Verifier / Evaluator** | Joins traces to sealed `ground_truth.json` post-run and asserts postconditions (`ONB-P1..P6`, `TXM-P1..P6`) |
+| **Outcome Verifier / Evaluator** | Queries persisted bank state and trusted baseline independently; checks KYC state invariants, separately identifies trace-assisted process checks, reports success/failure/incomplete; AML deferred. |
 | **Dashboard / reports** | Streamlit UI displaying security posture, active guardrails, blocked threats, and budget consumption |
 
 ### 5.2 Metric families
 
-**Outcome & Compliance (verified against `ground_truth.json`)**
+**Proposed outcome/compliance metrics (not measurements). KYC uses trusted baseline + persisted state; AML metrics below are deferred.**
 
 | Metric | Definition |
 |---|---|
@@ -175,7 +203,7 @@ A separate service (own repo or package, own process). Inputs: the event log and
 | **Exploit Catch Rate** | Intercepted prompt injections and parameter swaps / all planted attacks |
 | **Tipping-Off Violations** | Attempts to contact customer after SAR filing (Target: exactly 0) |
 | **Sanctions Screening Recall** | Flagged / screened high-risk entities / all ground-truth sanctioned entities |
-| **Idempotency Enforcement** | Blocked duplicate write attempts (`create_client`, `file_sar`) / all duplicate attempts |
+| **Idempotency Enforcement** | Persisted client count per application across sessions plus duplicate-attempt decisions; counting blocked attempts alone does not prove exactly-once effects. |
 | **Escalation Precision** | Cases escalated to human compliance that truly required EDD / all escalations |
 
 **Efficiency (from proxy events, available live)**
@@ -214,11 +242,15 @@ The only interface between the simulation/proxy and monitoring. Version it (`sch
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "proposed-1.0",
   "event_id": "uuid",
   "ts": "2026-10-03T10:15:42.123Z",
   "type": "llm_call",
   "run_id": "run_0042",
+  "contract_id": "contract_0042",
+  "policy_version": "sha256:example-policy",
+  "feed_version": "sha256:example-feed",
+  "action_id": "action_0004",
   "case_id": "ALR-0002",
   "agent_id": "aml_agent",
   "step_id": 4,
@@ -231,8 +263,9 @@ The only interface between the simulation/proxy and monitoring. Version it (`sch
     "status": 200,
     "stop_reason": "tool_use",
     "cost_usd": 0.0116,
-    "request_ref": "blob://runs/run_0042/req_8f2.json",
-    "response_ref": "blob://runs/run_0042/res_8f2.json",
+    "decision": "ALLOW",
+    "reason_code": "checks_passed",
+    "reserved_cost_usd": 0.02,
     "fault_injected": false
   }
 }
@@ -245,12 +278,17 @@ The only interface between the simulation/proxy and monitoring. Version it (`sch
 | `run_started` / `run_finished` | Orchestrator | Config, seed, agent versions, model names |
 | `case_started` / `case_closed` | Orchestrator | Final status, resolution, escalated flag |
 | `llm_call` | LLM proxy | As above |
-| `tool_call` | Tool proxy | Tool name, args ref, result ref, latency, ok/error |
+| `tool_call` | Tool proxy | Sanitized tool/action fields, decision, receipt reference, latency and execution status |
 | `policy_denied` | Tool proxy | Agent, tool, rule |
 | `fault_injected` | Proxy | Fault type, target |
-| `human_decision` | Human queue stub | Decision, delay |
+| `human_decision` | Authorized review queue (stub labelled in tests) | Action/contract/policy/state-bound approval reference, reviewer, expiry and decision |
+| `verification_result` | Independent verifier | Status, per-check evidence source, snapshot/verifier version and failed/incomplete invariant IDs |
 
-Large bodies (prompts, tool results) go to blob storage and are referenced by `*_ref`, keeping the event log small.
+Examples are illustrative, not a implemented schema. The canonical required envelope is in
+`architecture-contract.md`; both architecture documents must use that envelope when implemented.
+Only sanitized allowlisted fields are stored/exported. Large raw prompts/results do not go
+to blobs by default. Verification, semantic assessments and policy/intervention events need
+explicit records with evidence-source and version references.
 
 ---
 
@@ -266,6 +304,7 @@ sequenceDiagram
     participant T as Tool server
     participant B as Event log
     participant E as Evaluator
+    participant S as Bank State (read-only verifier path)
 
     O->>G: generate(seed, config)
     G-->>O: datasets (ground truth sealed)
@@ -274,20 +313,27 @@ sequenceDiagram
         O->>B: case_started
         O->>A: work on case
         A->>P: LLM request (+ correlation headers)
-        P->>L: forward
+        P->>P: hard checks, reserve budget, required semantic gate
+        P->>L: forward only if permitted
         L-->>P: response
-        P-->>A: response
+        P->>P: inspect output, reconcile usage
+        P-->>A: sanitized response
         P--)B: llm_call
         A->>P: tool request
-        P->>T: forward (if permitted)
+        P->>P: hard/state/approval checks, semantic gate, durable intent
+        P->>T: forward only if permitted
+        T->>S: atomic business write + effect receipt
         T-->>P: result
-        P-->>A: result
+        P->>P: inspect output, persist sanitized result
+        P-->>A: sanitized result
         P--)B: tool_call
         O->>B: case_closed
     end
     O->>B: run_finished
     E->>B: read events
-    E->>E: join with ground truth, compute metrics
+    E->>S: read fenced, consistent persisted-state snapshot
+    E->>E: compare trusted baseline, state, counts and required process evidence
+    E->>B: VERIFIED_SUCCESS / FAILED_POSTCONDITIONS / VERIFICATION_INCOMPLETE
 ```
 
 ---
@@ -297,17 +343,17 @@ sequenceDiagram
 ```
 ai-control-layer/
 ├── data/                     # Mock banking environment & generator (docs/mock-data-spec.md)
-│   ├── generate.py           # Deterministic generator (Faker / random seed 2026)
-│   ├── rules.py              # AML rules engine (R-1..R-6) used by generator & verifier
+│   ├── generate.py           # Implemented stdlib generator, seed 2026
+│   ├── rules.py              # Implemented mock AML rules; sharing is not independent rule validation
 │   ├── report.py             # HTML explorer for generated dataset
 │   ├── bank.db               # SQLite database read/written by agent tools
 │   ├── ground_truth.json     # Sealed answer key read ONLY by the Outcome Verifier
 │   └── documents/            # Mock applicant OCR files (passports, proof of address)
 ├── sim/                      # Monitored banking simulation (docs/use-cases.md)
-│   ├── agents/               # Onboarding Agent & AML Monitoring Agent (Ollama client)
+│   ├── agents/               # Planned KYC agent; AML deferred
 │   ├── tools/                # SQLite tool implementations (sanctions, registry, bank ops)
 │   ├── human_queue/          # Simulated compliance desk stub
-│   └── orchestrator.py       # Scenario driver (ONB-01..15, TXM-01..13)
+│   └── orchestrator.py       # Planned trusted contract + KYC scenario driver
 ├── proxy/                    # Synchronous AI Control Layer (docs/application-documentation.md)
 │   ├── gateway.py            # FastAPI / LiteLLM reverse proxy
 │   ├── policy_engine.py      # In-line auditors: PII, prompt injection, budget, tool permissions
@@ -321,8 +367,8 @@ ai-control-layer/
 │   ├── verifier/             # Independent postcondition checker (ONB-P1..P6, TXM-P1..P6)
 │   └── dashboard/            # Judge-facing audit ledger UI (docs/dashboard-ui.md)
 ├── tests/                    # Automated self-testing suite (pytest)
-│   ├── test_onboarding.py    # 15 positive & negative onboarding scenarios
-│   └── test_aml.py           # 13 positive & negative AML scenarios
+│   ├── test_onboarding.py    # Planned positive/negative KYC and persisted-state tests
+│   └── test_gateway.py       # Planned bait/gateway tests; no AML suite claimed
 └── docker-compose.yml        # Zero-prep local startup
 ```
 
@@ -345,20 +391,18 @@ ai-control-layer/
 
 ## 10. Suggested build order
 
-1. **Contract:** write `events.schema.json` first.
-2. **Generator:** seeded mock banking data (`data/generate.py`, `data/rules.py`) with planted faults and sealed ground truth.
-3. **Single agent through the proxy:** Client Onboarding Agent (e.g. `ONB-01` baseline) plus LLM proxy plus JSONL/SQLite emitter. Confirm events appear.
-4. **Tool proxy and second agent:** AML Transaction Monitoring Agent (`TXM-01..13`) and SQLite banking tools.
-5. **Monitoring ingest and store:** load events into DuckDB/SQLite, build per-case traces.
-6. **Evaluator:** outcome postcondition checks (`ONB-P1..P6`, `TXM-P1..P6`) against sealed ground truth.
-7. **Dashboard:** audit ledger UI (`docs/dashboard-ui.md`) with Attack Console and Trajectory/Outcome replay.
-8. **Fault injection and policy rules:** execute the 28 test scenarios with positive and negative controls.
+Follow `architecture-contract.md` section 6: trusted contract and centralized policy first;
+one deterministic KYC gateway-to-persisted-write slice with budgets and durable evidence;
+independent state verifier and positive/negative tests; selective live semantic supervision;
+then a minimal dashboard, approvals and reload demos. The data generator already exists.
+Do not add a second agent before this path is demonstrated. Use **uv** for Python environment,
+dependencies and execution; `pyproject.toml` and `uv.lock` are the current setup evidence.
 
 ---
 
 ## 11. Open decisions
 
-- **Prompt storage:** log full prompts (best for debugging, large) or hashes only?
+- **Storage implementation:** choose a small durable local store for sanitized evidence; raw prompt/secret retention is not an open default.
 - **Live vs. batch metrics:** efficiency metrics can be live; outcome metrics are post-run. Do you want a live view at all?
 - **Human queue realism:** fixed delay and perfect accuracy, or noisy reviewers?
 - **Scale:** how many applications and transactions/alerts per run? (Mock dataset baseline: ~15 applications, 60 alerts, 8,000 transactions).
