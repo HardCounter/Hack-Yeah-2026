@@ -267,7 +267,7 @@ The policy engine continuously monitors the centralized policy file (e.g. `gatew
 The future routing layer decouples agent proposals from trusted backend configuration.
 The following multi-provider example is deferred, not part of the first KYC slice:
 
-- **Provider Routing:** Maps abstract model names requested by the agent (e.g., `primary-reasoning-model`) to specific backends (e.g., local Ollama, vLLM, Anthropic, OpenAI).
+- **Provider Routing:** Maps abstract model names requested by the agent (e.g., `primary-reasoning-model`) to specific backends (e.g., the user's own API key for Anthropic/OpenAI, or a self-hosted Ollama/vLLM model; the project does not ship an LLM).
 - **LLM Fallback (deferred):** Recheck allowed model, destination/data flow and atomic budget reservation for every attempt. Unknown timeout usage is conservatively charged. No bypass through a fallback provider.
 - **Tool Routing:** Never automatically retry/fail over a side-effecting tool. On ambiguous timeout, reconcile persisted state by original action/business key before any retry; conflicting retries are rejected. MCP transport breadth is deferred.
 

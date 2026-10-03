@@ -80,7 +80,7 @@ uv run python -m persistence.demo --scenario crash-after-bank
 uv run python -m persistence.demo --scenario wrong-state
 ```
 
-CI (`.github/workflows/tests.yml`) runs on every push across Linux and Windows. `sim/tools/test_ollama.py` tests tool-calling with a local model (`ollama pull llama3.2`) and automatically skips itself when Ollama is unavailable.
+CI (`.github/workflows/tests.yml`) runs on every push across Linux and Windows. `sim/tools/test_ollama.py` tests tool-calling against the LLM you provide (your own API key, or a locally hosted model such as `ollama pull llama3.2`) and automatically skips itself when no LLM endpoint is available.
 
 Add a test with every change: a `test_*` function next to the code it checks (`data/`, `sim/`, `tests/`).
 

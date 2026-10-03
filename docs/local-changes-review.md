@@ -48,7 +48,7 @@ from the planned gateway and separate durable analytics from volatile live feeds
 | Functional external intermediary | Tools and standalone persistence primitives exist | Implement and contain one authenticated KYC gateway/tool path; prove before-hook rejection prevents execution |
 | Central policy with strictness/models/budgets/feed reload | Specifications and examples exist | Validated loadable config, policy pinning/reload, permissions, signatures and atomic resource reservation ledger |
 | Deterministic enforcement | Synthetic dataset rules and tool logic exist | Runtime authentication/scope/identity/input-output/signature/approval checks with hard-deny precedence |
-| AI-based trajectory supervision | Planned; optional Ollama tool-calling check is not a semantic supervisor | Live selective pre-action guard and mandatory-service-failure behavior; keep deterministic stub evidence separate |
+| AI-based trajectory supervision | Planned; optional LLM tool-calling check is not a semantic supervisor | Live selective pre-action guard and mandatory-service-failure behavior; keep deterministic stub evidence separate |
 | Trusted Task Contract | Designed; persistence can carry references | Trusted creation/binding/provenance/approved baseline and externally authorized revisions |
 | Exactly-once persisted KYC effects | Current tools and synthetic verifier are partial building blocks | Atomic business uniqueness/linkage/account/status/effect receipt and screened decision provenance across sessions |
 | Independent outcome verification | `data/postconditions.py` checks the synthetic state | Integrate protected baseline and fenced read-only snapshot; prove wrong/missing/extra effects, false success and unavailable-state handling |
