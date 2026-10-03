@@ -243,7 +243,7 @@ Then the owner, over SSH, once:
 
 ### Step 3: GitHub secrets — owner only
 
-Add `DEPLOY_SSH_KEY` and `DEPLOY_HOST` in the repository's Actions secrets.
+Add `DEPLOY_SSH_KEY`, `DEPLOY_HOST` and `DEPLOY_KNOWN_HOSTS` in the repository's Actions secrets.
 
 ### Step 4: Deploy workflow (`.github/workflows/deploy.yml`) — any team member
 
