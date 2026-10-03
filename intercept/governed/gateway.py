@@ -22,6 +22,7 @@ from persistence.business import (
 )
 from persistence.writer import BoundAuditWriter
 from intercept.governed import GovernedError
+from tracing import get_logger
 from intercept.governed.baseline import (
     Baseline, ensure_governed_schema, load_baseline, norm_name, persist_baseline, screening_source_version,
 )
@@ -190,6 +191,9 @@ class GovernedGateway:
         await asyncio.to_thread(persist_baseline, database, contract, baseline)
         await self.persistence.persist_contract(contract)
         await self._persist_lifecycle(state, "session_started", "STARTED")
+        get_logger().log("intercept", "session.started", session=contract.session_id, run=contract.run_id,
+                         contract=contract.contract_id, case=contract.case_id, agent=contract.agent_id,
+                         policy=contract.policy_version[:12])
 
     @staticmethod
     def _identity_hint(value: Any) -> bool:
@@ -383,6 +387,24 @@ class GovernedGateway:
         return None
 
     async def execute(self, proposal: ActionProposal, *, fault_injected: bool = False) -> tuple[GatewayDecision, Any]:
+        """Decide (and, when allowed, dispatch) one tool call; every outcome is traced."""
+        trace = get_logger()
+        trace.log("intercept", "action.received", session=proposal.session_id, action=proposal.action_id,
+                  kind=proposal.kind, tool=proposal.tool, fault_injected=fault_injected or None)
+        try:
+            decision, result = await self._execute(proposal, fault_injected=fault_injected)
+        except Exception as exc:
+            trace.log("intercept", "action.error", session=proposal.session_id, action=proposal.action_id,
+                      tool=proposal.tool, error=type(exc).__name__)
+            raise
+        allowed = decision.decision in ("ALLOW", "ALERT", "REDACT")
+        trace.log("intercept", "action.decided", session=proposal.session_id, action=proposal.action_id,
+                  tool=proposal.tool, decision=decision.decision, reason=decision.reason_code,
+                  tool_error=(allowed and isinstance(result, Mapping) and "error" in result) or None,
+                  overhead_ms=round(decision.interception_overhead_ms, 2))
+        return decision, result
+
+    async def _execute(self, proposal: ActionProposal, *, fault_injected: bool = False) -> tuple[GatewayDecision, Any]:
         if not isinstance(proposal, ActionProposal):
             raise TypeError("proposal must be contracts.ActionProposal")
         if type(fault_injected) is not bool:
@@ -852,6 +874,7 @@ class GovernedGateway:
             await self.recover_effects(session_id)
             state.finished = True
             await self._persist_lifecycle(state, "session_ended", "FINISHED")
+            get_logger().log("intercept", "session.finished", session=session_id, run=state.contract.run_id)
             seal = getattr(self.persistence, "seal_run", None)
             if seal is not None:
                 await seal(state.contract.run_id)
@@ -938,6 +961,8 @@ class GovernedGateway:
             # applied. If cancellation follows the marker commit, same-process
             # enforcement is already active; retry is still deterministic.
             await self.persistence.mark_signal_applied(signal.signal_id)
+        get_logger().log("intercept", "feedback.applied", session=event_session, signal=signal.signal_id,
+                         adjustment=action, plugin=signal.source_plugin, trigger=signal.trigger_event_id)
 
     async def _persist_control(self, state: _Run, signal: PolicyAdjustmentSignal) -> None:
         digest = hashlib.sha256(signal.signal_id.encode()).hexdigest()

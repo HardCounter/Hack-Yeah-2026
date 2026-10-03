@@ -19,6 +19,7 @@ from typing import Any, Callable, Mapping
 from contracts import TaskContract, VerificationCheck, VerificationResult
 
 from consume_plane.sdk import AgentAction, FindingDraft, Subscription
+from tracing import get_logger
 
 
 TERMINAL_NO_CREATE = frozenset({"edd", "rejected", "more_docs_requested"})
@@ -531,6 +532,9 @@ class OutcomeVerifier:
     async def _persist(self, session_id: str, result: VerificationResult) -> None:
         if self.result_store is not None:
             await self.result_store.write_verification(session_id, result.to_dict())
+        get_logger().log("consume", "verification", session=session_id, plugin=self.name,
+                         status=result.verification_status,
+                         not_passed=",".join(c.id for c in result.checks if c.status != "PASS") or None)
 
     @staticmethod
     def _emit(action: AgentAction, ctx, result: VerificationResult) -> None:

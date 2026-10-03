@@ -38,9 +38,19 @@ OpenCode agent ─► adapters/opencode ─► intercept (L1) ─► persistence
 | `consume_plane/` | Layer 3. Async plugin runtime; built-in plugins in `consume_plane/plugins/`, drop-in ones in `plugins/` |
 | `simulation/` | Governed KYC agent (scripted or LLM driver), synthetic tools, central `policy.json` |
 | `data/` | Synthetic bank generator, rules, outcome postconditions |
+| `tracing/` | Pipeline trace logger: terminal, file (JSON lines) or null |
 | `scripts/` | Run and test entry points (below) |
 | `tests/`, `*/test_*.py` | Python tests; `adapters/opencode/*.test.mjs` for the plugin |
 | `docs/` | Design docs, starting with [project direction](docs/project-direction.md) |
+
+## Tracing
+
+Every agent action can be traced through the pipeline: interception and decision (`intercept`), the
+durable commit with its `seq` (`persistence`), then consumer processing, findings, feedback and
+verification (`consume`). Select the logger with `CONTROL_LOG=terminal|file|null` (default `null`; `file`
+writes JSON lines to `CONTROL_LOG_FILE`, default `var/control-layer.log`). `scripts/run_demo.sh` traces to
+the terminal by default. Only IDs, names and reason codes are logged, never prompts or tool arguments.
+The interface and its three implementations are in `tracing/`.
 
 ## Documentation Index
 

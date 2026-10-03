@@ -8,6 +8,8 @@
 #   scripts/run_demo.sh APP-0003 --fault skip_step:screen_sanctions # -> VERIFICATION_INCOMPLETE (exit 1)
 #   scripts/run_demo.sh APP-0011 --fault repeat:create_client
 # Each run uses an isolated copy of data/bank.db (generated on first use; seed 2026).
+#
+# Tracing (stderr): CONTROL_LOG=terminal (default here) | file | null; CONTROL_LOG_FILE=path for file.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -20,5 +22,6 @@ if [[ ! -f data/bank.db ]]; then
     echo "== generating the synthetic bank (data/bank.db)"
     uv run --locked python data/generate.py >/dev/null
 fi
-echo "== $app (scripted driver) $*"
+export CONTROL_LOG=${CONTROL_LOG:-terminal}
+echo "== $app (scripted driver) $* [trace: $CONTROL_LOG]"
 exec uv run --locked python -m simulation.agent "$app" --driver scripted "$@"

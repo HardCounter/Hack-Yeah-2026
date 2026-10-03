@@ -12,7 +12,8 @@ from contracts import PolicyAdjustmentSignal, TaskContract
 
 from contracts.action import kind_for_action_type
 from persistence.adapters.consumer_v21 import to_consumer_v21
-from persistence.vocabulary import is_intent
+from persistence.vocabulary import WIRE_ACTION_TYPE, WIRE_STATUS, is_intent
+from tracing import get_logger
 from persistence.models import (
     ActionEventEnvelope, AuditContext, RunBinding,
 )
@@ -214,13 +215,28 @@ class GovernedPersistence:
         """Commit final evidence and consumer jobs atomically."""
         if is_intent(candidate):
             raise ValueError("Intent-only PENDING evidence must use intent()")
-        return await self._append_bound(candidate, deliver=True)
+        return await self._traced_append(candidate, deliver=True)
 
     async def intent(self, candidate: ActionEventEnvelope) -> ActionEventEnvelope:
         """Durably commit a not-yet-executed intent without consumer delivery."""
         if not is_intent(candidate):
             raise ValueError("Intent evidence must have PENDING status")
-        return await self._append_bound(candidate, deliver=False)
+        return await self._traced_append(candidate, deliver=False)
+
+    async def _traced_append(self, candidate: ActionEventEnvelope, deliver: bool) -> ActionEventEnvelope:
+        trace = get_logger()
+        kind = WIRE_ACTION_TYPE.get(candidate.action_type, candidate.action_type.value)
+        try:
+            stored = await self._append_bound(candidate, deliver)
+        except Exception as exc:
+            trace.log("persistence", "evidence.failed", session=candidate.session_id, event_id=candidate.event_id,
+                      action=candidate.context.action_id, type=kind, error=type(exc).__name__)
+            raise
+        trace.log("persistence", "evidence.committed", session=stored.session_id, event_id=stored.event_id,
+                  action=stored.context.action_id, type=kind,
+                  status="intent" if is_intent(stored) else WIRE_STATUS.get(stored.status, stored.status.value),
+                  seq=stored.seq, queued_for_consumers=deliver)
+        return stored
 
     async def wire_event(self, event_id: str) -> dict[str, Any]:
         event = await self.store.get_event(event_id)

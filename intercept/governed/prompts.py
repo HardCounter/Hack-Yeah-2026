@@ -18,6 +18,7 @@ from contracts import DECISIONS, GatewayDecision, TaskContract
 from persistence import ActionEventEnvelope, ActionStatus, ActionType
 from persistence.events import build_action_event
 from persistence.vocabulary import is_intent, storage_status
+from tracing import get_logger
 
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 
@@ -216,6 +217,22 @@ class PromptGateway:
         `backend` is a trusted async adapter called positionally as
         `(model, checked_messages, checked_tools, max_output_tokens)`.
         """
+        trace = get_logger()
+        session = self.contract.session_id
+        trace.log("intercept", "prompt.received", session=session, kind="prompt",
+                  model=model if isinstance(model, str) else None,
+                  messages=len(messages) if isinstance(messages, Sequence) else None)
+        try:
+            decision, response = await self._execute_guarded(model, messages, tools, backend)
+        except BaseException as exc:
+            trace.log("intercept", "prompt.error", session=session, error=type(exc).__name__)
+            raise
+        trace.log("intercept", "prompt.decided", session=session, action=decision.action_id,
+                  decision=decision.decision, reason=decision.reason_code,
+                  overhead_ms=round(decision.interception_overhead_ms, 2))
+        return decision, response
+
+    async def _execute_guarded(self, model, messages, tools, backend) -> tuple[GatewayDecision, Any]:
         if self.session_guard is not None:
             async with self.session_guard() as admission_reason:
                 return await self._execute_admitted(model, messages, tools, backend, admission_reason)
