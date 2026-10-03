@@ -15,7 +15,7 @@ Status: idea, not implemented.
 - **As frictionless as possible for the judge**: one URL, no install, no login, no API keys. The judge
   opens the link and can use every view straight away.
 - Flow: `agent → proxy → dashboard`.
-- **(added)** A status line visible on every view: gateway up, local model reachable, policy version
+- **(added)** A status line visible on every view: gateway up, LLM API reachable, policy version
   loaded. If something is down the judge sees it instead of a silent failure.
 
 ---
@@ -33,7 +33,7 @@ From the brainstorm:
 
 Added:
 - **(added) Budget and cost**: token, cost and compute spend against the limit, per session and per
-  agent. Covers both commercial APIs and local models.
+  agent, for the paid API models we call.
 - **(added) Performance telemetry**: latency per control and gateway overhead (p50 / p95), split into
   deterministic and semantic controls.
 - **(added) Audit log export**: download the audit log as JSONL or CSV.
@@ -135,7 +135,7 @@ no data today. They are in the first set because the brief requires budget gover
 |---|---|---|---|
 | 10 | Tokens | Input + output tokens against the limit, per session and per agent | Token counts recorded for each model call, and a token budget in the policy |
 | 11 | Cost | Estimated cost against the limit | A price table per model; cost derived from tokens |
-| 12 | Compute time | Seconds of model time, for local models where cost is 0 | Model-call duration recorded, and a compute-time budget in the policy |
+| 12 | Compute time | Seconds of model time per call, against a time limit | Model-call duration recorded, and a compute-time budget in the policy |
 
 ---
 
