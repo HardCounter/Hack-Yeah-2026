@@ -24,7 +24,20 @@ from persistence.models import (
     generate_utc_iso_timestamp,
     parse_utc_iso_timestamp,
 )
+from persistence.maintenance import (
+    MaintenanceReport,
+    backup_store,
+    maintain,
+    restore_store,
+)
 from persistence.queue import ConsumerDispatcher, IngestBuffer
+from persistence.reader import (
+    AuditCursor,
+    AuditPage,
+    AuditReader,
+    EvidenceExpiredError,
+    ReadScope,
+)
 from persistence.settings import PersistenceSettings
 from persistence.store import EventStore, AuditBackpressureError, ConflictingRecordError
 from persistence.worker import EngineState, PersistenceEngine, PersistenceWorker
@@ -41,6 +54,9 @@ __all__ = [
     "ActionType",
     "AlertEvent",
     "AuditActionRecord",
+    "AuditCursor",
+    "AuditPage",
+    "AuditReader",
     "AuditorDecision",
     "AuditorVerdict",
     "ConsumerDispatcher",
@@ -49,15 +65,21 @@ __all__ = [
     "EffectReceipt",
     "EngineState",
     "EventStore",
+    "EvidenceExpiredError",
     "IngestBuffer",
     "InterceptionMetadata",
+    "MaintenanceReport",
     "PersistenceEngine",
     "PersistenceSettings",
     "PersistenceWorker",
+    "ReadScope",
     "RunBinding",
     "Severity",
+    "backup_store",
     "generate_utc_iso_timestamp",
+    "maintain",
     "parse_utc_iso_timestamp",
     "record_effect",
     "replicate_effects",
+    "restore_store",
 ]

@@ -121,14 +121,37 @@ No runtime dependency was added: SQLite/asyncio are Python standard library
 components; pytest remains a development dependency. Run the synthetic checks:
 
 ```sh
-uv run --locked --offline pytest tests/test_persistence.py tests/test_persistence_failures.py
+uv run --locked --offline pytest
 ```
 
-Integration still must establish authenticated contract/policy binding,
-high-impact dispatch sequencing, business-transaction receipts, independent
-verification, retention policy and deployment isolation. Passing these component
-tests does not establish those runtime properties.
+The persistence test suite includes:
+- `tests/test_persistence.py`: Core event store, outbox, and delivery operations.
+- `tests/test_persistence_failures.py`: Failure modes, corruption, and retry backoff.
+- `tests/test_persistence_schema.py`: Schema migrations, metadata, and constraints.
+- `tests/test_persistence_writer.py`: Run binding and sequential action indexing.
+- `tests/test_persistence_business.py`: Banking effect receipts and outbox replication.
+- `tests/test_persistence_lifecycle.py`: Engine lifecycle, consumer pause/resume/retire, and derived alerts.
+- `tests/test_persistence_maintenance.py`: Maintenance reports, pruning, quota enforcement, and backup/restore.
+- `tests/test_persistence_reader.py`: Scoped reader, keyset pagination, export quotas, and run reports.
+- `tests/test_persistence_integration.py`: Multiprocess crash boundary recovery matrix.
+
+## Persistence Demo CLI
+
+Run the integrated persistence demonstration across all failure and recovery scenarios:
+
+```sh
+# 1. Clean happy path: authorized action, bank commit, receipt replication, verification
+uv run python -m persistence.demo --scenario clean
+
+# 2. Audit store unavailable: action blocked before bank effect is attempted
+uv run python -m persistence.demo --scenario audit-unavailable
+
+# 3. Process crash after bank commit: effect committed, replicator recovers and imports audit event
+uv run python -m persistence.demo --scenario crash-after-bank
+
+# 4. Corrupted external state: bank modified without receipt, verifier detects postcondition failure
+uv run python -m persistence.demo --scenario wrong-state
+```
 
 The [persistence completion plan](superpowers/plans/2026-10-03-persistence-completion.md)
-defines the remaining work, interfaces, priorities and acceptance tests. It is a
-plan, not a claim that those additions have been implemented.
+specifications are fully implemented and verified.

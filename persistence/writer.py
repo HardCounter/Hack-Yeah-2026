@@ -54,6 +54,10 @@ class BoundAuditWriter:
         async with self.store._lock:
             await self.store._offload(self._sync_bind_run, binding)
 
+    async def seal_run(self, run_id: str, verification_status: Optional[str] = None) -> None:
+        """Seal an active run, setting its verification status and preventing further appends."""
+        await self.store.seal_run(run_id, verification_status)
+
     def _sync_append(
         self,
         run_id: str,

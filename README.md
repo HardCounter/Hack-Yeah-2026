@@ -13,7 +13,7 @@ Did the correct result exist?  -> independent outcome verification
 ### Current Implementation State
 - **Implemented so far:** The synthetic banking dataset generator (`data/generate.py`, `data/rules.py`, `data/report.py`), the KYC outcome verifier (`data/postconditions.py`), and the 16 agent tools (`sim/tools/` and `simulation/tools/`, of which 6 are **bait tools: fakes** that only exist so the control layer has something to intercept/block).
 - **Interception Layer:** Initial Python asyncio interception service with configurable allowlist, signature-scanner, and webhook auditors (`intercept/`).
-- **Durable Persistence:** `persistence/` supplies sanitized immutable SQLite evidence, atomic evidence/outbox commits, bounded analytics delivery with retries/DLQ, timelines, consumer lifecycle controls, and maintenance operations. See [integration and limits](docs/persistence.md).
+- **Durable Persistence:** `persistence/` supplies sanitized immutable SQLite evidence, atomic outbox commits, bounded consumer delivery with DLQ, run binding and contiguous action indexing, atomic banking receipts and replication, scoped readers with keyset pagination, and maintenance/backup facilities. See [integration and limits](docs/persistence.md).
 - **Architecture & Runtime Scope:** The MVP scope is **KYC only**; AML is deferred.
 
 ## Documentation Index
@@ -60,11 +60,14 @@ uv run --locked python data/generate.py
 # Render the dataset explorer report
 uv run --locked python data/report.py
 
-# Run the test suite
-uv run --locked pytest
+# Run the complete test suite (offline and locked)
+uv run --locked --offline pytest
 
-# Persistence failure checks only (synthetic data; disposable databases)
-uv run --locked pytest tests/test_persistence.py tests/test_persistence_failures.py
+# Run the persistence demo CLI (all failure and recovery scenarios)
+uv run python -m persistence.demo --scenario clean
+uv run python -m persistence.demo --scenario audit-unavailable
+uv run python -m persistence.demo --scenario crash-after-bank
+uv run python -m persistence.demo --scenario wrong-state
 ```
 
 CI (`.github/workflows/tests.yml`) runs on every push across Linux and Windows. `sim/tools/test_ollama.py` tests tool-calling with a local model (`ollama pull llama3.2`) and automatically skips itself when Ollama is unavailable.

@@ -40,8 +40,20 @@ class EffectReceipt:
         return cls(**data)
 
 
-def compute_command_digest(payload: Dict[str, Any]) -> str:
+def compute_command_digest(
+    payload_or_tool: Union[Dict[str, Any], str],
+    parameters: Optional[Dict[str, Any]] = None,
+    policy_version: Optional[str] = None,
+) -> str:
     """Compute deterministic SHA-256 digest of canonical command payload."""
+    if isinstance(payload_or_tool, dict):
+        payload = payload_or_tool
+    else:
+        payload = {
+            "tool": payload_or_tool,
+            "parameters": parameters or {},
+            "policy_version": policy_version or "",
+        }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

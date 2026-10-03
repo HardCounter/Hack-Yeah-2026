@@ -18,7 +18,7 @@ from persistence.models import (
 
 OMITTED = "[OMITTED]"
 _TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
-_SECRET = re.compile(r"(?i)(?:sk-|ghp_|github_pat_|AKIA|bearer|password|secret|token=)")
+_SECRET = re.compile(r"(?i)(?:\bsk-|ghp_|github_pat_|AKIA|bearer|password|secret|token=)")
 _NUMBERS = {
     "attempt_count", "rows_written", "bytes_returned", "client_count",
     "input_tokens", "output_tokens", "reserved_tokens", "actual_tokens",

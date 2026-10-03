@@ -312,6 +312,22 @@ class EventStore:
         conn = self._get_connection()
         with conn:
             conn.execute("BEGIN IMMEDIATE")
+            incoming_bytes = sum(len(row[9]) for row in rows)
+            curr_bytes = conn.execute(
+                "SELECT COALESCE(SUM(LENGTH(payload_json)), 0) FROM events"
+            ).fetchone()[0]
+            if curr_bytes + incoming_bytes > self.settings.max_retained_logical_bytes:
+                raise AuditBackpressureError("Logical payload quota exhausted")
+
+            if self.db_path != ":memory:":
+                try:
+                    db_dir = os.path.dirname(os.path.abspath(self.db_path))
+                    free_bytes = shutil.disk_usage(db_dir).free
+                    if free_bytes < self.settings.min_free_bytes:
+                        raise AuditBackpressureError("Insufficient disk free space")
+                except OSError:
+                    pass
+
             consumers = [r[0] for r in conn.execute("SELECT name FROM consumers")]
             pending = conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0]
             inserted = 0
@@ -324,6 +340,28 @@ class EventStore:
                                      [(row[0], name) for name in consumers])
                     inserted += 1
             return inserted
+
+    def _sync_seal_run(self, run_id: str, verification_status: Optional[str] = None) -> None:
+        conn = self._get_connection()
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT lifecycle FROM audit_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Unknown run_id: '{run_id}'")
+            if row[0] == "EXPIRED":
+                raise ValueError(f"Cannot seal expired run: '{run_id}'")
+            now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            conn.execute(
+                "UPDATE audit_runs SET lifecycle = 'SEALED', verification_status = ?, sealed_at = ? WHERE run_id = ?",
+                (verification_status, now_iso, run_id),
+            )
+
+    async def seal_run(self, run_id: str, verification_status: Optional[str] = None) -> None:
+        """Seal an active run, fixing verification status and closing it to new appends."""
+        async with self._lock:
+            await self._offload(self._sync_seal_run, run_id, verification_status)
 
     async def append_with_outbox(self, events: List[ActionEventEnvelope]) -> int:
         """Commit evidence and all registered analytics deliveries atomically.
