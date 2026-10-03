@@ -37,6 +37,7 @@ Did the correct result exist?  -> independent outcome verification
 - [System architecture & execution lifecycle](docs/system-architecture.md)
 - [Control Gateway & Interception layer specification](docs/application-documentation.md)
 - [Judge dashboard UI design](docs/dashboard/dashboard-ui.md)
+- [Deployment plan](docs/dashboard/deployment.md)
 - [Technical challenge and criteria](docs/goldman/GoldmanSachsCriteria.md)
 - [Competition rules](docs/goldman/GoldmanSachsRules.md)
 - [OpenCode agents, NVIDIA setup, and review commands](.opencode/README.md)
@@ -83,6 +84,27 @@ uv run python -m persistence.demo --scenario wrong-state
 CI (`.github/workflows/tests.yml`) runs on every push across Linux and Windows. The project uses paid API models (team decision; keys from env vars, never committed). The code has not moved yet: the LLM driver and the live `simulation/tools/test_ollama.py` check still target a loopback Ollama endpoint and skip when it is unavailable. Switching them to the paid API is pending.
 
 Add a test with every change: a `test_*` function next to the code it checks (`data/`, `sim/`, `tests/`).
+
+## Deployment
+
+Planned, not implemented yet. Full plan, cost and secret handling: [docs/dashboard/deployment.md](docs/dashboard/deployment.md).
+
+- The app runs on one AWS EC2 instance under Docker Compose, behind one public HTTPS URL.
+- Pushing to `main` runs the tests and does **not** deploy.
+- A push to the `deploy` branch deploys. `deploy` is a pointer to what is live; nobody commits to it directly.
+
+```sh
+# Release the current main (pull first)
+git checkout main && git pull
+git push origin main:deploy
+
+# Roll back to an earlier commit
+git push --force origin <good-sha>:deploy
+```
+
+The deploy workflow runs the test suite, rebuilds the app container on the instance and checks its
+health endpoint. If the check fails, the container logs are printed in the GitHub Actions run.
+Nobody on the team needs AWS or instance access to release.
 
 ## Scripts
 
