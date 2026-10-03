@@ -278,6 +278,32 @@ class AuditContext:
         return cls(**data)
 
 
+@dataclass(frozen=True)
+class RunBinding:
+    """Server-side authenticated binding for a governed workflow run."""
+    run_id: str
+    contract_id: str
+    session_id: str
+    principal_id: str
+    agent_id: str
+    policy_version: str
+    policy_hash: str
+    feed_version: str
+
+    def __post_init__(self) -> None:
+        for f_name in self.__dataclass_fields__:
+            val = getattr(self, f_name)
+            if not isinstance(val, str) or not val.strip():
+                raise ValueError(f"RunBinding.{f_name} must be a non-empty string")
+
+    def to_dict(self) -> Dict[str, str]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RunBinding":
+        return cls(**data)
+
+
 @dataclass
 class ActionEventEnvelope:
     """Canonical envelope for all persisted action events."""
@@ -398,6 +424,24 @@ class AlertEvent:
     @classmethod
     def from_json(cls, json_str: str) -> "AlertEvent":
         return cls.from_dict(json.loads(json_str))
+
+
+@dataclass(frozen=True)
+class ConsumerResult:
+    """Result returned by an analytics consumer callback."""
+    alerts: tuple[AlertEvent, ...] = ()
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ConsumerResult":
+        raw_alerts = data.get("alerts", ())
+        alerts = tuple(
+            a if isinstance(a, AlertEvent) else AlertEvent.from_dict(a)
+            for a in raw_alerts
+        )
+        return cls(alerts=alerts)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"alerts": [a.to_dict() for a in self.alerts]}
 
 
 @dataclass

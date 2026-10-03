@@ -153,6 +153,12 @@ def sanitize_dead_letter(dlq: DeadLetterEnvelope) -> DeadLetterEnvelope:
     data["consumer_name"] = token(data["consumer_name"], required=True)
     data["failed_at"] = timestamp(data["failed_at"])
     number(data["retry_count"])
-    data["error_message"] = "CONSUMER_DELIVERY_FAILED"
+    raw_err = str(data.get("error_message") or "")
+    if raw_err.startswith("CONSUMER_RETIRED:"):
+        parts = raw_err.split(":", 1)
+        intervention_id = token(parts[1].strip(), required=True)
+        data["error_message"] = f"CONSUMER_RETIRED: {intervention_id}"
+    else:
+        data["error_message"] = "CONSUMER_DELIVERY_FAILED"
     data["event"] = sanitize_event(dlq.event).to_dict() if isinstance(dlq.event, ActionEventEnvelope) else evidence(dlq.event)
     return DeadLetterEnvelope.from_dict(data)

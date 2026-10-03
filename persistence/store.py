@@ -10,6 +10,7 @@ import asyncio
 import json
 import math
 import os
+import shutil
 import sqlite3
 import time
 import uuid
@@ -20,10 +21,13 @@ from persistence.models import (
     ActionEventEnvelope,
     AlertEvent,
     AuditActionRecord,
+    ConsumerResult,
     DeadLetterEnvelope,
     Severity,
 )
 from persistence.privacy import sanitize_event, sanitize_alert, sanitize_audit, sanitize_dead_letter
+from persistence.schema import migrate_audit_schema
+from persistence.settings import PersistenceSettings
 
 
 class ConflictingRecordError(ValueError):
@@ -37,10 +41,26 @@ class AuditBackpressureError(RuntimeError):
 class EventStore:
     """Asynchronous SQLite event store with WAL mode and threadpool offloading."""
 
-    def __init__(self, db_path: Union[str, Path] = ":memory:", *, outbox_maxsize: int = 10000) -> None:
-        if isinstance(outbox_maxsize, bool) or not isinstance(outbox_maxsize, int) or outbox_maxsize <= 0:
-            raise ValueError("outbox_maxsize must be positive")
-        self.outbox_maxsize = outbox_maxsize
+    def __init__(
+        self,
+        db_path: Union[str, Path] = ":memory:",
+        *,
+        settings: Optional[PersistenceSettings] = None,
+        outbox_maxsize: Optional[int] = None,
+    ) -> None:
+        if settings is not None:
+            if not isinstance(settings, PersistenceSettings):
+                raise ValueError("settings must be a PersistenceSettings instance")
+            if outbox_maxsize is not None and settings.outbox_maxsize != outbox_maxsize:
+                raise ValueError("conflicting outbox_maxsize and settings")
+            self.settings = settings
+        else:
+            if outbox_maxsize is not None:
+                self.settings = PersistenceSettings(outbox_maxsize=outbox_maxsize)
+            else:
+                self.settings = PersistenceSettings()
+
+        self.outbox_maxsize = self.settings.outbox_maxsize
         self.db_path = str(db_path)
         self._conn: Optional[sqlite3.Connection] = None
         self._lock = asyncio.Lock()
@@ -67,11 +87,14 @@ class EventStore:
     def _insert_immutable(self, table, columns, values) -> bool:
         conn = self._get_connection()
         key = columns[0]
+        compare_cols = [c for c in columns if c != "ingest_offset"]
+        placeholders = ', '.join(compare_cols)
         previous = conn.execute(
-            f"SELECT {', '.join(columns)} FROM {table} WHERE {key} = ?", (values[0],)
+            f"SELECT {placeholders} FROM {table} WHERE {key} = ?", (values[0],)
         ).fetchone()
         if previous is not None:
-            if tuple(previous) != tuple(values):
+            expected = tuple(v for c, v in zip(columns, values) if c != "ingest_offset")
+            if tuple(previous) != expected:
                 raise ConflictingRecordError("Conflicting immutable audit record")
             return False
         conn.execute(
@@ -91,135 +114,33 @@ class EventStore:
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
 
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
 
-        # Concurrency & Performance PRAGMAs
-        if self.db_path != ":memory:":
-            conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=FULL")
-        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            conn.execute("PRAGMA busy_timeout=30000")
+            # Concurrency & Performance PRAGMAs
+            if self.db_path != ":memory:":
+                for attempt in range(50):
+                    mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+                    if mode.lower() == "wal":
+                        break
+                    try:
+                        conn.execute("PRAGMA journal_mode=WAL")
+                        break
+                    except sqlite3.OperationalError as exc:
+                        if "locked" in str(exc).lower() and attempt < 49:
+                            time.sleep(0.01 * (1.5 ** min(attempt, 6)))
+                        else:
+                            raise
+            conn.execute("PRAGMA synchronous=FULL")
 
-        # Schema: events
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS events (
-                event_id TEXT PRIMARY KEY,
-                trace_id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                case_id TEXT,
-                agent_id TEXT NOT NULL,
-                action_type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                ts TEXT NOT NULL,
-                total_latency_ms REAL NOT NULL DEFAULT 0.0,
-                payload_json TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_events_trace_ts ON events(trace_id, ts)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_events_session_ts ON events(session_id, ts)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_events_case_ts ON events(case_id, ts)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_events_type_status ON events(action_type, status)"
-        )
+            migrate_audit_schema(conn, self.settings)
+            conn.execute("PRAGMA foreign_keys=ON")
+        except Exception:
+            conn.close()
+            raise
 
-        # Schema: alerts
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS alerts (
-                alert_id TEXT PRIMARY KEY,
-                ts TEXT NOT NULL,
-                severity TEXT NOT NULL,
-                rule TEXT NOT NULL,
-                agent_id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                case_id TEXT,
-                action_taken TEXT NOT NULL,
-                evidence_json TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_alerts_session_ts ON alerts(session_id, ts)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_alerts_case_ts ON alerts(case_id, ts)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(ts)"
-        )
-
-        # Schema: audit_actions
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS audit_actions (
-                action_id TEXT PRIMARY KEY,
-                ts TEXT NOT NULL,
-                run_id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                agent_id TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                target_id TEXT,
-                side_effect_class TEXT NOT NULL,
-                status TEXT NOT NULL,
-                details_json TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_audit_run_session ON audit_actions(run_id, session_id)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_audit_session_ts ON audit_actions(session_id, ts)"
-        )
-
-        # Schema: dead_letter_queue
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS dead_letter_queue (
-                dlq_id TEXT PRIMARY KEY,
-                failed_at TEXT NOT NULL,
-                event_id TEXT,
-                consumer_name TEXT NOT NULL,
-                error_message TEXT NOT NULL,
-                retry_count INTEGER NOT NULL DEFAULT 0,
-                payload_json TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_dlq_consumer ON dead_letter_queue(consumer_name)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_dlq_failed_at ON dead_letter_queue(failed_at)"
-        )
-
-        conn.execute("CREATE TABLE IF NOT EXISTS consumers (name TEXT PRIMARY KEY)")
-        conn.execute("""CREATE TABLE IF NOT EXISTS run_order (
-            run_id TEXT NOT NULL,
-            action_index INTEGER NOT NULL,
-            event_id TEXT NOT NULL UNIQUE REFERENCES events(event_id) ON DELETE CASCADE,
-            PRIMARY KEY (run_id, action_index)
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS outbox (
-            event_id TEXT NOT NULL REFERENCES events(event_id),
-            consumer_name TEXT NOT NULL,
-            attempts INTEGER NOT NULL DEFAULT 0,
-            available_at REAL NOT NULL DEFAULT 0,
-            lease_id TEXT,
-            lease_until REAL NOT NULL DEFAULT 0,
-            PRIMARY KEY (event_id, consumer_name)
-        )""")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_outbox_due ON outbox(available_at, lease_until)")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.commit()
         self._conn = conn
         self._initialized = True
 
@@ -253,22 +174,44 @@ class EventStore:
         )
 
     def _insert_event_row(self, row):
-        inserted = self._insert_immutable("events", (
+        conn = self._get_connection()
+        previous = conn.execute(
+            "SELECT payload_json FROM events WHERE event_id = ?", (row[0],)
+        ).fetchone()
+        if previous is not None:
+            if previous[0] != row[-1]:
+                raise ConflictingRecordError("Conflicting immutable audit record")
+            return False
+
+        # Allocate monotonic ingest_offset from store_metadata
+        offset_row = conn.execute(
+            "SELECT next_offset FROM store_metadata WHERE singleton = 1"
+        ).fetchone()
+        if offset_row is not None:
+            offset = offset_row[0]
+            conn.execute(
+                "UPDATE store_metadata SET next_offset = next_offset + 1 WHERE singleton = 1"
+            )
+        else:
+            offset = 1
+
+        full_row = row + (offset,)
+        self._insert_immutable("events", (
             "event_id", "trace_id", "session_id", "case_id", "agent_id",
-            "action_type", "status", "ts", "total_latency_ms", "payload_json",
-        ), row)
-        if inserted:
-            context = json.loads(row[-1])["context"]
-            if context["run_id"] is not None:
-                previous = self._get_connection().execute(
-                    "SELECT event_id FROM run_order WHERE run_id = ? AND action_index = ?",
-                    (context["run_id"], context["action_index"])).fetchone()
-                if previous is not None:
-                    raise ConflictingRecordError("Run action index already recorded")
-                self._get_connection().execute(
-                    "INSERT INTO run_order(run_id, action_index, event_id) VALUES (?, ?, ?)",
-                    (context["run_id"], context["action_index"], row[0]))
-        return inserted
+            "action_type", "status", "ts", "total_latency_ms", "payload_json", "ingest_offset",
+        ), full_row)
+
+        context = json.loads(row[-1])["context"]
+        if context["run_id"] is not None:
+            prev = conn.execute(
+                "SELECT event_id FROM run_order WHERE run_id = ? AND action_index = ?",
+                (context["run_id"], context["action_index"])).fetchone()
+            if prev is not None:
+                raise ConflictingRecordError("Run action index already recorded")
+            conn.execute(
+                "INSERT INTO run_order(run_id, action_index, event_id) VALUES (?, ?, ?)",
+                (context["run_id"], context["action_index"], row[0]))
+        return True
 
     def _sync_insert_events_batch(self, events):
         rows = [self._event_row(event) for event in events]
@@ -404,7 +347,9 @@ class EventStore:
             placeholders = ",".join("?" for _ in names)
             row = conn.execute(f"""SELECT o.event_id, o.consumer_name, o.attempts, e.payload_json
                 FROM outbox o JOIN events e USING(event_id)
+                JOIN consumers c ON c.name = o.consumer_name
                 WHERE o.consumer_name IN ({placeholders})
+                  AND c.status = 'ACTIVE'
                   AND o.available_at <= ? AND o.lease_until <= ?
                 ORDER BY e.rowid, o.consumer_name LIMIT 1""", [*names, now, now]).fetchone()
             if row is None:
@@ -461,18 +406,123 @@ class EventStore:
         async with self._lock:
             await self._offload(self._sync_finish_delivery, event, name, lease_id, failed, max_retries, delay)
 
-    def _sync_pending(self, names):
+    def _sync_commit_consumer_result(
+        self, event_id: str, consumer_name: str, lease_id: str, result: ConsumerResult
+    ) -> bool:
+        conn = self._get_connection()
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT attempts FROM outbox WHERE event_id = ? AND consumer_name = ? AND lease_id = ?",
+                (event_id, consumer_name, lease_id),
+            ).fetchone()
+            if row is None:
+                return False
+
+            for alert in result.alerts:
+                alert = sanitize_alert(alert)
+                self._insert_immutable(
+                    "alerts",
+                    (
+                        "alert_id", "ts", "severity", "rule", "agent_id", "session_id",
+                        "case_id", "action_taken", "evidence_json",
+                    ),
+                    (
+                        alert.alert_id, alert.ts, alert.severity.value, alert.rule,
+                        alert.agent_id, alert.session_id, alert.case_id, alert.action_taken,
+                        json.dumps(alert.evidence, sort_keys=True),
+                    ),
+                )
+
+            conn.execute(
+                "INSERT OR REPLACE INTO consumer_completions (consumer_name, event_id, completed_at) VALUES (?, ?, ?)",
+                (consumer_name, event_id, time.time()),
+            )
+            conn.execute(
+                "DELETE FROM outbox WHERE event_id = ? AND consumer_name = ? AND lease_id = ?",
+                (event_id, consumer_name, lease_id),
+            )
+            return True
+
+    async def commit_consumer_result(
+        self, event_id: str, consumer_name: str, lease_id: str, result: ConsumerResult
+    ) -> bool:
+        """Atomically commit consumer derived alerts and mark delivery completed."""
+        async with self._lock:
+            return await self._offload(
+                self._sync_commit_consumer_result, event_id, consumer_name, lease_id, result
+            )
+
+    def _sync_pause_consumer(self, name: str) -> None:
+        conn = self._get_connection()
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("UPDATE consumers SET status = 'PAUSED' WHERE name = ?", (name,))
+
+    async def pause_consumer(self, name: str) -> None:
+        """Pause scheduling new deliveries for a consumer."""
+        async with self._lock:
+            await self._offload(self._sync_pause_consumer, name)
+
+    def _sync_resume_consumer(self, name: str) -> None:
+        conn = self._get_connection()
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("UPDATE consumers SET status = 'ACTIVE' WHERE name = ?", (name,))
+
+    async def resume_consumer(self, name: str) -> None:
+        """Resume scheduling deliveries for a paused consumer."""
+        async with self._lock:
+            await self._offload(self._sync_resume_consumer, name)
+
+    def _sync_retire_consumer(self, name: str, intervention_id: str) -> None:
+        conn = self._get_connection()
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("UPDATE consumers SET status = 'RETIRED' WHERE name = ?", (name,))
+            pending_rows = conn.execute(
+                "SELECT o.event_id, e.payload_json FROM outbox o JOIN events e USING(event_id) WHERE o.consumer_name = ?",
+                (name,),
+            ).fetchall()
+            for r in pending_rows:
+                event = sanitize_event(ActionEventEnvelope.from_json(r[1]))
+                dlq = DeadLetterEnvelope(
+                    event=event,
+                    consumer_name=name,
+                    error_message=f"CONSUMER_RETIRED: {intervention_id}",
+                    retry_count=0,
+                )
+                self._insert_dead_letter(dlq)
+            conn.execute("DELETE FROM outbox WHERE consumer_name = ?", (name,))
+
+    async def retire_consumer(self, name: str, intervention_id: str) -> None:
+        """Retire a consumer, transferring all remaining pending deliveries to the DLQ."""
+        async with self._lock:
+            await self._offload(self._sync_retire_consumer, name, intervention_id)
+
+    def _sync_pending(self, names, active_only: bool = False):
         conn = self._get_connection()
         if names is None:
+            if active_only:
+                return conn.execute(
+                    "SELECT COUNT(*) FROM outbox o JOIN consumers c ON o.consumer_name = c.name WHERE c.status = 'ACTIVE'"
+                ).fetchone()[0]
             return conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0]
         if not names:
             return 0
         placeholders = ",".join("?" for _ in names)
+        if active_only:
+            return conn.execute(
+                f"SELECT COUNT(*) FROM outbox o JOIN consumers c ON o.consumer_name = c.name WHERE o.consumer_name IN ({placeholders}) AND c.status = 'ACTIVE'",
+                names,
+            ).fetchone()[0]
         return conn.execute(f"SELECT COUNT(*) FROM outbox WHERE consumer_name IN ({placeholders})", names).fetchone()[0]
 
-    async def pending_deliveries(self, names: Optional[List[str]] = None) -> int:
+    async def pending_deliveries(
+        self, names: Optional[List[str]] = None, active_only: bool = False
+    ) -> int:
         async with self._lock:
-            return await self._offload(self._sync_pending, names)
+            return await self._offload(self._sync_pending, names, active_only)
 
     def _sync_get_event(self, event_id: str) -> Optional[ActionEventEnvelope]:
         conn = self._get_connection()
