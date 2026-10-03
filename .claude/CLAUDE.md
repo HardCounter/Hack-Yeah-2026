@@ -17,7 +17,7 @@ Core idea (from the brief):
 - **Reporting**: live dashboard (controls, security posture, blocked threats, cost) plus exportable audit logs. Expose performance telemetry.
 - **Self-testing suite**: automated tests with both positive (allowed) and negative (blocked/redacted) cases, including budgets and exploit mitigation. Judges will run it.
 - **Deliverables**: working control layer, architecture diagram, documented sample policy file (with different strictness levels), dashboard, runnable test suite.
-- No paid APIs are provided. Everything must run locally (e.g. Ollama). Stack is free; check licenses of any open-source base.
+- No LLM is provided. We must supply our own, either via our own API key or a locally hosted model (e.g. Ollama). The rest of the stack is free; check licenses of any open-source base.
 
 ## Scoring (pass needs >= 50%)
 Robustness and guardrail quality 30% · Architecture and performance 20% · Security reporting 20% · Self-testing suite 15-20% · Practical implementability/scalability 10-15%.

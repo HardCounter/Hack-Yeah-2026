@@ -91,6 +91,6 @@ replace the default outright, so `prerequisites: {}` disables the prerequisite c
   off. Without `side_effect` labels, every tool counts as a read.
 - **Detection only.** The consume plane runs after the fact. The proposals restrict *later* actions,
   and only once Layer 1 consumes the signals, which is not wired yet.
-- **No semantic judgement.** It does not read prompts or tool results. A local-model grader
-  (for example via Ollama) could be added later as one more signal with a capped weight. It must
+- **No semantic judgement.** It does not read prompts or tool results. An LLM grader
+  (user-provided: own API key or locally hosted, e.g. Ollama) could be added later as one more signal with a capped weight. It must
   never lower P, and it must be labelled as semantic.
