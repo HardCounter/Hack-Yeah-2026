@@ -74,10 +74,15 @@ Several judges hit the same `bank.db` at once through the gateway. SQLite handle
    `create_client` reads `MAX(client_id)` / `MAX(account_id)` inside that transaction, so parallel
    calls cannot get the same `CLI-NNNN`.
 
-Measured with this exact recipe (8 threads × 25 create + 4 threads × 100 read on one WAL file,
-3 runs): **0 errors, 200 distinct IDs, 600 audit rows, p50 ≈ 4 ms, p99 0.9–1.7 s**. The tail is
-SQLite's busy-wait backoff under a tight loop with no pauses; real judge traffic is spaced by
-seconds of LLM latency. If the dashboard ever shows it, wrap `call()` in one process-wide
-`threading.Lock` (the gateway is a single process); calls then queue without sleeping.
+5. **One process-wide `threading.Lock` around the transaction** in `call()` (the gateway is one
+   process): calls queue on the lock instead of in SQLite's sleeping busy-wait. The 5 s timeout
+   still covers other processes (generator, a second gateway).
+6. **`PRAGMA synchronous=NORMAL`** per connection (unlike `journal_mode`, it needs no lock): in WAL
+   mode this skips the disk sync on every commit and is still corruption-safe; a power cut can
+   lose only the last transaction.
+
+History: steps 1-4 alone measured p99 0.9-2 s locally and **failed in CI on the slower Windows
+runner** (`database is locked` after the 5 s timeout). With 5 and 6, the same load (8 threads x 25
+create + 4 threads x 100 read) runs in 0.6-1 s total: **0 errors, p50 ~5.5 ms, p99 35-50 ms**.
 
 `test_tools.py` repeats that measurement against the real tools (plan 01).

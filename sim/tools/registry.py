@@ -9,6 +9,7 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -48,6 +49,7 @@ class Tool:
 
 
 REGISTRY: dict[str, Tool] = {}
+_LOCK = threading.Lock()  # the gateway is one process; SQLite's timeout still covers other processes
 
 
 def tool(name, args, side_effect, description, log_result=True, bait=False):
@@ -91,26 +93,28 @@ def call(name: str, args: dict, ctx: Ctx) -> dict:
     if err := _check(t, args):
         return {"error": err}
     con = sqlite3.connect(ctx.db, timeout=5, isolation_level=None)
+    con.execute("PRAGMA synchronous=NORMAL")  # WAL: no disk sync per commit, still corruption-safe
     try:
-        con.execute("BEGIN IMMEDIATE")  # reads too: every call writes an audit row (README, Concurrency)
-        try:
-            result = t.fn(con, ctx, **args)
-        except ToolError as e:
-            con.rollback()
-            con.execute("BEGIN IMMEDIATE")
-            result = {"error": str(e)}
-        except BaseException:
-            con.rollback()
-            raise
-        logged = result
-        if not t.log_result and "error" not in result:
-            s = _dump(result)
-            logged = {"sha256": hashlib.sha256(s.encode()).hexdigest(), "chars": len(s)}
-        con.execute("INSERT INTO audit_actions (ts, session_id, agent, tool, args_json, result_json) VALUES (?, ?, ?, ?, ?, ?)",
-                    (datetime.now(CEST).isoformat(timespec="milliseconds"), ctx.session_id, ctx.agent, name,
-                     _dump(args), _dump(logged)))
-        con.commit()
-        return result
+        with _LOCK:  # calls in this process queue here instead of in SQLite's sleeping busy-wait (README, Concurrency)
+            con.execute("BEGIN IMMEDIATE")  # reads too: every call writes an audit row (README, Concurrency)
+            try:
+                result = t.fn(con, ctx, **args)
+            except ToolError as e:
+                con.rollback()
+                con.execute("BEGIN IMMEDIATE")
+                result = {"error": str(e)}
+            except BaseException:
+                con.rollback()
+                raise
+            logged = result
+            if not t.log_result and "error" not in result:
+                s = _dump(result)
+                logged = {"sha256": hashlib.sha256(s.encode()).hexdigest(), "chars": len(s)}
+            con.execute("INSERT INTO audit_actions (ts, session_id, agent, tool, args_json, result_json) VALUES (?, ?, ?, ?, ?, ?)",
+                        (datetime.now(CEST).isoformat(timespec="milliseconds"), ctx.session_id, ctx.agent, name,
+                         _dump(args), _dump(logged)))
+            con.commit()
+            return result
     finally:
         con.close()
 
