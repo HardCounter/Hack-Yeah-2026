@@ -3,9 +3,12 @@
 Detailed design for **Layer 3 (Consumer Layer)** of `docs/application-documentation.md`. It refines
 sections 4 and 5.3 of that document into concrete contracts, a package layout, and a build plan.
 
-**Status (2026-10-03): planned, not implemented.** Nothing below exists in code yet. The persistence
-layer (Layer 2) that this plane reads from is also not implemented, so every dependency on it is
-expressed as a protocol with an in-memory adapter for tests.
+**Status (2026-10-03): phase 0 and the core of phase 1 are implemented** in `consume_plane/`
+(see [consumer-plane-implementation-notes.md](consumer-plane-implementation-notes.md) for what is
+built, decisions taken, and deviations). The wire format is specified in
+[consumer-plane-event-envelope.md](consumer-plane-event-envelope.md). The persistence layer
+(Layer 2) is not implemented, so every dependency on it is a protocol with in-memory and JSONL
+adapters.
 
 ---
 
@@ -205,7 +208,7 @@ through one adapter function, so plugins do not care:
 ### 4.1 Protocol
 
 Plugins satisfy this protocol structurally. They need not import or subclass anything, though they
-may import the type helpers from `consumer.sdk`.
+may import the type helpers from `consume_plane.sdk`.
 
 ```python
 class ConsumerPlugin(Protocol):
@@ -246,7 +249,7 @@ Filtering happens in the manager, so plugins do not repeat it.
 @dataclass(frozen=True)
 class SetupContext:
     plugin_name: str
-    config: Mapping[str, Any]          # this plugin's block from consumer.yaml
+    config: Mapping[str, Any]          # this plugin's block from consume_plane.yaml
     log: Logger                        # structured; never log raw content
     state: PluginStateStore            # optional durable KV scoped to this plugin
 
@@ -482,14 +485,14 @@ The three ways requested, in the order a developer meets them.
 ### 8.1 Way 1: drop a Python file into the plugin directory
 
 ```text
-plugins/                     # configurable: consumer.yaml → plugin_dirs
+plugins/                     # configurable: consume_plane.yaml → plugin_dirs
 └── velocity_guard.py
 ```
 
 ```python
 # plugins/velocity_guard.py
 from datetime import timedelta
-from consumer.sdk import Subscription, FindingDraft, AdjustmentProposal
+from consume_plane.sdk import Subscription, FindingDraft, AdjustmentProposal
 
 class VelocityGuard:
     name = "velocity-guard"
@@ -533,7 +536,7 @@ PLUGINS = [VelocityGuard]
    `on_plugin_load_error: fail | skip` (default `fail`) decides whether the daemon still starts.
    A judge editing config should see an error, not silently lose a control.
 
-A file plugin is **enabled by default** unless `consumer.yaml` lists it under `plugins.<name>.enabled: false`.
+A file plugin is **enabled by default** unless `consume_plane.yaml` lists it under `plugins.<name>.enabled: false`.
 
 ### 8.2 Way 1b: reference an installed module
 
@@ -543,7 +546,7 @@ import path:
 ```yaml
 plugins:
   loop-detector:
-    handler: "consumer.plugins.loop_detector:LoopDetector"
+    handler: "consume_plane.plugins.loop_detector:LoopDetector"
 ```
 
 ### 8.3 Way 2: plugins that read the agent trajectory
@@ -725,10 +728,10 @@ Notes:
 
 ---
 
-## 11. Configuration: `consumer.yaml`
+## 11. Configuration: `consume_plane.yaml`
 
 ```yaml
-consumer:
+consume_plane:
   config_version: 1
   source:
     type: memory                # memory | jsonl_replay | sqlite_queue | mongo
@@ -760,16 +763,16 @@ consumer:
 
 plugins:
   usage-accountant:
-    handler: "consumer.plugins.usage_accountant:UsageAccountant"
+    handler: "consume_plane.plugins.usage_accountant:UsageAccountant"
     config: {warn_ratio: 0.8}
   loop-detector:
-    handler: "consumer.plugins.loop_detector:LoopDetector"
+    handler: "consume_plane.plugins.loop_detector:LoopDetector"
     config: {max_identical: 3, window_s: 60}
   outcome-verifier:
-    handler: "consumer.plugins.outcome_verifier:OutcomeVerifier"
+    handler: "consume_plane.plugins.outcome_verifier:OutcomeVerifier"
     config: {bank_db: "data/bank.db"}
   trajectory-grader:
-    handler: "consumer.plugins.trajectory_grader:TrajectoryGrader"
+    handler: "consume_plane.plugins.trajectory_grader:TrajectoryGrader"
     enabled: false
     config: {model: "llama3.1:8b", base_url: "http://127.0.0.1:11434"}
   velocity-guard:               # file plugin from plugins/; only its config lives here
@@ -782,7 +785,7 @@ changing plugin **code** requires a restart in phase 1; hot code reload is defer
 records a config hash on later findings, so results show which config produced them.
 
 Should this live in the central `policy.yaml` instead? The challenge asks for a single
-centralized policy source. **Recommendation:** keep `consumer.yaml` for runtime wiring, and put
+centralized policy source. **Recommendation:** keep `consume_plane.yaml` for runtime wiring, and put
 the thresholds that act as policy (loop limits, budget ratios, allowed feedback actions) under a
 `consumer:` section of the central policy file. See open question 4.
 
@@ -791,9 +794,9 @@ the thresholds that act as policy (loop limits, budget ratios, allowed feedback 
 ## 12. Package layout
 
 ```text
-consumer/
+consume_plane/
 ├── __init__.py
-├── __main__.py                 # python -m consumer --config consumer.yaml
+├── __main__.py                 # python -m consume_plane --config consume_plane.yaml
 ├── sdk.py                      # public surface for plugin authors: re-exports below
 ├── model/
 │   ├── actions.py              # AgentAction, payloads, ContentRef, GatewayVerdict, Usage
@@ -810,7 +813,7 @@ consumer/
 │   ├── jsonl.py                # JsonlReplaySource, JsonlTrajectoryReader, JsonlSink
 │   └── inprocess_feedback.py
 ├── runtime/
-│   ├── config.py               # load + validate consumer.yaml
+│   ├── config.py               # load + validate consume_plane.yaml
 │   ├── loader.py               # file discovery + module:Class import + protocol validation
 │   ├── registry.py             # loaded plugins, subscription matching
 │   ├── context.py              # PluginContext impl, output buffering, permission checks
@@ -828,8 +831,8 @@ consumer/
     └── trajectory_grader.py
 
 plugins/                        # drop-in directory (Way 1); example: velocity_guard.py
-consumer.yaml
-tests/consumer/
+consume_plane.yaml
+tests/consume_plane/
 ├── conftest.py                 # builders: make_action(), make_session(), fixture trajectories
 ├── test_decode.py
 ├── test_loader.py
@@ -842,7 +845,7 @@ tests/consumer/
 
 `model/actions.py` and `model/contract.py` are candidates to move into the shared `contract/`
 package from `system-architecture.md` §8 once Layer 1 and Layer 2 use them too. Until then,
-`consumer/` must not import from `proxy/` or `sim/`.
+`consume_plane/` must not import from `proxy/` or `sim/`.
 
 Dependencies: standard library only for the runtime (dataclasses, asyncio, sqlite3, importlib).
 `PyYAML` (MIT) is needed for config. A local `httpx` (BSD) client is needed only for
@@ -884,7 +887,7 @@ All tests use the memory and JSONL adapters. They need no Layer 1, Layer 2, or m
 | Outcome verifier | ONB-01 session end gives `verified` | ONB-07 gives `postcondition.ONB-P2` failed; a missing DB gives `unverifiable`, not a pass |
 | Privacy | — | No finding or log line in the ONB-09 / ONB-16 runs contains the planted PESEL, IBAN, or key |
 
-Run command (planned): `uv run pytest tests/consumer -q`.
+Run command: `uv run pytest tests/consume_plane -q`.
 
 ---
 
@@ -893,7 +896,7 @@ Run command (planned): `uv run pytest tests/consumer -q`.
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
 | **0. Contract** | `model/actions.py`, `model/contract.py`, `model/outputs.py`, `decode.py`; team decision on the envelope (3.6) | `test_decode.py` green; envelope decision recorded in `contract/` |
-| **1. Core runtime** | Ports, memory/JSONL adapters, loader, registry, context, ledger, manager, `python -m consumer` running against `JsonlReplaySource` | Loader, subscription, at-least-once, timeout, and ordering tests green; a drop-in `plugins/velocity_guard.py` loads and emits findings to `findings.jsonl` |
+| **1. Core runtime** | Ports, memory/JSONL adapters, loader, registry, context, ledger, manager, `python -m consume_plane` running against `JsonlReplaySource` | Loader, subscription, at-least-once, timeout, and ordering tests green; a drop-in `plugins/velocity_guard.py` loads and emits findings to `findings.jsonl` |
 | **2. Built-ins** | `usage-accountant`, `loop-detector`, `scope-drift`, `repeat-side-effect`, `step-order`, `outcome-verifier` | Built-in and outcome-verifier tests green on fixture trajectories for the listed ONB scenarios |
 | **3. Integration** | Layer 2 adapters (`EventSource`, `TrajectoryReader`), `StoreSink`, `SseSink`, `InProcessFeedbackChannel` wired to Layer 1 cache, `/consumer/health` | One end-to-end run (ONB-15): Layer 1 event → store → Queue 2 → `scope-drift` → signal → Layer 1 blocks the **next** out-of-scope call, and the dashboard shows the finding |
 | **4. Optional** | Feedback controller hardening, config hot reload, `trajectory-grader`, webhook plugin adapter | Each has tests; semantic results are labelled as such in the dashboard |
@@ -906,13 +909,13 @@ Layer 2's choice of store and queue.
 ## 16. Open questions
 
 1. **Event envelope:** v2.0 (`application-documentation.md`) and v1.0 (`system-architecture.md`)
-   disagree on field names and event types (3.6). Which is canonical, and who owns `contract/events.schema.json`?
+   disagree (3.6). *Proposed:* v2.1 in [consumer-plane-event-envelope.md](consumer-plane-event-envelope.md),
+   which the consume plane decodes. Layer 1 and Layer 2 still need to confirm it.
 2. **Store and queue technology for Layer 2:** MongoDB (application doc) or SQLite/DuckDB
    (system architecture). The consumer adapters in phase 3 depend on this.
-3. **Package name:** this plan uses `consumer/`. `system-architecture.md` §8 suggests `monitoring/`.
-   Choose one before phase 1.
+3. ~~**Package name**~~ *Resolved:* `consume_plane/` with `consume_plane.yaml`.
 4. **Central policy:** should consumer thresholds and feedback permissions live in the single
-   central policy file (the challenge requires a centralized policy engine) or in `consumer.yaml`?
+   central policy file (the challenge requires a centralized policy engine) or in `consume_plane.yaml`?
 5. **`target_ids` in the Task Contract:** this field is needed for structural scope checks. Can
    the orchestrator add it?
 6. **Feedback latency target:** what delay between the triggering event and an applied signal is
