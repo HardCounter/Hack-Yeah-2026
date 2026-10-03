@@ -859,3 +859,4 @@ infra/.terraform/
 *.tfvars
 infra/deploy_key
 infra/deploy_key.pub
+infra/tfplan
