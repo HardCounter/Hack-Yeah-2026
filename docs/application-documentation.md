@@ -103,18 +103,19 @@ sequenceDiagram
     participant Auditor as Synchronous Auditor Plugins
     participant Router as Transparent Router
     participant Upstream as Primary / Fallback Provider
+    participant BankState as Persisted Bank State (Read-Only)
     participant Q1 as Queue 1 (Persistence)
     participant Verifier as Independent Read-Only State Verifier
 
-    Agent->>Interceptor: Request (LLM prompt, MCP tool call, egress action)
-    Interceptor->>Auditor: Authenticate, bind contract, hard checks, atomic budget reservation
+    Agent->>Interceptor: Request (LLM prompt, tool call, egress action)
+    Interceptor->>Auditor: Authenticate, bind contract, Stage 1 hard checks, atomic budget reservation
     
     alt Action is Blocked (Policy Violation)
         Auditor-->>Interceptor: Decision: BLOCK (reason, violation_code)
-        Interceptor-->>Agent: Immediate Error Response (403 / MCP Error)
+        Interceptor-->>Agent: Immediate Error Response (403 / Tool Error)
         Interceptor->>Q1: Publish Blocked Action Event
     else Action passes hard checks
-        Interceptor->>Auditor: Required selective semantic assessment + exact-action approval check
+        Interceptor->>Auditor: Stage 2 required selective semantic assessment + approval check
         Auditor-->>Interceptor: Final decision (no hard-deny override)
         Interceptor->>Q1: Durably persist sanitized dispatch intent
         Interceptor->>Router: Forward only if all gates permit
@@ -123,8 +124,8 @@ sequenceDiagram
         Router-->>Interceptor: Buffered response or unknown execution outcome
         Interceptor->>Auditor: Inspect output, reconcile usage, persist result
         Interceptor-->>Agent: Sanitized response or paused/blocked status
-        Verifier->>Upstream: Separate read-only persisted-state snapshot
-        Verifier->>Q1: Verification result, not inferred from response
+        Verifier->>BankState: Query fenced read-only persisted-state snapshot
+        Verifier->>Q1: Publish verification result (not inferred from response)
     end
 ```
 
@@ -139,12 +140,15 @@ The gateway intercepts agent actions at three natural boundary interfaces:
 
 Before any action is sent to an external provider or executed on a tool, it passes through an extensible **Action Auditor Pipeline**.
 
-#### The Decision Contract
-Each auditor returns a structured decision. Hard checks are deterministic; AI-based
-assessments are not. Conservative composition preserves hard-deny precedence:
+#### The Decision Contract & Pipeline Precedence
+Execution follows a strict two-stage pipeline:
+- **Stage 1 (Deterministic Enforcers):** Evaluates allowlists, argument schemas, PII/secret regexes, and synchronous pre-dispatch budget reservations. Any hard `BLOCK` terminates execution immediately and skips all semantic checks.
+- **Stage 2 (Selective Semantic & Approval Gates):** Evaluates contextual trajectory drift or human approval for high-impact actions. A semantic assessment can never override a Stage 1 hard deny, missing approval, or exhausted budget.
+
+Each auditor returns a structured decision:
 - `ALLOW`: The action complies with policies; forward immediately.
 - `BLOCK`: The action violates policy; reject immediately and return a structured error to the agent.
-- `REDACT`: Sanitize data before forwarding/delivery and revalidate. Do not silently change approved business terms or identity fields.
+- `REDACT`: Sanitize data before forwarding/delivery and revalidate. If a transformation alters approved baseline identity fields or financial amounts, the gateway converts it to a hard `BLOCK`.
 - `REQUIRE_APPROVAL`: Pause with no dispatch. An authorized external reviewer grants a single-use approval bound to contract, action/arguments digest, policy, state version and expiry; recheck hard rules and budget before execution.
 - `ALERT`: Allow the action to proceed, but emit a high-priority warning event to the dashboard and increase session risk score.
 
@@ -166,7 +170,7 @@ interception:
       type: "in_process"
       handler: "core.auditors.allowlist:ToolAllowlistAuditor"
       config:
-        allowed_tools: ["search_docs", "calculate_margin", "query_portfolio"]
+        allowed_tools: ["read_application", "read_documents", "screen_sanctions", "create_client"]
         block_action: "reject"
 
     # 2. Secret & PII scanner
@@ -259,7 +263,7 @@ flowchart LR
 The final storage choice is open; SQLite is sufficient for a small local slice. Only
 sanitized allowlisted event fields are persisted, not arbitrary raw prompts/arguments/results.
 MongoDB is an optional future choice, not an installed dependency. JSON-oriented storage can offer:
-1. **Schema Agnostic & Natural JSON:** Arbitrary tool arguments and provider-specific attributes map 1:1 without relational schema migrations.
+1. **Flexible Sanitized Document JSON:** Persists allowlisted, sanitized structured events and metadata without complex relational migrations, strictly excluding raw secrets, unchecked PII, and raw prompt blobs.
 2. **High-Throughput Append Workloads:** MongoDB handles rapid append-only writes via time-bucketed collections or capped collections with minimal write latency.
 3. **Rich Local Querying:** Easily query action histories by session, trace, tool name, or risk attributes for local debugging and dashboard exploration.
 
@@ -341,7 +345,7 @@ This architecture introduces a **closed-loop feedback mechanism**:
    pinned policy, weaken constraints, reset spend or retroactively prevent prior actions:
    - **Enforce Strict Allowlist:** Disable optional or potentially dangerous tools.
    - **Enforce Human Approval:** Convert automatic tool execution into `REQUIRE_APPROVAL` mode.
-   - **Throttle / Rate-Limit:** Add synthetic delay or limit token budget for the session.
+   - **Throttle / Halt:** Add synthetic delay or request session-level halt (synchronous budget limits are enforced at Layer 1 pre-dispatch).
    - **Hard Halt:** Issue a session-wide `BLOCK` for all subsequent LLM or tool requests.
 
 ```json
@@ -353,13 +357,13 @@ This architecture introduces a **closed-loop feedback mechanism**:
   "ts": "2026-10-03T15:45:00.120Z",
   "target_scope": {
     "session_id": "sess_onboarding_APP0001",
-    "agent_id": "client_onboarding_agent"
+    "agent_id": "onboarding-agent"
   },
   "action": "ESCALATE_POLICY",
   "policy_modifications": {
     "strict_mode": true,
-    "require_approval_for": ["create_client", "freeze_account", "file_sar"],
-    "blocked_tools": ["shell_exec", "eval_code", "contact_customer"]
+    "require_approval_for": ["create_client"],
+    "blocked_tools": ["run_code", "delete_client", "send_email"]
   },
   "reason": "Anomalous tool call velocity detected (5 attempts in 2 seconds) with parameter drift.",
   "ttl_seconds": 600
@@ -384,23 +388,24 @@ To maintain clean separation and make the system truly extendable, all component
   "policy_version": "sha256:example-policy",
   "feed_version": "sha256:example-feed",
   "trace_id": "tr_4bf92f3577b34da6a3ce929d0e0e4736",
-  "session_id": "sess_aml_ALR0002",
-  "case_id": "ALR-0002",
-  "agent_id": "aml_monitoring_agent",
+  "session_id": "sess_onboarding_APP0001",
+  "case_id": "APP-0001",
+  "agent_id": "onboarding-agent",
   "ts": "2026-10-03T15:42:10.500Z",
   "action_type": "tool_call", 
   "source": "tool_proxy",
   "status": "completed", 
   
   "action_details": {
-    "name": "freeze_account",
+    "name": "create_client",
     "parameters": {
-      "account_id": "ACC-0042",
-      "reason_code": "confirmed_alert"
+      "application_id": "APP-0001",
+      "name": "Jan Nowak"
     },
     "result": {
-      "effect_receipt_id": "effect_0004",
-      "frozen_at": "2026-10-03T15:42:10Z"
+      "effect_receipt_id": "effect_0001",
+      "created_client_id": "CLI-0151",
+      "created_at": "2026-10-03T15:42:10Z"
     }
   },
 
@@ -443,7 +448,7 @@ class AuditContext:
     trace_id: str
     session_id: str
     agent_id: str
-    action_type: Literal["llm_call", "mcp_tool", "egress_http"]
+    action_type: Literal["llm_call", "tool_call", "mcp_tool", "egress_http"]
     action_name: str
     payload: dict
     current_policy_level: str  # "standard", "strict", "quarantine"
@@ -503,9 +508,10 @@ To power the judge-facing audit ledger UI defined in `docs/dashboard-ui.md`, the
 | Endpoint | Method | Purpose | Payload / Response |
 |---|---|---|---|
 | `/api/v1/inspect` | `POST` | **Sandbox Attack Console**: Uses the same enforcement path; identity/contract/policy are resolved server-side. | Req: prompt or tool proposal plus session reference (no self-selected authority). Res: sanitized verdict/pipeline/output, action ID and bound policy version. |
-| `/api/v1/events/stream` | `GET` | **Live Feed**: Server-Sent Events (SSE) streaming decisions in real-time. | `data: {"event_id": "...", "ts": "...", "verdict": "BLOCKED", "rule": "R-SANCTIONS", "excerpt": "...", "latency_ms": 1.2}` |
+| `/api/v1/events/stream` | `GET` | **Live Feed**: Server-Sent Events (SSE) streaming decisions in real-time. Excerpts are sanitized/masked. | `data: {"event_id": "...", "ts": "...", "verdict": "BLOCKED", "rule": "ONB-P1", "excerpt": "[REDACTED_DATA]", "latency_ms": 1.2}` |
 | `/api/v1/policy` | `GET` | **Policy Inspector**: Returns current policy version, loaded rules, and strictness mode. | `{"version": "v12", "mode": "strict", "rules_count": 18, "last_reloaded": "..."}` |
-| `/api/v1/policy/mode` | `POST` | **Admin-only Strictness Toggle**: Publishes a validated version for new sessions; active contracts stay pinned. | Requested mode, authenticated actor, new version; public demo users cannot mutate global policy. |
+| `/api/v1/policy/mode` | `POST` | **Admin-only Strictness Toggle**: Publishes a validated version for new sessions; active contracts stay pinned. | Requires `Authorization: Bearer <ADMIN_SECRET>`. Req: `{"mode": "lenient"|"standard"|"strict"}`. Res: `{"status": "ok", "active_mode": "strict", "version": "v13"}`. Public demo users cannot mutate global policy. |
+| `/api/v1/approvals/{approval_id}/decide` | `POST` | **Human Approval Decision**: Authorized compliance reviewer records decision for paused action. | Requires `Authorization: Bearer <ADMIN_SECRET>`. Req: `{"decision": "ALLOW"|"BLOCK", "canonical_arguments_sha256": "...", "single_use_nonce": "..."}`. Consumes nonce atomically upon re-checked dispatch. |
 | `/api/v1/suite/status` | `GET` | **Test Suite Strip**: Returns actual executed results, never scenario-table counts. | Before tests exist: `{"status": "not_run", "total": null, "passed": null}`. Later include commit, policy/feed versions, command, timestamp and positive-case counts. |
 | `/api/v1/scenario/replay` | `POST` | **Sandbox Outcome Replay**: Verifies a preserved bank-state snapshot and baseline through a read-only path. | Scenario/snapshot IDs, per-check evidence and `VERIFIED_SUCCESS`, `FAILED_POSTCONDITIONS` or `VERIFICATION_INCOMPLETE`; no claim a completed write was blocked. |
 

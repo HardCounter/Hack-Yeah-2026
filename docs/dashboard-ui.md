@@ -50,7 +50,7 @@ donut charts of fake traffic, world maps, a chatbot bubble.
 ├───────────────────────────────┬──────────────────────────────┤
 │ 1. TRY TO BREAK IT            │ 2. AGENT SAID DONE. WAS IT?  │
 │ [presets] [textarea] [Send]   │ scenario replay timeline     │
-│ pipeline rows light up        │ persisted result: FAILED     │
+│ pipeline rows light up        │ persisted result: FAILED_POST│
 │ sanitized view + STAMP        │ evidence: rule still fires   │
 ├───────────────────────────────┴──────────────────────────────┤
 │ LIVE FEED · Stump the guard: 14 tried / 13 caught            │
@@ -89,8 +89,8 @@ Must work at 13" laptop width and degrade to a single column on a phone.
   01 auth / identity          pass      0.2 ms
   02 secrets regex            pass      0.4 ms
   03 PII detector             REDACT    0.6 ms   PESEL, IBAN
-   04 budget reservation      pass      0.3 ms
-   05 selective semantic gate BLOCK   180 ms     score 0.94
+  04 budget reservation       pass      0.3 ms
+  05 selective semantic gate  BLOCK   180 ms     score 0.94
   ```
   This shows hybrid deterministic + semantic controls, architecture and performance telemetry in one view.
 - Deterministic results appear first; required semantic assessment finishes **before** dispatch.
@@ -113,7 +113,7 @@ reads actual state and reports failed ONB-P2. Do not disable enforcement through
 
 - Judge clicks **Run scenario**; steps appear one by one on a timeline, each with its own check.
 - Final step stamped `FAILED POSTCONDITIONS — persisted identity mismatch`, with read-only
-  state evidence. Also support `VERIFIED SUCCESS` and `VERIFICATION INCOMPLETE`.
+  state evidence. Also support `VERIFIED_SUCCESS` and `VERIFICATION_INCOMPLETE`.
   If the wrong effect already committed, say **detected, not prevented or rolled back**.
 - Headline on screen: **"Agent said success. We checked. It wasn't."**
 - Can be a **recorded simulation replay** with a preserved immutable bank-state snapshot
@@ -123,7 +123,7 @@ reads actual state and reports failed ONB-P2. Do not disable enforcement through
   duplicate attempts, ONB-15 blocked unrelated-application retrieval. AML scenarios are deferred.
 
 ### Live feed + "Stump the guard"
-- Scrolling tape of recent decisions across **all** judges (shared server), newest first: time, verdict, rule, short excerpt.
+- Scrolling tape of recent decisions across **all** judges (shared server), newest first: time, verdict, rule, short sanitized excerpt (e.g. `[REDACTED_SECRET]` or masked data; never raw secrets or PII).
 - Counter: `Judge attempts today: N · caught: M`.
 - If something gets through, offer **"Propose regression fixture"**. Save sanitized data for
   authorized review; never execute judge input as generated test code or treat it as policy authority.
@@ -151,5 +151,4 @@ reads actual state and reports failed ONB-P2. Do not disable enforcement through
    Reserve the panel in the layout either way.
 2. **Hosting**: deployed URL (VPS or tunnel to our laptop) vs our laptop on venue Wi-Fi. Venue networks often
    isolate clients; **test at the venue early**. Last resort: judges use our laptop.
-3. **API contract** between dashboard and gateway (test results, playground request, event feed, policy switch),
-   so frontend and backend can work in parallel.
+3. **API contract**: implemented to match the proposed endpoints in [application-documentation.md](application-documentation.md#54-gateway-dashboard-api-contract-for-judge-ui) (`/api/v1/inspect`, `/api/v1/events/stream`, `/api/v1/policy`, `/api/v1/policy/mode`, `/api/v1/approvals/{approval_id}/decide`, `/api/v1/suite/status`, `/api/v1/scenario/replay`).

@@ -30,6 +30,7 @@ data/documents/*.txt    OCR-style text of the onboarding documents (also stored 
 | Column | Type | Notes |
 |---|---|---|
 | client_id | TEXT PK | `CLI-0001` … |
+| application_id | TEXT UNIQUE | `APP-0001` … Unique link to onboarding application; NULL for pre-existing clients |
 | client_type | TEXT | `individual` (≈80%) / `company` |
 | full_name | TEXT | Individuals: "First Last". Companies: legal name incl. form (`Sp. z o.o.`, `S.A.`, `GmbH`, `Ltd`) |
 | date_of_birth | TEXT | ISO `YYYY-MM-DD`; NULL for companies |
@@ -142,9 +143,11 @@ data/documents/*.txt    OCR-style text of the onboarding documents (also stored 
 Target mix: about 75% false positives, 25% truly suspicious. That's close to reality, and it makes "close as false positive" the tempting default.
 
 ### Write targets (start empty)
-`sar_filings(sar_id, alert_id, client_id, narrative, filed_at, session_id)`,
-`customer_messages(msg_id, client_id, body, sent_at, session_id)`,
-`audit_actions(id, ts, session_id, tool, args_json, result_json)`.
+- `sar_filings(sar_id, alert_id, client_id, narrative, filed_at, session_id)`
+- `customer_messages(msg_id, client_id, body, sent_at, session_id)`
+- `audit_actions(id, ts, session_id, tool, args_json, result_json)` (bait tool simulation)
+- `effect_receipts(receipt_id TEXT PK, action_id TEXT, run_id TEXT, session_id TEXT, application_id TEXT, tool_name TEXT, client_id TEXT, status TEXT, created_at TEXT)` (durable KYC business effects)
+- `screening_evidence(evidence_id TEXT PK, run_id TEXT, session_id TEXT, subject_name TEXT, subject_dob TEXT, subject_type TEXT, list_version TEXT, score REAL, matched_entry_id TEXT, screened_at TEXT)` (server-recorded screening proof)
 
 ### Reference data
 - `high_risk_countries`: a mock list of about 10 ISO codes (`IR`, `KP`, `MM`, `SY`, `YE`, plus a few
@@ -168,7 +171,7 @@ Target mix: about 75% false positives, 25% truly suspicious. That's close to rea
 }
 ```
 
-Generator: `python data/generate.py` (rules shared with the verifier live in `data/rules.py`).
+Generator: `uv run --locked python data/generate.py` (rules shared with the verifier live in `data/rules.py`).
 
 ## Planted cases
 
