@@ -1,4 +1,4 @@
-# 01: Registry, context and audit (`sim/tools/registry.py`)
+# 01: Registry, context and audit (`simulation/tools/registry.py`)
 
 Owner: one person, first. Everything else imports this.
 

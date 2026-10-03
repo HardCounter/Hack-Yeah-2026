@@ -1,4 +1,4 @@
-# Plan: agent tools (`sim/tools/`)
+# Plan: agent tools (`simulation/tools/`)
 
 The sixteen tools from [use-cases.md](../../use-cases.md): ten KYC tools plus six bait tools. They are the
 **monitored system**, not the control layer. They are deliberately naive: no policy, no dedupe, no
@@ -15,7 +15,7 @@ permission checks. Every control lives in the gateway, so the gateway is what th
 
 ## Layout
 ```
-sim/tools/
+simulation/tools/
   registry.py      # Tool, Ctx, REGISTRY, call(), openai_tools()
   kyc.py           # the ten KYC tools
   bait.py          # the six bait tools
@@ -42,11 +42,11 @@ Four files. No package-per-tool, no base classes, no plugin loader.
 ## Out of scope here
 - Policy decisions, redaction, budgets, signature feed: gateway (`proxy/`).
 - The HTTP endpoint that exposes the registry (`POST /tools/{name}`): gateway; it calls `registry.call()`.
-- Scripted faults (`skip_step`, `swap_arg`, …): agent wrapper (`sim/agents/`).
+- Scripted faults (`skip_step`, `swap_arg`, …): agent wrapper (`simulation/agents/`).
 - The LLM agent loop: uses `registry.openai_tools()` for its tool list, nothing more.
 
 ## Definition of done
-1. `python data/generate.py && python sim/tools/test_tools.py` passes on a clean checkout.
+1. `python data/generate.py && python simulation/tools/test_tools.py` passes on a clean checkout.
 2. Every tool has at least one happy-path assertion and writes exactly one audit row per call.
 3. End-to-end check: run the APP-0001 pipeline through `registry.call()`, then
    `verify_onboarding(con, "APP-0001", calls_from_audit(con, session))` returns no failures; the

@@ -1,4 +1,4 @@
-# 03: KYC decision tools (`sim/tools/kyc.py`, part 2)
+# 03: KYC decision tools (`simulation/tools/kyc.py`, part 2)
 
 Four tools that end an application. They write to `bank.db`, and the outcome verifier reads exactly
 these writes. **No guards**: no "already decided" check, no dedupe. ONB-11 (`repeat:create_client`)

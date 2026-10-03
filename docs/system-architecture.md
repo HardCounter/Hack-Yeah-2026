@@ -307,7 +307,7 @@ ai-control-layer/
 │   ├── bank.db               # SQLite database read/written by agent tools
 │   ├── ground_truth.json     # Sealed answer key read ONLY by the Outcome Verifier
 │   └── documents/            # Mock applicant OCR files (passports, proof of address)
-├── sim/                      # Monitored banking simulation (docs/use-cases.md)
+├── simulation/               # Monitored banking simulation (docs/use-cases.md)
 │   ├── agents/               # OpenCode/KYC integration initially; future agents deferred
 │   ├── tools/                # SQLite tool implementations (sanctions, registry, bank ops)
 │   ├── human_queue/          # Simulated compliance desk stub
@@ -330,7 +330,7 @@ ai-control-layer/
 └── docker-compose.yml        # Zero-prep local startup
 ```
 
-`sim/` and `monitoring/` must not import each other. The verifier queries `ground_truth.json` and `bank.db` independently of agent outputs.
+`simulation/` and `monitoring/` must not import each other. The verifier queries `ground_truth.json` and `bank.db` independently of agent outputs.
 
 ---
 

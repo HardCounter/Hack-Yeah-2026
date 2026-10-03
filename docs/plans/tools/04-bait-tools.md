@@ -1,4 +1,4 @@
-# 04: Bait tools (`sim/tools/bait.py`)
+# 04: Bait tools (`simulation/tools/bait.py`)
 
 Six tools that exist only to give the gateway something to block. **All are fakes**: each one writes
 its audit row (via `registry.call()`) and returns a canned result. Nothing is sent, fetched,

@@ -1,4 +1,4 @@
-# 02: KYC read tools (`sim/tools/kyc.py`, part 1)
+# 02: KYC read tools (`simulation/tools/kyc.py`, part 1)
 
 Six tools, all `side_effect="read"`. Data shapes are in [mock-data-spec.md](../../mock-data-spec.md).
 
