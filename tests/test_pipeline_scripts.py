@@ -1,0 +1,64 @@
+"""Small wrapper checks for the local OpenCode pipeline launchers."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import shutil
+import subprocess
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_pipeline_scripts_have_valid_bash_syntax():
+    for script in ("scripts/setup_opencode_pipeline.sh", "scripts/run_pipeline.sh"):
+        result = subprocess.run(["bash", "-n", str(ROOT / script)], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+
+
+def test_setup_help_does_not_require_uv_or_npm(tmp_path):
+    env = {**os.environ, "PATH": str(tmp_path)}
+    bash = shutil.which("bash")
+    assert bash
+    result = subprocess.run([bash, str(ROOT / "scripts/setup_opencode_pipeline.sh"), "--help"],
+                            cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 0
+    assert "project-local OpenCode CLI" in result.stdout
+
+
+def test_runner_help_does_not_require_an_opencode_binary():
+    result = subprocess.run([sys_executable(), "-m", "simulation.opencode_runner", "--help"],
+                            cwd=ROOT, env={**os.environ, "OPENCODE_BIN": "/missing/opencode"},
+                            capture_output=True, text=True)
+    assert result.returncode == 0
+    assert "usage:" in result.stdout.lower()
+
+
+def test_run_wrapper_clears_virtualenv_and_forwards_arguments(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "uv-call.txt"
+    stub = bin_dir / "uv"
+    stub.write_text(
+        '#!/bin/bash\n'
+        'printf "cwd=%s\\nvirtualenv=%s\\n" "$PWD" "${VIRTUAL_ENV-<unset>}" > "$PIPELINE_TEST_LOG"\n'
+        'printf "arg=<%s>\\n" "$@" >> "$PIPELINE_TEST_LOG"\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin", "VIRTUAL_ENV": "stale-env",
+           "PIPELINE_TEST_LOG": str(log)}
+    result = subprocess.run(["bash", str(ROOT / "scripts/run_pipeline.sh"), "--help"],
+                            cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    recorded = log.read_text(encoding="utf-8").splitlines()
+    assert recorded[:2] == [f"cwd={ROOT}", "virtualenv=<unset>"]
+    assert recorded[2:] == [
+        "arg=<run>", "arg=<--locked>", "arg=<python>", "arg=<-m>",
+        "arg=<simulation.opencode_runner>", "arg=<--help>",
+    ]
+
+
+def sys_executable() -> str:
+    import sys
+    return sys.executable

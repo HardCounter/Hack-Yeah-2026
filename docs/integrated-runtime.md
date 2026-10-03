@@ -99,12 +99,23 @@ operator selects the synthetic source bank, application and contract. An admin
 binding creates one isolated run; model input cannot choose the bank path.
 
 ```sh
+scripts/setup_opencode_pipeline.sh
+scripts/run_pipeline.sh APP-0001 --model provider/model
+```
+
+`scripts/run_pipeline.sh` is the operator entry. It generates a fresh synthetic bank unless `--bank-db` is set, starts `intercept.local` on a loopback port, binds one trusted session, and runs the pinned OpenCode CLI with gateway-backed tools. Artifacts land in ignored `var/pipeline-runs/`, including `verification.json`. Exit status is 0 for `VERIFIED_SUCCESS`, 2 when the agent finishes with `VERIFICATION_INCOMPLETE`, and 1 when the run fails. Provider credentials stay in the environment; `--provider-config` accepts a providers-only JSON file that references them with `{env:NAME}` and must not contain inline secrets.
+
+The same gateway can be started directly:
+
+```sh
 uv run python -m intercept.local --bank-db data/bank.db --application APP-0001 \
   --contract-id contract_APP0001_v1 --runs-dir data/runs
 ```
 
-Supply `INTERCEPT_TOKEN` and a distinct `INTERCEPT_ADMIN_TOKEN` securely to the
-service and OpenCode; never commit or print them. Use the existing plugin's
+`scripts/run_pipeline.sh` generates `INTERCEPT_TOKEN` and a distinct
+`INTERCEPT_ADMIN_TOKEN` for the child processes and does not print them. When
+starting the service directly, supply both securely and never commit or print
+them. Use the existing plugin's
 `registerTools: true`, `contractId: "contract_APP0001_v1"`, and loopback `endpoint`.
 Its registered tools call `/v1/tools/execute`; Python normalizes `call_id` into a
 stable `action_id` and injects trusted identity. `/v1/session/finish` persists the

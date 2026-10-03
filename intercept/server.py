@@ -55,7 +55,9 @@ class Gateway:
     async def handle(self, reader, writer):
         status, result = 400, {"code": "INVALID_REQUEST"}
         try:
-            async with asyncio.timeout(3):
+            # Admission stays tightly bounded. The integrated service also drains
+            # persistence and verification inside the request, so it gets a longer budget.
+            async with asyncio.timeout(30 if self.service is not None else 3):
                 head = await reader.readuntil(b"\r\n\r\n")
                 if len(head) > 8192:
                     raise ValueError("headers too large")

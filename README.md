@@ -94,5 +94,7 @@ Add a test with every change: a `test_*` function next to the code it checks (`d
 | `scripts/check_opencode_pipeline.sh` | Starts real OpenCode with the adapter and passes when its handshake reaches Python (no prompt is sent) |
 | `scripts/run_intercept_receiver.sh` | Terminal 1: observe-only Python receiver that logs every adapter request |
 | `scripts/run_opencode_intercepted.sh` | Terminal 2: starts `opencode --standalone`, wired to that receiver |
+| `scripts/setup_opencode_pipeline.sh` | Installs the locked environment and pinned OpenCode 2.0.22 under ignored `var/opencode-cli` |
+| `scripts/run_pipeline.sh [APP-0001] --model provider/model` | Runs one synthetic application through the governed gateway, OpenCode, and outcome verification |
 
 The receiver allows everything; it is a diagnostic tool, not enforcement. Use synthetic data only: it prints raw prompts and tool arguments.
