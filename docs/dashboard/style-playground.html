@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard Style Playground</title>
+<!-- Pick a look for docs/dashboard/mockup.html, then copy the prompt back into Claude. Defaults = the current mockup. -->
+<style>
+:root { --bg: #16171a; --panel: #1e2024; --line: #2e3137; --tx: #e6e6e3; --tx2: #9a9da3; --hi: #d6b46a; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--tx); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; height: 100vh; display: grid; grid-template-columns: 320px 1fr; }
+aside { border-right: 1px solid var(--line); overflow-y: auto; padding: 16px 18px 40px; }
+h1 { font-size: 15px; margin: 0 0 4px; }
+.sub { color: var(--tx2); font-size: 12.5px; margin: 0 0 14px; }
+fieldset { border: 0; border-top: 1px solid var(--line); margin: 14px 0 0; padding: 12px 0 0; }
+legend { color: var(--tx2); font-size: 12px; padding: 0 6px 0 0; }
+label { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 8px; margin: 8px 0; font-size: 13px; }
+label output { font: 12px ui-monospace, Consolas, monospace; color: var(--tx2); }
+.sl { display: grid; grid-template-columns: 1fr 44px; gap: 6px; align-items: center; }
+select, input[type=range] { width: 100%; }
+select { background: var(--panel); color: var(--tx); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit; }
+.presets { display: grid; gap: 6px; }
+.presets button { text-align: left; background: var(--panel); color: var(--tx); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; cursor: pointer; font: inherit; }
+.presets button small { display: block; color: var(--tx2); font-size: 12px; }
+.presets button[aria-pressed=true] { border-color: var(--hi); }
+.seg { display: flex; gap: 4px; flex-wrap: wrap; }
+.seg button { flex: 1; background: var(--panel); color: var(--tx); border: 1px solid var(--line); border-radius: 4px; padding: 5px 6px; cursor: pointer; font: 12.5px inherit; font-family: inherit; }
+.seg button[aria-pressed=true] { border-color: var(--hi); color: var(--hi); }
+:focus-visible { outline: 2px solid var(--hi); outline-offset: 2px; }
+
+.right { display: grid; grid-template-rows: 1fr auto; min-width: 0; min-height: 0; }
+.stagebox { overflow: auto; padding: 20px; display: grid; justify-items: start; align-content: start; background: #0f1012; }
+.frame { container: pv / inline-size; box-shadow: 0 0 0 1px var(--line); }
+.out { border-top: 1px solid var(--line); padding: 12px 18px 14px; background: var(--panel); }
+.out-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color: var(--tx2); font-size: 12px; }
+#copy { background: var(--hi); color: #16171a; border: 0; border-radius: 4px; padding: 6px 14px; font-weight: 600; cursor: pointer; }
+#prompt { font: 12.5px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; max-height: 150px; overflow: auto; margin: 0; color: var(--tx); }
+
+/* ---------- Preview: a faithful mini step-1 screen, driven by CSS variables ---------- */
+.pv { background: var(--p-paper); color: var(--p-ink); font-family: var(--p-body); font-size: var(--p-base); line-height: 1.55; min-height: 640px; }
+.pv * { box-sizing: border-box; }
+.pv .wrap { padding: 0 var(--p-gutter); }
+.pv .lh { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px 24px; padding-top: calc(var(--p-gap) * .8); padding-bottom: calc(var(--p-gap) * .5); }
+.pv .wm { font-family: var(--p-head); font-weight: 600; letter-spacing: .1em; font-variant-caps: all-small-caps; font-size: 1.35em; }
+.pv .seal { color: var(--p-accent); margin-right: 6px; }
+.pv .meta { font-size: .8em; color: var(--p-ink2); display: flex; gap: 16px; }
+.pv .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--p-allow); margin-right: 5px; }
+.pv header { border-bottom: var(--p-headrule); }
+/* step bar variants */
+.pv .path { display: grid; grid-template-columns: repeat(3, 1fr); }
+.pv .path span { padding: calc(var(--p-gap) * .6) 16px calc(var(--p-gap) * .5) 0; color: var(--p-ink3); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.pv .path span + span { padding-left: 16px; border-left: 1px solid var(--p-rule); }
+.pv .path b { font-family: var(--p-head); font-weight: 500; font-size: 1.6em; margin-right: 10px; }
+.pv .path span.on { color: var(--p-ink); border-bottom-color: var(--p-ink); }
+.pv[data-steps=line] .path span { border-left: 0 !important; padding-left: 0; border-bottom: 3px solid var(--p-rule); margin-right: 8px; font-size: .85em; }
+.pv[data-steps=line] .path span.on { border-bottom-color: var(--p-ink); }
+.pv[data-steps=line] .path b { font-size: 1em; }
+.pv[data-steps=none] .path { display: none; }
+.pv main.pvm { padding-top: calc(var(--p-gap) * 1.4); padding-bottom: var(--p-gap); }
+.pv h2 { font-family: var(--p-head); font-weight: var(--p-hw); font-size: calc(var(--p-base) * var(--p-scale)); line-height: 1.15; margin: 0; max-width: 20ch; letter-spacing: var(--p-htrack); }
+.pv .lead { color: var(--p-ink2); font-size: 1.1em; margin: 8px 0 calc(var(--p-gap) * 1.1); }
+.pv .stage { display: grid; grid-template-columns: 5fr 7fr; gap: 0 calc(var(--p-gap) * 1.4); }
+.pv[data-result=below] .stage { grid-template-columns: 1fr; }
+.pv[data-result=below] .res { border-left: 0; padding-left: 0; border-top: 1px solid var(--p-rule); padding-top: var(--p-gap); margin-top: var(--p-gap); }
+@container pv (max-width: 760px) {
+  .pv .stage { grid-template-columns: 1fr; }
+  .pv .res { border-left: 0 !important; padding-left: 0 !important; border-top: 1px solid var(--p-rule); padding-top: var(--p-gap); margin-top: var(--p-gap); }
+  .pv .path span small { display: none; }
+}
+.pv ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--p-ink); }
+.pv li { display: flex; justify-content: space-between; gap: 10px; padding: calc(var(--p-gap) * .3) 0; border-bottom: 1px solid var(--p-rule); }
+.pv li.on { background: var(--p-paper2); font-weight: 600; }
+.pv li small { color: var(--p-ink3); font-weight: 400; }
+.pv .res { border-left: 1px solid var(--p-rule); padding-left: calc(var(--p-gap) * 1.4); }
+.pv .empty { color: var(--p-ink3); font-style: italic; }
+.pv .stamp { display: inline-block; padding: .35em .9em; font-family: var(--p-stampfont); font-weight: 600; letter-spacing: .12em; font-variant-caps: all-small-caps; font-size: var(--p-stamp); transform: rotate(calc(var(--p-rot) * -1deg)); border: 2px solid currentColor; outline: 1px solid currentColor; outline-offset: -6px; border-radius: 2px; color: var(--p-block); }
+.pv[data-stamp=label] .stamp { transform: none; outline: 0; border: 0; padding: .1em .55em; color: var(--p-paper); background: var(--p-block); border-radius: 3px; }
+.pv[data-stamp=word] .stamp { transform: none; outline: 0; border: 0; padding: 0; border-bottom: 3px solid currentColor; }
+.pv .why { font-size: 1.15em; margin: 18px 0; max-width: 44ch; }
+.pv table { width: 100%; border-collapse: collapse; font-size: .9em; }
+.pv td { border-bottom: 1px solid var(--p-rule); padding: 5px 10px 5px 0; }
+.pv td.r { text-align: right; font-family: var(--p-mono); font-size: .85em; color: var(--p-ink3); }
+.pv .v { font-variant-caps: all-small-caps; letter-spacing: .08em; font-weight: 600; }
+.pv .vb { color: var(--p-block); } .pv .vw { color: var(--p-warn); } .pv .mut { color: var(--p-ink3); }
+.pv .next { margin-top: var(--p-gap); padding-top: 14px; border-top: 1px solid var(--p-rule); display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--p-ink2); }
+.pv .btn { background: var(--p-ink); color: var(--p-paper); padding: 9px 18px; border-radius: var(--p-radius); font-family: var(--p-head); font-weight: 600; letter-spacing: .08em; font-variant-caps: all-small-caps; font-size: 1.05em; }
+</style>
+</head>
+<body>
+
+<aside>
+  <h1>Dashboard style playground</h1>
+  <p class="sub">Defaults match the current mockup. Pick a preset or tweak, then copy the prompt.</p>
+
+  <div class="presets" id="presets"></div>
+
+  <fieldset><legend>Color</legend>
+    <label>Paper <select id="paper"></select></label>
+    <label>Verdict colors <select id="verdicts"><option value="muted">Muted (ink-like)</option><option value="bold">Bold (projector-safe)</option></select></label>
+    <label>Accent <select id="accent"><option value="brass">Brass</option><option value="none">None (ink only)</option><option value="oxblood">Oxblood</option></select></label>
+  </fieldset>
+
+  <fieldset><legend>Type</legend>
+    <label>Headings <select id="head"></select></label>
+    <label>Body <select id="body"></select></label>
+    <label>Base size <span class="sl"><input type="range" id="base" min="14" max="20" step="1"><output id="baseO"></output></span></label>
+    <label>Title scale <span class="sl"><input type="range" id="scale" min="1.6" max="3.4" step="0.1"><output id="scaleO"></output></span></label>
+  </fieldset>
+
+  <fieldset><legend>Layout</legend>
+    <label>Step bar <span class="seg" data-k="steps"><button value="tabs">Numbered</button><button value="line">Thin line</button><button value="none">Hidden</button></span></label>
+    <label>Result panel <span class="seg" data-k="result"><button value="right">Right</button><button value="below">Below</button></span></label>
+    <label>Density <span class="sl"><input type="range" id="gap" min="16" max="56" step="2"><output id="gapO"></output></span></label>
+  </fieldset>
+
+  <fieldset><legend>Verdict</legend>
+    <label>Style <span class="seg" data-k="stamp"><button value="stamp">Rubber stamp</button><button value="label">Solid label</button><button value="word">Underlined</button></span></label>
+    <label>Size <span class="sl"><input type="range" id="stampSize" min="1.1" max="3" step="0.05"><output id="stampSizeO"></output></span></label>
+    <label>Tilt <span class="sl"><input type="range" id="rot" min="0" max="8" step="0.5"><output id="rotO"></output></span></label>
+  </fieldset>
+
+  <fieldset><legend>First 10 seconds</legend>
+    <label>On load <select id="autorun"><option value="off">Wait for a click</option><option value="on">Auto-run first attack</option></select></label>
+    <label>Preview width <span class="sl"><input type="range" id="vw" min="390" max="1440" step="10"><output id="vwO"></output></span></label>
+  </fieldset>
+</aside>
+
+<div class="right">
+  <div class="stagebox" id="stagebox"><div class="frame" id="frame"><div class="pv" id="pv">
+    <header>
+      <div class="wrap lh"><div class="wm"><span class="seal">◆</span>AI Control Layer</div>
+        <div class="meta"><span>82 of 84 tests pass</span><span>Policy v12 Strict</span><span><span class="dot"></span>Live</span></div></div>
+      <div class="wrap path"><span class="on"><b>1</b>Try to break it</span><span><b>2</b>Catch a lying agent</span><span><b>3</b>See the proof</span></div>
+    </header>
+    <main class="wrap pvm">
+      <h2>Pick an attack. Watch it get stopped.</h2>
+      <p class="lead">Every prompt passes our controls before any model sees it.</p>
+      <div class="stage">
+        <ul id="pvList"></ul>
+        <div class="res" id="pvRes"></div>
+      </div>
+    </main>
+  </div></div></div>
+  <div class="out">
+    <div class="out-head"><span>Prompt for Claude</span><button id="copy">Copy prompt</button></div>
+    <pre id="prompt"></pre>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const PAPERS = {
+  cream:   { label: 'Cream (current)', paper: '#F5F0E6', paper2: '#ECE5D6', rule: '#D6CCB8', ink: '#1F1D1A', ink2: '#57514A', ink3: '#7A7366' },
+  linen:   { label: 'Cool linen',      paper: '#F2F1EC', paper2: '#E6E4DC', rule: '#CFCCC1', ink: '#1C1E21', ink2: '#4E5258', ink3: '#72767C' },
+  white:   { label: 'Bright white',    paper: '#FBFBF9', paper2: '#EFEFEB', rule: '#D9D9D3', ink: '#151618', ink2: '#45474B', ink3: '#6B6E73' },
+  green:   { label: 'Ledger green',    paper: '#EEF0E6', paper2: '#E1E5D6', rule: '#C6CCB6', ink: '#1C211B', ink2: '#4A5246', ink3: '#6E7768' },
+  night:   { label: 'Night desk (dark)', paper: '#1C1B19', paper2: '#26241F', rule: '#3A3730', ink: '#EDE7DA', ink2: '#B9B2A3', ink3: '#8E8778' },
+};
+const VERDICTS = {
+  muted: { block: '#8C2323', warn: '#8A5A12', allow: '#2E5A3A' },
+  bold:  { block: '#B3261E', warn: '#A86400', allow: '#1E7A43' },
+  night: { block: '#E0705F', warn: '#D9A441', allow: '#6FBF8A' },
+};
+const ACCENTS = { brass: '#8C6D32', none: 'transparent', oxblood: '#7A1F2B' };
+const FONTS = {
+  serif:    { label: 'Book serif (Georgia)',      css: '"Source Serif 4", Georgia, "Times New Roman", serif' },
+  didone:   { label: 'Didone (Bodoni-like)',      css: '"Bodoni 72", "Bodoni MT", Didot, Georgia, serif' },
+  grotesk:  { label: 'Grotesk sans (system)',     css: '"Helvetica Neue", Arial, system-ui, sans-serif' },
+  humanist: { label: 'Humanist sans (Segoe/Gill)', css: '"Gill Sans", "Segoe UI", Candara, sans-serif' },
+  mono:     { label: 'Monospace',                 css: '"IBM Plex Mono", ui-monospace, Consolas, monospace' },
+};
+const DEFAULTS = { paper: 'white', verdicts: 'bold', accent: 'brass', head: 'serif', body: 'serif', base: 19, scale: 2.6,
+  steps: 'tabs', result: 'right', gap: 34, stamp: 'stamp', stampSize: 2.2, rot: 3, autorun: 'on', vw: 1280 };
+const PRESETS = [
+  ['Projector (current)', 'Main look: bright paper, bold verdicts, big type, auto-runs.', {}],
+  ['Private bank letterhead', 'Didone titles, oxblood seal, more air.', { paper: 'cream', verdicts: 'muted', head: 'didone', accent: 'oxblood', base: 16, scale: 3, gap: 50, stampSize: 2, rot: 2, autorun: 'off' }],
+  ['Clean compliance', 'Sans, bright paper, solid verdict labels. Fast to scan.', { head: 'grotesk', body: 'grotesk', accent: 'none', steps: 'line', stamp: 'label', rot: 0, base: 17, scale: 2.1, gap: 32, stampSize: 1.5 }],
+  ['Audit ledger (previous)', 'Cream paper, muted ink verdicts, waits for a click.', { paper: 'cream', verdicts: 'muted', base: 16, scale: 2.3, gap: 40, stampSize: 1.75, autorun: 'off' }],
+  ['Night desk', 'Dark room variant. Breaks the light-only rule in visuals.md.', { paper: 'night', head: 'humanist', body: 'humanist', base: 17, gap: 36 }],
+];
+const state = { ...DEFAULTS };
+
+/* build controls */
+for (const [k, v] of Object.entries(PAPERS)) $('#paper').add(new Option(v.label, k));
+for (const id of ['head', 'body']) for (const [k, v] of Object.entries(FONTS)) $('#' + id).add(new Option(v.label, k));
+PRESETS.forEach(([name, desc, over], i) => {
+  const b = document.createElement('button');
+  b.innerHTML = `${name}<small>${desc}</small>`;
+  b.onclick = () => { Object.assign(state, DEFAULTS, over); state.vw = +$('#vw').value; syncControls(); updateAll(); mark(i); };
+  $('#presets').append(b);
+});
+const mark = i => document.querySelectorAll('#presets button').forEach((b, j) => b.setAttribute('aria-pressed', j === i));
+for (const id of ['paper', 'verdicts', 'accent', 'head', 'body', 'autorun']) $('#' + id).onchange = e => { state[id] = e.target.value; mark(-1); updateAll(); };
+for (const id of ['base', 'scale', 'gap', 'stampSize', 'rot', 'vw']) $('#' + id).oninput = e => { state[id] = +e.target.value; if (id !== 'vw') mark(-1); updateAll(); };
+document.querySelectorAll('.seg').forEach(seg => seg.querySelectorAll('button').forEach(b => b.onclick = () => { state[seg.dataset.k] = b.value; mark(-1); syncControls(); updateAll(); }));
+
+function syncControls() {
+  for (const id of ['paper', 'verdicts', 'accent', 'head', 'body', 'autorun', 'base', 'scale', 'gap', 'stampSize', 'rot', 'vw']) $('#' + id).value = state[id];
+  document.querySelectorAll('.seg').forEach(seg => seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.value === state[seg.dataset.k])));
+}
+
+/* preview content */
+const ATTACKS = [['Injection hidden in a document', 'attack'], ['Personal ID and bank account', 'privacy'], ['Leaked API key', 'secret'], ['Jailbreak role-play', 'attack'], ['Freeze every flagged account', 'risky action'], ['Normal customer question', 'must pass']];
+$('#pvList').innerHTML = ATTACKS.map(([t, k], i) => `<li><span>${t}</span><small>${k}</small></li>`).join('');
+const RESULT = `<span class="stamp">Blocked</span>
+  <p class="why">Declined. A hidden instruction tried to override the rules (confidence 0.96).</p>
+  <table>
+    <tr><td>Identity check</td><td class="mut">pass</td><td class="r">0.2 ms</td></tr>
+    <tr><td>Secret scanner</td><td class="mut">pass</td><td class="r">0.4 ms</td></tr>
+    <tr><td>Personal data</td><td class="mut">pass</td><td class="r">0.6 ms</td></tr>
+    <tr><td>AI injection check</td><td class="v vb">block</td><td class="r">164 ms</td></tr>
+  </table>
+  <div class="next"><span>Blocking bad prompts is half the job.</span><span class="btn">Next: catch a lying agent</span></div>`;
+
+function renderPreview() {
+  const pv = $('#pv'), p = PAPERS[state.paper], v = state.paper === 'night' ? VERDICTS.night : VERDICTS[state.verdicts];
+  const vars = {
+    paper: p.paper, paper2: p.paper2, rule: p.rule, ink: p.ink, ink2: p.ink2, ink3: p.ink3,
+    block: v.block, warn: v.warn, allow: v.allow, accent: ACCENTS[state.accent],
+    head: FONTS[state.head].css, body: FONTS[state.body].css, mono: FONTS.mono.css,
+    stampfont: FONTS[state.head].css, base: state.base + 'px', scale: state.scale, gap: state.gap + 'px',
+    gutter: state.vw < 640 ? '16px' : '40px', stamp: state.stampSize + 'rem', rot: state.rot, radius: state.head === 'grotesk' ? '4px' : '2px',
+    hw: state.head === 'didone' ? 400 : 500, htrack: state.head === 'grotesk' ? '-.01em' : '0',
+    headrule: state.accent === 'none' ? `1px solid ${p.ink}` : `3px double ${ACCENTS[state.accent]}`,
+  };
+  for (const [k, val] of Object.entries(vars)) pv.style.setProperty('--p-' + k, val);
+  pv.dataset.steps = state.steps; pv.dataset.result = state.result; pv.dataset.stamp = state.stamp;
+  const auto = state.autorun === 'on';
+  pv.querySelectorAll('#pvList li').forEach((li, i) => li.className = auto && i === 0 ? 'on' : '');
+  $('#pvRes').innerHTML = auto ? RESULT : '<p class="empty">Choose an attack on the left. The verdict appears here in under a second.</p>';
+  if (!auto) { $('#pvRes').innerHTML += '<div style="opacity:.35;margin-top:24px">' + RESULT + '</div>'; }
+  // fit the chosen viewport width into the available area
+  const frame = $('#frame'), avail = $('#stagebox').clientWidth - 40;
+  frame.style.width = state.vw + 'px';
+  frame.style.zoom = Math.min(1, avail / state.vw); // zoom shrinks layout too, unlike transform
+  for (const id of ['base', 'scale', 'gap', 'stampSize', 'rot', 'vw']) $('#' + id + 'O').textContent = state[id] + ({ base: 'px', gap: 'px', vw: 'px', rot: '°', stampSize: 'rem' }[id] || '×');
+}
+
+function updatePrompt() {
+  const d = DEFAULTS, s = state, parts = [];
+  const p = PAPERS[s.paper];
+  if (s.paper !== d.paper) parts.push(s.paper === 'night'
+    ? `Switch to a dark theme: paper ${p.paper}, raised surface ${p.paper2}, rules ${p.rule}, ink ${p.ink} / ${p.ink2} / ${p.ink3}, and lighten the verdict colors to block ${VERDICTS.night.block}, warn ${VERDICTS.night.warn}, allow ${VERDICTS.night.allow}. Update visuals.md, which currently says light theme only.`
+    : `Change the paper to ${p.label.toLowerCase()}: --paper ${p.paper}, --paper-2 ${p.paper2}, --rule ${p.rule}, --ink ${p.ink}, --ink-2 ${p.ink2}, --ink-3 ${p.ink3}.`);
+  if (s.verdicts !== d.verdicts && s.paper !== 'night') parts.push(`Make the verdict colors muted, ink-like: --block ${VERDICTS.muted.block}, --warn ${VERDICTS.muted.warn}, --allow ${VERDICTS.muted.allow}.`);
+  if (s.accent !== d.accent) parts.push(s.accent === 'none'
+    ? 'Drop the brass accent: the letterhead gets a single thin ink rule instead of the brass double rule, and the seal turns ink.'
+    : `Replace the brass accent with oxblood (${ACCENTS.oxblood}) for the seal and the letterhead double rule.`);
+  if (s.head !== d.head || s.body !== d.body) {
+    const f = k => `${FONTS[k].label} (${FONTS[k].css})`;
+    parts.push(s.head === s.body ? `Use ${f(s.head)} for both headings and body.` : `Use ${f(s.head)} for headings and the wordmark, and ${f(s.body)} for body text.`);
+  }
+  if (s.base !== d.base) parts.push(`Change the fluid root font size so a 1440px-wide screen lands near ${(s.base / 16).toFixed(2)}× the browser default instead of 1.19× (adjust the html clamp()).`);
+  if (s.scale !== d.scale) parts.push(`Make the step titles ${s.scale > d.scale ? 'larger' : 'smaller'}: about ${(s.scale).toFixed(1)}rem instead of 2.6rem.`);
+  if (s.steps !== d.steps) parts.push(s.steps === 'line'
+    ? 'Replace the big numbered step tabs with a compact progress line: small "1 Try to break it" labels over a 0.2rem bar, the current step in ink, the others in rule color. Drop the step subtitles.'
+    : 'Hide the step bar entirely and rely on the "Next" buttons at the end of each step for navigation (keep hash routing).');
+  if (s.result !== d.result) parts.push('Put the result panel below the choice list instead of in a right-hand column, at every width.');
+  if (s.gap !== d.gap) parts.push(`Make spacing ${s.gap < d.gap ? 'tighter' : 'airier'}: scale vertical gaps and the column gutter by about ${(s.gap / d.gap).toFixed(2)}×.`);
+  if (s.stamp !== d.stamp) parts.push(s.stamp === 'label'
+    ? 'Render verdicts as a solid label (verdict color background, paper-colored small-caps text, 0.2rem radius, no tilt, no inner outline) instead of a rubber stamp.'
+    : 'Render verdicts as a plain small-caps word in the verdict color with a 0.2rem underline, no border and no tilt.');
+  if (s.stamp === 'stamp' && s.rot !== d.rot) parts.push(s.rot === 0 ? 'Remove the stamp tilt.' : `Tilt the stamp ${s.rot}° instead of 3°.`);
+  if (s.stampSize !== d.stampSize) parts.push(`Make the verdict ${s.stampSize > d.stampSize ? 'bigger' : 'smaller'}: ${s.stampSize}rem instead of 2.2rem.`);
+  if (s.autorun !== d.autorun) parts.push('Stop auto-running the first attack on load; step 1 should wait for the judge to click.');
+  $('#prompt').textContent = parts.length
+    ? `Restyle docs/dashboard/mockup.html (keep the 3-step structure, copy and behaviour unless stated):\n- ${parts.join('\n- ')}\nUse only relative units (rem/em/%, `thin` for hairlines; no px). Keep the change confined to the :root tokens and the affected rules, and recheck it at 1440px and phone width.`
+    : 'No changes from the current mockup. Pick a preset or adjust a control.';
+}
+
+function updateAll() { renderPreview(); updatePrompt(); }
+$('#copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('#prompt').textContent); }
+  catch { const r = document.createRange(); r.selectNodeContents($('#prompt')); getSelection().removeAllRanges(); getSelection().addRange(r); document.execCommand('copy'); }
+  $('#copy').textContent = 'Copied!'; setTimeout(() => $('#copy').textContent = 'Copy prompt', 1200);
+};
+addEventListener('resize', renderPreview);
+syncControls(); mark(0); updateAll();
+const hp = +(location.hash.match(/preset=(\d)/) || [])[1]; // shareable: #preset=2
+if (hp) document.querySelectorAll('#presets button')[hp]?.click();
+</script>
+</body>
+</html>
