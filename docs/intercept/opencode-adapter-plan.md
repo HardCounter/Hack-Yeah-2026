@@ -49,7 +49,7 @@ Keep this inventory current as hooks are tested. Report per-tool evidence rather
 - Have the plugin submit each hooked action to the local control layer and await its decision before allowing execution.
 - Apply deterministic hard constraints first. A semantic assessment may add context but cannot override a deny, missing approval, or exhausted budget.
 - Define and test policy-service timeout/unavailability behavior. Governed actions must not proceed if an authoritative required check cannot be completed.
-- Keep persistence out of the decision critical path. Emit a sanitized decision/action event to ingestion without waiting for the document store.
+- Ordinary telemetry may be asynchronous. Before high-impact dispatch, wait for the control layer to confirm that sanitized intent/decision evidence committed durably; storage failure or backpressure pauses dispatch. The adapter must not use volatile `emit_action_nowait` for critical evidence. Analytics delivery stays outside the dispatch path.
 
 ### 4. Observe results and keep verification independent
 

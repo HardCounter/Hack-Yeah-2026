@@ -9,6 +9,13 @@ def main():
     sys.path.insert(0, str(root / "simulation" / "tools"))
     import registry
     request = json.load(sys.stdin)
+    if request.get("operation") == "catalog":
+        names = set(request["tools"]) & set(registry.AGENT_TOOLS.get(request["agent"], []))
+        tools = registry.openai_tools(sorted(names))
+        result = [{"name": t["function"]["name"], "description": t["function"]["description"],
+                   "input": t["function"]["parameters"]} for t in tools]
+        sys.stdout.write(json.dumps(result))
+        return
     if request["tool"] not in registry.AGENT_TOOLS.get(request["agent"], []):
         result = {"error": "tool not authorized for configured simulation identity"}
     else:

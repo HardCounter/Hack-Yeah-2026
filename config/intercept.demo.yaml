@@ -1,19 +1,20 @@
 # Synthetic fixtures only. Bind the operator-approved actual session before use.
 schema_version: 1
-runs:
-  synthetic-session:
-    contract_id: synthetic-contract-1
-    allowed_tools: [read_application, create_client]
-    tool_call_budget: 3
-    require_approval: [create_client]
+runs: {}
+contracts:
+  kyc-app-0001:
+    contract_id: kyc-app-0001
+    allowed_tools: [read_application, request_more_docs]
+    tool_call_budget: 20
+    require_approval: []
     argument_equals:
       read_application: {app_id: APP-0001}
-      create_client: {app_id: APP-0001}
+      request_more_docs: {app_id: APP-0001}
 auditors:
   - id: tool-scope
     type: tool_allowlist
     config:
-      allowed_tools: [read_application, create_client]
+      allowed_tools: [read_application, request_more_docs]
   - id: credential-shield
     type: pattern_scanner
     config:

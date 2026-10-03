@@ -3,13 +3,14 @@ import hashlib
 import json
 import re
 import threading
+import copy
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:-]{1,160}$")
 
 
 class Policy:
     def __init__(self, config):
-        if set(config) != {"runs"} or not isinstance(config["runs"], dict):
+        if not isinstance(config, dict) or set(config) not in ({"runs"}, {"runs", "contracts"}) or not isinstance(config["runs"], dict):
             raise ValueError("policy requires a runs object")
         self.config = json.loads(json.dumps(config))
         for session, run in self.config["runs"].items():
@@ -36,6 +37,42 @@ class Policy:
         self.seen = set()
         self.admitted = {}
         self.completed = set()
+        self.templates = {}
+        for run in self.config["runs"].values():
+            contract = run["contract_id"]
+            if contract in self.templates and self.templates[contract] != run:
+                raise ValueError("conflicting contract identity")
+            self.templates[contract] = copy.deepcopy(run)
+        if "contracts" in config:
+            # Reuse strict run validation without creating executable sessions.
+            validated = Policy({"runs": config["contracts"]})
+            for key, run in validated.config["runs"].items():
+                if key != run["contract_id"] or key in self.templates:
+                    raise ValueError("invalid or conflicting contract identity")
+                self.templates[key] = copy.deepcopy(run)
+
+    def bind_session(self, session_id, contract_id):
+        if not isinstance(session_id, str) or not IDENTIFIER.fullmatch(session_id) or not session_id.startswith("ses"):
+            raise ValueError("a real OpenCode session identifier is required")
+        if not isinstance(contract_id, str) or contract_id not in self.templates:
+            raise ValueError("unknown trusted Task Contract")
+        with self.lock:
+            existing = self.config["runs"].get(session_id)
+            if existing is not None and existing["contract_id"] != contract_id:
+                raise ValueError("session cannot change Task Contract")
+            if existing is None:
+                if len(self.config["runs"]) >= 128:
+                    raise ValueError("session capacity exhausted")
+                self.config["runs"][session_id] = copy.deepcopy(self.templates[contract_id])
+            return {"session_id": session_id, "contract_id": contract_id, "policy_version": self.version,
+                    "already_bound": existing is not None}
+
+    def catalog_tools(self, pipeline):
+        names = {t for run in self.templates.values() for t in run["allowed_tools"]}
+        for spec in pipeline.specs:
+            if spec["type"] == "tool_allowlist":
+                names.intersection_update(spec["config"]["allowed_tools"])
+        return sorted(names)
 
     @staticmethod
     def validate_action(action):

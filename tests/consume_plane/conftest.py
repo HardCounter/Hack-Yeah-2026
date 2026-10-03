@@ -18,9 +18,10 @@ T0 = datetime(2026, 10, 3, 15, 42, 0, tzinfo=timezone.utc)
 
 
 def wire_event(seq: int, *, session_id: str = "sess_1", action_type: str = "tool_call", tool: str = "read_application",
-               args: dict | None = None, status: str = "completed", ts: datetime | None = None, **overrides) -> dict:
+               args: dict | None = None, status: str = "completed", ts: datetime | None = None,
+               side_effect: str = "read", **overrides) -> dict:
     details = {
-        "tool_call": {"name": tool, "side_effect": "read", "transport": "inproc",
+        "tool_call": {"name": tool, "side_effect": side_effect, "transport": "inproc",
                       "parameters": args if args is not None else {"app_id": "APP-0001"},
                       "result": {"ref": f"store://agent_content/{session_id}-{seq}", "sha256": "0" * 64,
                                  "size_bytes": 12, "redacted": False, "trust": "untrusted"}},

@@ -10,41 +10,20 @@ Does it serve the task?         -> trajectory supervision
 Did the correct result exist?  -> independent outcome verification
 ```
 
-Implemented so far: the mock banking dataset (`data/`), the KYC outcome verifier (`data/postconditions.py`) and the 16 agent tools (`simulation/tools/`, of which 6 are **bait tools: fakes** that only exist so the gateway has something to block). The gateway, agent loop and dashboard are not built yet.
+### Current Implementation State
+- **Implemented so far:** The synthetic banking dataset generator (`data/generate.py`, `data/rules.py`, `data/report.py`), the KYC outcome verifier (`data/postconditions.py`), and the 16 agent tools (`sim/tools/` and `simulation/tools/`, of which 6 are **bait tools: fakes** that only exist so the control layer has something to intercept/block).
+- **Interception Layer:** Initial Python asyncio interception service with configurable allowlist, signature-scanner, and webhook auditors (`intercept/`).
+- **Durable Persistence:** `persistence/` supplies sanitized immutable SQLite evidence, atomic outbox commits, bounded consumer delivery with DLQ, run binding and contiguous action indexing, atomic banking receipts and replication, scoped readers with keyset pagination, and maintenance/backup facilities. See [integration and limits](docs/persistence.md).
+- **Architecture & Runtime Scope:** The MVP scope is **KYC only**; AML is deferred.
 
-## Run the simulation
-
-```bash
-uv sync && uv run python data/generate.py                           # once: install, build data/bank.db
-uv run python simulation/agent.py APP-0001                          # llama3.2 on Ollama works one application
-uv run python simulation/agent.py APP-0005                          # the poisoned document: does the model fall for it?
-uv run python simulation/agent.py APP-0003 --driver scripted --fault skip_step:screen_sanctions
-uv run python simulation/agent.py APP-0010 --driver scripted --fault "skip_step:screen_sanctions#4"
-```
-
-Each run prints every tool call, the decision, the expected decision from the answer key (read by the
-harness after the run, never by the agent) and the outcome verifier's verdict (exit code 1 on BLOCK).
-`--driver scripted` is a deterministic by-the-book analyst; faults (`skip_step`, `swap_arg`, `repeat`,
-`loop`, `extra_call`) come from [use-cases.md](docs/use-cases.md). Runs use their own DB copy in
-`data/runs/`. Other model: `--model qwen2.5:7b` (llama3.2 is small and makes mistakes, which is the point,
-but it also gets lost). Not wired to the `intercept/` gateway yet.
-
-## Tests
-
-```bash
-uv sync                          # Python + dev dependencies (pytest) from uv.lock
-uv run python data/generate.py   # build the dataset (self-checks + determinism)
-uv run pytest                    # whole suite
-```
-
-CI (`.github/workflows/tests.yml`) runs the same on every push, on Linux and Windows. A red build means
-something broke; fix it before building on top. `simulation/tools/test_ollama.py` talks to a local model
-(`ollama pull llama3.2`) and skips itself when Ollama is not running, as in CI.
-
-Add a test with every change: a `test_*` function next to the code it checks (`data/`, `simulation/`, `intercept/`).
-This repository contains competition documents, project direction, development/review configuration, simulated banking tools, and an initial Python asyncio interception service with an opt-in OpenCode V2 JavaScript adapter. The initial interception Python tests and JavaScript callback-harness tests pass; live OpenCode enforcement and complete architecture coverage are not demonstrated. See the [implementation status and limitations](docs/intercept/implementation-status.md).
+## Documentation Index
 
 - [Project direction](docs/project-direction.md)
+- [Required runtime architecture contract](docs/architecture-contract.md)
+- [Architecture review findings and remaining gates](docs/architecture-review.md)
+- [Persistence integration and guarantees](docs/persistence.md)
+- [Local changes review and requirement gaps](docs/local-changes-review.md)
+- [OpenCode plugin adapter plan](docs/intercept/opencode-adapter-plan.md)
 - [Implementation stack: Python asyncio and uv](docs/stack.md)
 - [Monitored banking use cases](docs/use-cases.md)
 - [Mock banking dataset specification](docs/mock-data-spec.md)
@@ -57,3 +36,40 @@ This repository contains competition documents, project direction, development/r
 - [Shared engineering instructions](AGENTS.md)
 
 The Rules and Criteria disagree on self-testing and scalability scoring weights. Preserve both sources and confirm the applicable weights with the organizer.
+
+## Python Development & Testing with uv
+
+We use **uv** for environment management, dependency locking, and Python execution.
+Install uv separately, then from the repository root:
+
+```sh
+uv sync --locked
+uv run --locked python --version
+uv lock --check
+```
+
+`pyproject.toml` allows Python >=3.11; `.python-version` pins local development to 3.12.
+Dev dependencies include `pytest`. Runtime framework choices for the gateway remain open.
+
+### Running the Suite
+
+```sh
+# Build the synthetic dataset (deterministic, seed 2026)
+uv run --locked python data/generate.py
+
+# Render the dataset explorer report
+uv run --locked python data/report.py
+
+# Run the complete test suite (offline and locked)
+uv run --locked --offline pytest
+
+# Run the persistence demo CLI (all failure and recovery scenarios)
+uv run python -m persistence.demo --scenario clean
+uv run python -m persistence.demo --scenario audit-unavailable
+uv run python -m persistence.demo --scenario crash-after-bank
+uv run python -m persistence.demo --scenario wrong-state
+```
+
+CI (`.github/workflows/tests.yml`) runs on every push across Linux and Windows. `sim/tools/test_ollama.py` tests tool-calling with a local model (`ollama pull llama3.2`) and automatically skips itself when Ollama is unavailable.
+
+Add a test with every change: a `test_*` function next to the code it checks (`data/`, `sim/`, `tests/`).

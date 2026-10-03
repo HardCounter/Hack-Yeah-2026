@@ -25,6 +25,8 @@ Layer 2 yet, and no built-in detection plugins exist.
 | Feedback controller | `runtime/feedback.py` | `test_feedback.py` |
 | CLI replay | `consume_plane/__main__.py` | `test_replay_cli.py` |
 | Example drop-in plugin | `plugins/velocity_guard.py` | `test_loader.py`, `test_replay_cli.py` |
+| Built-in `trajectory-risk` plugin ([model](trajectory-risk-model.md)) | `consume_plane/plugins/trajectory_risk.py` | `test_trajectory_risk.py` |
+| Test and demo scripts | `scripts/test_consume_plane.sh`, `scripts/run_consume_plane.sh` | run manually |
 
 ```bash
 uv sync
@@ -81,7 +83,7 @@ Dependencies added: `pyyaml` (runtime, MIT) and `pytest` (dev group, MIT).
 
 ## Deferred (not built)
 
-- Built-in plugins from design §10 (`usage-accountant`, `loop-detector`, `scope-drift`,
+- Remaining built-in plugins from design §10 (`usage-accountant`, `loop-detector`, `scope-drift`,
   `repeat-side-effect`, `step-order`, `outcome-verifier`, `trajectory-grader`).
 - Layer 2 adapters for the real Queue 2 and store, `StoreSink`, `SseSink`, and a feedback
   transport into Layer 1's policy cache. `MemoryFeedbackChannel` only collects signals.

@@ -86,6 +86,23 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.request(self.proposal("off"), path="/v1/tools/execute"))[0], 503)
         self.assertEqual(self.query("SELECT COUNT(*) FROM audit_actions"), [(0,)])
 
+    async def test_admin_binding_and_real_registry_catalog(self):
+        self.gateway.admin_token = "a" * 32
+        binding = {"session_id": "ses_bound", "contract_id": "synthetic-1"}
+        self.assertEqual((await self.request(binding, path="/v1/runs/bind"))[0], 401)
+        status, bound = await self.request(binding, token="a" * 32, path="/v1/runs/bind")
+        self.assertEqual(status, 200)
+        self.assertEqual(bound["session_id"], "ses_bound")
+        status, catalog = await self.request({}, path="/v1/tools/catalog")
+        self.assertEqual(status, 200)
+        names = {tool["name"] for tool in catalog["tools"]}
+        self.assertEqual(names, {"request_more_docs", "create_client"})
+        tool = next(t for t in catalog["tools"] if t["name"] == "request_more_docs")
+        self.assertEqual(tool["input"]["required"], ["app_id", "reason"])
+        request = {**self.proposal("bound-write"), "session_id": "ses_bound"}
+        self.assertEqual((await self.request(request, path="/v1/tools/execute"))[1]["decision"], "ALLOW")
+        self.assertEqual(self.query("SELECT session_id FROM audit_actions"), [("ses_bound",)])
+
 
 if __name__ == "__main__":
     unittest.main()

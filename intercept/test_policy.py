@@ -64,10 +64,26 @@ class PolicyTests(unittest.TestCase):
         observed = {"session_id": "session-1", "call_id": "call-1", "tool": "write", "status": "completed"}
         with self.assertRaises(ValueError):
             policy.observe(observed)
+
         policy.evaluate(action())
         self.assertEqual(policy.observe(observed)["verification"], "NOT_VERIFIED")
         with self.assertRaises(ValueError):
             policy.observe(observed)
+
+    def test_operator_binding_does_not_reset_budget_or_change_contract(self):
+        run = configuration(1)["runs"]["session-1"]
+        policy = Policy({"runs": {}, "contracts": {"contract-1": run}})
+        version = policy.version
+        self.assertFalse(policy.bind_session("ses_real", "contract-1")["already_bound"])
+        proposed = {**action(), "session_id": "ses_real"}
+        self.assertEqual(policy.evaluate(proposed)["decision"], "ALLOW")
+        self.assertTrue(policy.bind_session("ses_real", "contract-1")["already_bound"])
+        self.assertEqual(policy.evaluate({**proposed, "call_id": "second"})["code"], "BUDGET_EXHAUSTED")
+        self.assertEqual(policy.version, version)
+        with self.assertRaises(ValueError):
+            policy.bind_session("ses_real", "unconfigured")
+        with self.assertRaises(ValueError):
+            policy.bind_session("fake-session", "contract-1")
 
 
 if __name__ == "__main__":
