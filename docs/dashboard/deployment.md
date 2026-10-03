@@ -307,11 +307,25 @@ image runs locally and on the instance:
 ```sh
 # .env on the instance (names only; values are never committed)
 SITE_HOST=<elastic-ip>.sslip.io
-LLM_PROVIDER=
-LLM_MODEL=
-LLM_API_KEY=
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-5-mini
+OPENAI_API_KEY=
+OPENCODE_MODEL=openai/gpt-5-mini
 ADMIN_TOKEN=
 ```
+
+OpenCode reads the provider's own variable name (`OPENAI_API_KEY`), not a generic one, and takes the
+model as `provider/model`.
+
+Verified on the instance on 2026-10-04: one synthetic application run through OpenCode, the gateway
+and the verifier inside the app container, ending in `VERIFIED_SUCCESS`:
+
+```sh
+docker compose exec app python -m simulation.opencode_runner APP-0001     --timeout 300 --output-dir /data/pipeline-runs
+```
+
+`--output-dir` must point outside the repository (here: the data volume). The runner's default folder
+is inside the repository and is rejected by its own isolation check.
 
 Guard settings live in the policy file (example values, not final):
 
