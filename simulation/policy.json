@@ -1,0 +1,15 @@
+{
+  "allowed_tools": ["read_application", "read_documents", "extract_fields", "check_registry", "screen_sanctions", "compute_risk", "create_client", "request_more_docs", "escalate_edd", "reject_application"],
+  "budget": {"tokens": 20000, "tool_calls": 30, "cost_usd": null},
+  "allowed_models": ["llama3.2"],
+  "max_output_tokens": 1024,
+  "require_approval": [],
+  "feed_version": "local-signatures-v1",
+  "auditors": [
+    {"id": "signature-scanner", "type": "pattern_scanner", "config": {"patterns": ["ignore previous instructions", "SYSTEM OVERRIDE", "ghp_", "sk-proj-", "-----BEGIN PRIVATE KEY-----"], "action": "BLOCK"}}
+  ],
+  "consumer": {
+    "trajectory_risk": {},
+    "feedback": {"enabled": true, "allow_agent_scope": false, "max_ttl_s": 3600, "max_signals_per_session_per_minute": 6, "allowed_actions": {"trajectory-risk": ["ALERT", "REQUIRE_APPROVAL_FOR", "HALT_SESSION"]}}
+  }
+}

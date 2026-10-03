@@ -27,7 +27,9 @@ def scripted(app_id, *faults):
     db = Path(tempfile.mkdtemp()) / "bank.db"
     shutil.copy(BASE / "bank.db", db)
     try:
-        return agent.run(app_id, "scripted", faults, db=db, quiet=True)
+        # Explicit lower-level corrupted-writer fixture exercises the independent
+        # verifier. Governed production/demo runs use Layer 1 by default.
+        return agent.run(app_id, "scripted", faults, db=db, quiet=True, governed=False)
     finally:
         shutil.rmtree(db.parent, ignore_errors=True)
 

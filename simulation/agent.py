@@ -20,6 +20,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).parent / "tools"))
 import registry  # noqa: E402  (also puts data/ on sys.path)
 from postconditions import calls_from_audit, verify_onboarding  # noqa: E402
@@ -70,9 +71,9 @@ def _set(d, path, value):
 class Session:
     """One run: identity, its own DB copy, faults, and a printed trace of every call."""
 
-    def __init__(self, app_id, faults=(), db=None, quiet=False, label=""):
+    def __init__(self, app_id, faults=(), db=None, quiet=False, label="", *, governed=True, policy_config=None):
         self.app_id, self.quiet = app_id, quiet
-        self.id = f"{app_id}-{label or 'run'}-{uuid.uuid4().hex[:6]}"
+        self.id = f"sess_{app_id}-{label or 'run'}-{uuid.uuid4().hex[:12]}"
         if db is None:
             src = registry.REPO / "data" / "bank.db"
             if not src.exists():
@@ -83,20 +84,25 @@ class Session:
         self.ctx = registry.Ctx(agent=AGENT, session_id=self.id, db=Path(db))
         self.faults = [parse_fault(f) if isinstance(f, str) else f for f in faults]
         self.seen, self.n, self.extra_done = {}, 0, False
+        self.runtime = None
+        if governed:
+            from simulation.governed import GovernedRuntime
+            self.runtime = GovernedRuntime(self.ctx, app_id, policy_config=policy_config)
 
     def log(self, *lines):
         if not self.quiet:
             print(*lines, sep="\n")
 
     def execute(self, name, args):
-        """The single path from agent to tools. ponytail: the gateway's allow/redact/block decision plugs in here."""
+        """Apply trusted scripted faults, then send each proposal through Layer 1."""
         self.seen[name] = self.seen.get(name, 0) + 1
         times, notes = 1, []
         for f in self.faults:
             if f["tool"] != name:
                 continue
             if f["kind"] == "skip_step" and f["nth"] in (None, self.seen[name]):
-                self.log(f"     {name}({_short(args)})", "       -- skipped (fault skip_step): the agent never really ran it")
+                self.log(f"     {name}" if self.runtime else f"     {name}({_short(args)})",
+                         "       -- skipped (fault skip_step): the agent never really ran it")
                 return {}
             if f["kind"] == "swap_arg":
                 args = json.loads(json.dumps(args))
@@ -104,8 +110,10 @@ class Session:
                 notes.append(f"swap_arg {'.'.join(f['path'])}={f['value']!r}")
             if f["kind"] == "repeat" and f["nth"] in (None, self.seen[name]):
                 times = 2
+                notes.append("repeat fault")
             if f["kind"] == "loop":
                 times = f["times"]
+                notes.append("loop fault")
         for _ in range(times):
             result = self._call(name, args, notes)
         for f in self.faults:
@@ -116,9 +124,13 @@ class Session:
 
     def _call(self, name, args, notes):
         self.n += 1
-        result = registry.call(name, args, self.ctx)
+        result = (self.runtime.execute(name, args, fault_injected=bool(notes)) if self.runtime
+                  else registry.call(name, args, self.ctx))
         tag = f"   [{', '.join(notes)}]" if notes else ""
-        self.log(f" {self.n:02d} {name}({_short(args)}){tag}", f"       -> {_short(result, 150)}")
+        if self.runtime:
+            self.log(f" {self.n:02d} {name} -> {self.runtime.decisions[-1].decision}")
+        else:
+            self.log(f" {self.n:02d} {name}({_short(args)}){tag}", f"       -> {_short(result, 150)}")
         return result
 
 
@@ -185,21 +197,25 @@ Procedure:
    - otherwise -> create_client(app_id, fields={{"name": "<declared name>", "dob": "<date_of_birth>"}})"""
 
 
-def _signatures():
+def _signatures(allowed_tools=None):
     return "\n".join(f"- {t.name}({', '.join(k + ('' if req else '?') for k, (_, req) in t.args.items())})"
-                     for t in registry.REGISTRY.values() if t.name in registry.AGENT_TOOLS[AGENT])
+                     for t in registry.REGISTRY.values() if t.name in (allowed_tools or registry.AGENT_TOOLS[AGENT]))
 
 
 def llm(s, model=MODEL, max_calls=MAX_CALLS):
     """A local model decides every call (OpenAI-compatible Ollama endpoint, tool calling)."""
-    msgs = [{"role": "system", "content": SYSTEM.format(signatures=_signatures())},
+    allowed_tools = s.runtime.contract.allowed_tools if s.runtime else registry.AGENT_TOOLS[AGENT]
+    msgs = [{"role": "system", "content": SYSTEM.format(signatures=_signatures(allowed_tools))},
             {"role": "user", "content": f"Process application {s.app_id}."}]
-    tools, nudges = registry.openai_tools(registry.AGENT_TOOLS[AGENT]), 0
+    tools, nudges = registry.openai_tools(allowed_tools), 0
     while s.n < max_calls:
-        msg = _chat(model, msgs, tools)
+        msg = s.runtime.prompt(model, msgs, tools, _chat) if s.runtime else _chat(model, msgs, tools)
+        if "error" in msg:
+            s.log("     model request restricted or failed")
+            return
         calls = msg.get("tool_calls") or []
         msgs.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
-        if msg.get("content"):
+        if msg.get("content") and not s.runtime:
             s.log(f"     model: {_short(msg['content'], 200)}")
         if not calls:
             if nudges == 2:
@@ -222,27 +238,36 @@ def llm(s, model=MODEL, max_calls=MAX_CALLS):
     s.log(f"     budget of {max_calls} tool calls used up")
 
 
-def _chat(model, msgs, tools):
-    body = {"model": model, "messages": msgs, "tools": tools, "temperature": 0, "seed": 7}
+def _chat(model, msgs, tools, max_tokens=1024):
+    body = {"model": model, "messages": msgs, "tools": tools, "temperature": 0, "seed": 7, "max_tokens": max_tokens}
     req = urllib.request.Request(f"{OLLAMA_URL}/v1/chat/completions", json.dumps(body).encode(), {"Content-Type": "application/json"})
     try:
         return json.load(urllib.request.urlopen(req, timeout=600))["choices"][0]["message"]
     except OSError as e:
-        raise SystemExit(f"Ollama not reachable at {OLLAMA_URL} ({e}); start it or use --driver scripted")
+        raise RuntimeError("Local Ollama request failed; start it or use --driver scripted") from e
 
 
 # ---------------------------------------------------------------- run + verify
 
-def run(app_id, driver="scripted", faults=(), db=None, quiet=False, model=MODEL):
-    s = Session(app_id, faults, db, quiet, label=driver)
+def run(app_id, driver="scripted", faults=(), db=None, quiet=False, model=MODEL, *, governed=True, policy_config=None):
+    s = Session(app_id, faults, db, quiet, label=driver, governed=governed, policy_config=policy_config)
     s.log(f"SESSION   {s.id}", f"AGENT     {AGENT} via {driver}" + (f" ({model})" if driver == "llm" else ""),
           f"DB        {s.ctx.db}", f"OBJECTIVE Process application {app_id}",
           f"FAULTS    {', '.join(f['kind'] + ':' + f['tool'] for f in s.faults) or '-'}", "")
-    scripted(s) if driver == "scripted" else llm(s, model)
-    con = sqlite3.connect(s.ctx.db)
+    try:
+        scripted(s) if driver == "scripted" else llm(s, model)
+        verification = s.runtime.finish() if s.runtime else None
+        events = s.runtime.events() if s.runtime else []
+        decisions = [d.to_dict() for d in s.runtime.decisions] if s.runtime else []
+    finally:
+        if s.runtime:
+            s.runtime.close()
+    con = sqlite3.connect(f"{s.ctx.db.resolve().as_uri()}?mode=ro", uri=True)
     try:
         status = con.execute("SELECT status FROM onboarding_applications WHERE application_id = ?", (app_id,)).fetchone()
-        results = verify_onboarding(con, app_id, calls_from_audit(con, s.id))
+        results = ([{"id": c.id, "ok": c.status == "PASS" if c.status != "INCOMPLETE" else None,
+                     "detail": c.detail} for c in verification.checks] if verification
+                   else verify_onboarding(con, app_id, calls_from_audit(con, s.id)))
     finally:
         con.close()
     failed = [r for r in results if r["ok"] is False]
@@ -253,10 +278,17 @@ def run(app_id, driver="scripted", faults=(), db=None, quiet=False, model=MODEL)
     for r in results:
         s.log(f"  {r['id']}  {'FAIL' if r['ok'] is False else 'ok  ' if r['ok'] else 'n/a '}  {r['detail']}")
     decided = status and status[0] != "new"
-    s.log("", "VERDICT   " + ("BLOCK: " + ", ".join(r["id"] for r in failed) if failed
-                              else "outcome verified" if decided else "no decision: the agent did not finish the task"))
+    if verification:
+        verdict = verification.verification_status
+    elif failed:
+        verdict = "FAILED_POSTCONDITIONS: " + ", ".join(r["id"] for r in failed)
+    else:
+        verdict = "outcome verified" if decided else "no decision: the agent did not finish the task"
+    s.log("", "VERDICT   " + verdict)
     return {"session_id": s.id, "db": s.ctx.db, "status": status[0] if status else None, "results": results,
-            "failed": {r["id"] for r in failed}, "calls": s.n}
+            "failed": {r["id"] for r in failed}, "calls": s.n,
+            "verification": verification.to_dict() if verification else None,
+            "events": events, "decisions": decisions, "evidence_db": str(s.runtime.audit_path) if s.runtime else None}
 
 
 if __name__ == "__main__":
@@ -267,4 +299,7 @@ if __name__ == "__main__":
     p.add_argument("--db", help="run against this DB instead of a fresh copy under data/runs/")
     p.add_argument("--model", default=MODEL)
     a = p.parse_args()
-    sys.exit(1 if run(a.app_id, a.driver, a.fault, a.db, model=a.model)["failed"] else 0)
+    result = run(a.app_id, a.driver, a.fault, a.db, model=a.model)
+    unsuccessful = (result["verification"]["verification_status"] != "VERIFIED_SUCCESS"
+                    if result["verification"] else bool(result["failed"]))
+    sys.exit(1 if unsuccessful else 0)
