@@ -1,6 +1,6 @@
 """Live check: a local Ollama model accepts openai_tools() and its tool call executes through registry.call().
 
-    python -m pytest sim/tools/test_ollama.py      (OLLAMA_URL, OLLAMA_MODEL to override)
+    uv run pytest simulation/tools/test_ollama.py      (OLLAMA_URL, OLLAMA_MODEL to override)
 
 Skipped when Ollama is not running or the model is not pulled (e.g. in CI), so it never blocks the suite.
 """

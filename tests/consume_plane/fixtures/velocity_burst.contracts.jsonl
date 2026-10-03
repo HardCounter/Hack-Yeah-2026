@@ -1,0 +1,1 @@
+{"contract_id": "ctr_sess_demo", "session_id": "sess_demo", "agent_id": "onboarding-agent", "role": "Onboarding analyst", "objective": "Process application APP-0012", "target_ids": ["APP-0012"], "allowed_tools": ["read_application", "read_documents"], "postconditions": ["ONB-P4"], "budget": {"tokens": 20000, "tool_calls": 30}, "policy_version": "v1"}

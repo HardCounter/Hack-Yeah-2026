@@ -11,9 +11,10 @@ Did the correct result exist?  -> independent outcome verification
 ```
 
 ### Current Implementation State
-- **Implemented so far:** The synthetic banking dataset generator (`data/generate.py`, `data/rules.py`, `data/report.py`), the KYC outcome verifier (`data/postconditions.py`), and the 16 agent tools (`sim/tools/`, of which 6 are **bait tools: fakes** that only exist so the control layer has something to intercept/block).
-- **Standalone persistence:** `persistence/` supplies sanitized immutable SQLite evidence, atomic evidence/outbox commits, bounded analytics delivery with retries/DLQ, timelines and aggregate telemetry. It is not yet connected to a gateway or business transaction. See [integration and limits](docs/persistence.md).
-- **Architecture & Runtime Scope:** The MVP scope is **KYC only**; AML is deferred. The runtime gateway proxy, live semantic supervisor, and judge dashboard are currently specifications in `docs/` and have not been implemented yet. Planned bait tools are simulations writing to `audit_actions` only, not real email, network, code-execution, or deletion integrations.
+- **Implemented so far:** The synthetic banking dataset generator (`data/generate.py`, `data/rules.py`, `data/report.py`), the KYC outcome verifier (`data/postconditions.py`), and the 16 agent tools (`sim/tools/` and `simulation/tools/`, of which 6 are **bait tools: fakes** that only exist so the control layer has something to intercept/block).
+- **Interception Layer:** Initial Python asyncio interception service with configurable allowlist, signature-scanner, and webhook auditors (`intercept/`).
+- **Durable Persistence:** `persistence/` supplies sanitized immutable SQLite evidence, atomic evidence/outbox commits, bounded analytics delivery with retries/DLQ, timelines, consumer lifecycle controls, and maintenance operations. See [integration and limits](docs/persistence.md).
+- **Architecture & Runtime Scope:** The MVP scope is **KYC only**; AML is deferred.
 
 ## Documentation Index
 
@@ -23,6 +24,7 @@ Did the correct result exist?  -> independent outcome verification
 - [Persistence integration and guarantees](docs/persistence.md)
 - [Local changes review and requirement gaps](docs/local-changes-review.md)
 - [OpenCode plugin adapter plan](docs/intercept/opencode-adapter-plan.md)
+- [Implementation stack: Python asyncio and uv](docs/stack.md)
 - [Monitored banking use cases](docs/use-cases.md)
 - [Mock banking dataset specification](docs/mock-data-spec.md)
 - [System architecture & execution lifecycle](docs/system-architecture.md)

@@ -368,7 +368,7 @@ ai-control-layer/
 └── docker-compose.yml        # Zero-prep local startup
 ```
 
-`sim/` and `monitoring/` must not import each other. The verifier queries `ground_truth.json` and `bank.db` independently of agent outputs.
+`simulation/` and `monitoring/` must not import each other. The verifier queries `ground_truth.json` and `bank.db` independently of agent outputs.
 
 ---
 

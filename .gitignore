@@ -844,6 +844,10 @@ FodyWeavers.xsd
 data/bank.db
 data/bank.db-wal
 data/bank.db-shm
+data/runs/
 data/ground_truth.json
 data/documents/
 data/report.html
+
+# consume plane outputs
+runs/

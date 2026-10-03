@@ -1,6 +1,6 @@
 """Render data/report.html: a one-page explorer of bank.db + ground_truth.json.
 
-    python data/generate.py && python data/report.py
+    uv run python data/generate.py && uv run python data/report.py
 
 Opens offline in any browser. Shows alerts and applications with their ground-truth label, the
 scenarios (docs/use-cases.md) that use them, their transactions/documents, and data-quality noise.

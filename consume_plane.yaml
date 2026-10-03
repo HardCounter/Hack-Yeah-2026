@@ -1,0 +1,37 @@
+# Consume plane (Layer 3) configuration. See docs/consumer-plane.md section 11.
+# Relative paths are resolved against this file's directory.
+consume_plane:
+  source:
+    type: memory                # memory (embedded) | jsonl_replay (python -m consume_plane --replay ...)
+    batch_size: 64
+    poll_timeout_s: 0.2
+  trajectory:
+    type: memory                # memory | jsonl
+  partitions: 8
+  plugin_timeout_s: 2.0
+  max_attempts: 3
+  retry_backoff_s: 0.5
+  on_plugin_load_error: fail    # fail | skip
+  plugin_dirs: ["plugins"]
+  ledger_path: "var/consume_plane_ledger.db"
+
+  sinks:
+    - {type: jsonl, path: "runs/{run_id}/findings.jsonl"}
+
+  feedback:
+    enabled: true
+    allow_agent_scope: false
+    max_ttl_s: 3600
+    max_signals_per_session_per_minute: 6
+    allowed_actions:            # default: a plugin may propose nothing
+      velocity-guard: [REQUIRE_APPROVAL_FOR]
+      trajectory-risk: [REQUIRE_APPROVAL_FOR, HALT_SESSION]
+
+plugins:
+  velocity-guard:               # drop-in file plugins/velocity_guard.py; only its config lives here
+    config: {window_s: 10, max_calls: 8}
+  trajectory-risk:              # built-in; expected loss = sum P(failure) x consequence (docs/trajectory-risk-model.md)
+    handler: "consume_plane.plugins.trajectory_risk:TrajectoryRisk"
+    config:                     # any key from DEFAULTS in the plugin can be overridden here
+      levels: {medium: 3.0, high: 8.0, critical: 15.0}
+      prerequisites: {create_client: [screen_sanctions]}

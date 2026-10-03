@@ -185,8 +185,8 @@ Target mix: about 75% false positives, 25% truly suspicious. That's close to rea
 }
 ```
 
-Generator: `uv run --locked python data/generate.py` (rules shared with the verifier live in `data/rules.py`).
-KYC outcome verifier (ONB-P1..P6): `data/postconditions.py`, scenario check `uv run --locked pytest data/test_postconditions.py`.
+Generator: `uv run python data/generate.py` (rules shared with the verifier live in `data/rules.py`).
+KYC outcome verifier (ONB-P1..P6): `data/postconditions.py`, scenario check `uv run pytest data/test_postconditions.py`.
 
 ## Sanctions / PEP screening
 

@@ -1,0 +1,34 @@
+# Synthetic fixtures only. Bind the operator-approved actual session before use.
+schema_version: 1
+runs: {}
+contracts:
+  kyc-app-0001:
+    contract_id: kyc-app-0001
+    allowed_tools: [read_application, request_more_docs]
+    tool_call_budget: 20
+    require_approval: []
+    argument_equals:
+      read_application: {app_id: APP-0001}
+      request_more_docs: {app_id: APP-0001}
+auditors:
+  - id: tool-scope
+    type: tool_allowlist
+    config:
+      allowed_tools: [read_application, request_more_docs]
+  - id: credential-shield
+    type: pattern_scanner
+    config:
+      patterns: [DEMO_SECRET_123]
+      action: REDACT
+  - id: injection-signatures
+    type: pattern_scanner
+    config:
+      patterns: ["IGNORE THE TASK"]
+      action: BLOCK
+# Optional local auditor: enable only when its server is running.
+#  - id: contextual-review
+#    type: webhook
+#    config:
+#      endpoint: http://127.0.0.1:9090/audit
+#      timeout_ms: 500
+#      on_failure: BLOCK
