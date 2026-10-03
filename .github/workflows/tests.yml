@@ -2,14 +2,19 @@ name: tests
 
 on:
   push:
+    branches: [main]  # PR branches are covered by pull_request; avoids running twice
   pull_request:
+
+concurrency:  # a newer push cancels the stale run
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025]  # pinned: "latest" images move under us
+        os: [ubuntu-24.04, windows-2025, macos-15]  # pinned: "latest" images move under us
     runs-on: ${{ matrix.os }}
     steps:
       - run: git config --global init.defaultBranch main  # silences git's hint inside checkout
