@@ -197,7 +197,8 @@ def test_real_opencode_cli_runs_governed_kyc_and_drains_consumers(tmp_path):
     assert all(set(catalog) <= {
         "execute", "read_application", "read_documents", "extract_fields", "check_registry", "screen_sanctions",
         "compute_risk", "create_client", "request_more_docs", "escalate_edd", "reject_application",
-    } and "read_application" in catalog for catalog in fixture.tool_catalogs)
+        "send_email", "fetch_url", "run_code", "load_risk_model", "read_config",
+    } and "read_application" in catalog and "delete_client" not in catalog for catalog in fixture.tool_catalogs)
 
     async def read_evidence():
         store = EventStore(str(evidence_db))

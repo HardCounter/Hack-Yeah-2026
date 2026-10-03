@@ -71,7 +71,7 @@ def _set(d, path, value):
 class Session:
     """One run: identity, its own DB copy, faults, and a printed trace of every call."""
 
-    def __init__(self, app_id, faults=(), db=None, quiet=False, label="", *, governed=True, policy_config=None):
+    def __init__(self, app_id, faults=(), db=None, quiet=False, label="", *, governed=True, policy_config=None, agent_name=AGENT):
         self.app_id, self.quiet = app_id, quiet
         self.id = f"sess_{app_id}-{label or 'run'}-{uuid.uuid4().hex[:12]}"
         if db is None:
@@ -81,7 +81,7 @@ class Session:
             RUNS.mkdir(exist_ok=True)
             db = RUNS / f"{self.id}.db"
             shutil.copy(src, db)
-        self.ctx = registry.Ctx(agent=AGENT, session_id=self.id, db=Path(db))
+        self.ctx = registry.Ctx(agent=agent_name, session_id=self.id, db=Path(db))
         self.faults = [parse_fault(f) if isinstance(f, str) else f for f in faults]
         self.seen, self.n, self.extra_done = {}, 0, False
         self.runtime = None
@@ -155,7 +155,7 @@ def scripted(s):
     if company:
         reg = s.execute("check_registry", {"reg_number": d["reg_number"]})
         status = reg.get("status")
-        name, dob = d["legal_name"], None
+        name, dob = reg.get("legal_name") or d["legal_name"], None
         subjects = [(name, None)] + [(u["name"], u["dob"]) for u in reg.get("ubos", []) if u["ownership_pct"] >= 25]
     else:
         name, dob = d["name"], d["date_of_birth"]

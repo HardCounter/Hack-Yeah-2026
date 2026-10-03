@@ -72,12 +72,19 @@ class GovernedRuntime:
         self.store = EventStore(str(self.audit_path))
         await self.store.initialize()
         self.persistence = GovernedPersistence(self.store)
+        identity = registry.AGENT_TOOLS.get(self.ctx.agent)
+        if not identity:
+            raise ValueError("unknown governed agent")
+        ceiling = self.config["admin_tools"] if self.ctx.agent == "admin-agent" else self.config["allowed_tools"]
+        allowed = [name for name in ceiling if name in identity]
+        if not allowed:
+            raise ValueError("agent has no tools under the pinned policy")
         core = {"runs": {self.ctx.session_id: {
             "contract_id": self.operator_contract_id or f"contract_{self.ctx.session_id}",
-            "allowed_tools": self.config["allowed_tools"],
+            "allowed_tools": allowed,
             "tool_call_budget": self.config["budget"]["tool_calls"],
             "require_approval": self.config["require_approval"],
-            "argument_equals": {name: {"app_id": self.app_id} for name in self.config["allowed_tools"]
+            "argument_equals": {name: {"app_id": self.app_id} for name in allowed
                                 if "app_id" in registry.REGISTRY[name].args},
         }}}
         policy = Policy(core)
@@ -89,14 +96,15 @@ class GovernedRuntime:
             run_id=f"run_{self.ctx.session_id}", session_id=self.ctx.session_id,
             principal_id="principal_local_simulator", agent_id=self.ctx.agent,
             case_id=self.app_id, role="KYC onboarding analyst", objective=f"Process application {self.app_id}",
-            target_ids=frozenset({self.app_id}), allowed_tools=frozenset(self.config["allowed_tools"]),
+            target_ids=frozenset({self.app_id}), allowed_tools=frozenset(allowed),
             postconditions=tuple(f"ONB-P{i}" for i in range(1, 7)), budget=Budget(**self.config["budget"]),
             policy_version=policy.version, policy_hash=policy.version, feed_version=self.config["feed_version"],
         )
         credential = object()
         self._feedback_credential = credential
         self.gateway = GovernedGateway(policy, Pipeline(self.config["auditors"]), self.persistence,
-                                       registry_module=registry, feedback_credential=credential)
+                                       registry_module=registry, feedback_credential=credential,
+                                       controls=self.config.get("controls") or {})
         self.source = PersistenceEventSource(self.persistence)
         await self.source.start()
         self.reader = PersistenceTrajectoryReader(self.persistence)

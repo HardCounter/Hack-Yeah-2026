@@ -413,6 +413,8 @@ class PromptGateway:
 
             if final == "BLOCK" and reason is None:
                 reason = "MODEL_NOT_AUTHORIZED"
+            if isinstance(response, dict) and reason and response.get("error") == "MODEL_NOT_AUTHORIZED" and reason != "MODEL_NOT_AUTHORIZED":
+                response = {"error": reason}
             decision = self._decision(action_id, final, reason, rows, started, backend_elapsed_ms)
             requested = self._requested_tools(response, self._known_tool_names(tools) if isinstance(tools, Sequence) else frozenset()) if isinstance(response, Mapping) else []
             event = self._event(

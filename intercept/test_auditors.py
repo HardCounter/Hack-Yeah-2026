@@ -45,6 +45,22 @@ class AuditorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(verdict, "ALLOW")
         self.assertEqual(evidence[0]["decision"], "ALERT")
 
+    async def test_signature_match_is_case_insensitive(self):
+        a = action()
+        a["arguments"]["text"] = "Ignore Previous Instructions"
+        specs = [{"id": "scanner", "type": "pattern_scanner", "config": {"patterns": ["ignore previous instructions"], "action": "BLOCK"}}]
+        self.assertEqual((await Pipeline(specs).evaluate(a))[2], "BLOCK")
+
+    async def test_classified_scanner_redacts_pesel_and_keeps_the_original(self):
+        a = action()
+        a["arguments"]["text"] = "PESEL 44051401359"
+        specs = [{"id": "privacy", "type": "classified_scanner", "config": {"classes": ["pesel"], "action": "REDACT"}}]
+        checked, evidence, verdict, changed = await Pipeline(specs).evaluate(a)
+        self.assertEqual(checked["arguments"]["text"], "PESEL [REDACTED]")
+        self.assertIn("44051401359", a["arguments"]["text"])
+        self.assertEqual((verdict, changed, evidence[0]["code"]), ("ALLOW", True, "PRIVACY_MATCH"))
+        self.assertNotIn("44051401359", json.dumps(evidence))
+
     async def test_signature_in_key_denies(self):
         a = action()
         a["arguments"]["DEMO_SECRET_123"] = "value"

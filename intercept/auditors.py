@@ -8,6 +8,41 @@ import urllib.request
 from urllib.parse import urlsplit
 
 DECISIONS = {"ALLOW", "BLOCK", "REDACT", "REQUIRE_APPROVAL", "ALERT"}
+CLASSIFIED = {
+    # Operator-selected classes. The expressions live in code, not in the policy file.
+    "pesel": re.compile(r"\b\d{11}\b"),
+    "iban": re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"),
+    "aws_access_key": re.compile(r"\bAKIA[A-Z2-7]{16}\b"),
+    "private_key": re.compile(r"-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----", re.DOTALL),
+    "api_key": re.compile(r"\bpgw_live_[A-Za-z0-9]+\b"),
+}
+
+
+def _contains_literal(value, pattern):
+    folded_value, folded_pattern = value.casefold(), pattern.casefold()
+    if len(folded_value) != len(value):
+        return pattern in value
+    return folded_pattern in folded_value
+
+
+def _redact_literal(value, pattern):
+    folded_value, folded_pattern = value.casefold(), pattern.casefold()
+    if len(folded_value) != len(value) or len(folded_pattern) != len(pattern):
+        if pattern not in value:
+            return value, False
+        return value.replace(pattern, "[REDACTED]"), True
+    if folded_pattern not in folded_value:
+        return value, False
+    parts, start = [], 0
+    while True:
+        found = folded_value.find(folded_pattern, start)
+        if found < 0:
+            parts.append(value[start:])
+            break
+        parts.append(value[start:found])
+        parts.append("[REDACTED]")
+        start = found + len(folded_pattern)
+    return "".join(parts), True
 
 
 def validate_specs(specs):
@@ -32,6 +67,11 @@ def validate_specs(specs):
             # Literal signatures, not untrusted regexes with catastrophic backtracking.
             if any(not isinstance(x, str) or not 1 <= len(x) <= 256 for x in c["patterns"]):
                 raise ValueError("invalid literal signature")
+        elif spec["type"] == "classified_scanner":
+            if set(c) != {"classes", "action"} or c["action"] not in ("BLOCK", "REDACT", "ALERT"):
+                raise ValueError("invalid classified scanner")
+            if not isinstance(c["classes"], list) or not c["classes"] or any(x not in CLASSIFIED for x in c["classes"]):
+                raise ValueError("unknown privacy or secret class")
         elif spec["type"] == "webhook":
             if set(c) != {"endpoint", "timeout_ms", "on_failure"}:
                 raise ValueError("invalid webhook")
@@ -80,31 +120,45 @@ class Pipeline:
             if spec["type"] == "tool_allowlist":
                 if checked["tool"] not in config["allowed_tools"]:
                     decision, code = "BLOCK", "TOOL_DENIED"
-            elif spec["type"] == "pattern_scanner":
+            elif spec["type"] in ("pattern_scanner", "classified_scanner"):
                 matched = False
 
                 def scan(value):
                     nonlocal matched
                     if isinstance(value, str):
-                        for pattern in config["patterns"]:
-                            if pattern in value:
-                                matched = True
-                                if config["action"] == "REDACT":
-                                    value = value.replace(pattern, "[REDACTED]")
+                        if spec["type"] == "pattern_scanner":
+                            for pattern in config["patterns"]:
+                                if _contains_literal(value, pattern):
+                                    matched = True
+                                    if config["action"] == "REDACT":
+                                        value, _ = _redact_literal(value, pattern)
+                        else:
+                            for name in config["classes"]:
+                                expression = CLASSIFIED[name]
+                                if expression.search(value):
+                                    matched = True
+                                    if config["action"] == "REDACT":
+                                        value = expression.sub("[REDACTED]", value)
                         return value
                     if isinstance(value, list):
                         return [scan(v) for v in value]
                     if isinstance(value, dict):
                         # Keys cannot safely be rewritten; a matching key denies instead.
-                        if any(any(p in k for p in config["patterns"]) for k in value):
+                        if spec["type"] == "pattern_scanner" and any(
+                                any(_contains_literal(k, p) for p in config["patterns"]) for k in value):
                             raise ValueError("signature in argument key")
-                        return {k: scan(v) for k, v in value.items()}
+                        if spec["type"] == "classified_scanner" and any(
+                                any(CLASSIFIED[name].search(k) for name in config["classes"]) for k in value):
+                            raise ValueError("signature in argument key")
+                        # The account IBAN is issued by the gateway. Free-text IBAN values are still redacted.
+                        return {k: v if k == "iban" and spec["type"] == "classified_scanner" else scan(v)
+                                for k, v in value.items()}
                     return value
 
                 try:
                     checked["arguments"] = scan(checked["arguments"])
                     if matched:
-                        decision, code = config["action"], "SIGNATURE_MATCH"
+                        decision, code = config["action"], "SIGNATURE_MATCH" if spec["type"] == "pattern_scanner" else "PRIVACY_MATCH"
                         changed |= decision == "REDACT"
                 except ValueError:
                     decision, code = "BLOCK", "SIGNATURE_IN_KEY"
