@@ -57,7 +57,8 @@ donut charts of fake traffic, world maps, a chatbot bubble.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Must work at 13" laptop width and degrade to a single column on a phone.
+Must work at 14" or 16" laptop width
+
 
 ---
 
