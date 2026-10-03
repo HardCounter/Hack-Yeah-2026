@@ -16,6 +16,8 @@ from .runtime.loader import PluginLoadError
 
 async def _main(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
+    if args.ledger:
+        cfg.ledger_path = args.ledger if args.ledger == ":memory:" else str(Path(args.ledger).resolve())
     if args.replay:
         cfg.source.type, cfg.source.path = "jsonl_replay", str(Path(args.replay).resolve())
         cfg.trajectory.type, cfg.trajectory.path = "jsonl", cfg.source.path
@@ -46,6 +48,7 @@ def main() -> int:
     parser.add_argument("--config", default="consume_plane.yaml")
     parser.add_argument("--replay", help="events.jsonl in wire envelope v2.1")
     parser.add_argument("--contracts", help="contracts.jsonl (one TaskContract per line)")
+    parser.add_argument("--ledger", help="override ledger_path; ':memory:' reprocesses every event on each run")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
     logging.basicConfig(level=args.log_level, format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)
