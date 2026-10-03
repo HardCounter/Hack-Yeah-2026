@@ -25,7 +25,13 @@ consume_plane:
     max_signals_per_session_per_minute: 6
     allowed_actions:            # default: a plugin may propose nothing
       velocity-guard: [REQUIRE_APPROVAL_FOR]
+      trajectory-risk: [REQUIRE_APPROVAL_FOR, HALT_SESSION]
 
 plugins:
   velocity-guard:               # drop-in file plugins/velocity_guard.py; only its config lives here
     config: {window_s: 10, max_calls: 8}
+  trajectory-risk:              # built-in; expected loss = sum P(failure) x consequence (docs/trajectory-risk-model.md)
+    handler: "consume_plane.plugins.trajectory_risk:TrajectoryRisk"
+    config:                     # any key from DEFAULTS in the plugin can be overridden here
+      levels: {medium: 3.0, high: 8.0, critical: 15.0}
+      prerequisites: {create_client: [screen_sanctions]}

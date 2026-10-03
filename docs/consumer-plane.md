@@ -714,6 +714,7 @@ Ordered by build priority. Each maps to scenarios in `use-cases.md`.
 | `step-order` | det. | `tool_use` | Write call without a required prior step in the trajectory (for example `create_client` with no `screen_sanctions` for the same name) | ONB-03, ONB-10 | `REQUIRE_APPROVAL_FOR` the write tool |
 | `outcome-verifier` | det. | `session` (`ended`) | Runs `verify_onboarding` from `data/postconditions.py` against `bank.db` and `audit_actions`; one finding per failed postcondition; `unverifiable` if the check cannot run | ONB-07, -08, -10, -11, -13 | none (after the fact; detection only, it cannot undo) |
 | `trajectory-grader` | **semantic** | `tool_use` with `side_effect = irreversible` | Local-model (Ollama) judgement of whether the trajectory still serves `contract.objective`; tool results passed as untrusted, delimited data | ONB-17 class | `REQUIRE_APPROVAL_FOR` only |
+| `trajectory-risk` **(implemented)** | det. | `tool_use`, `egress` | Expected loss = Σ P(failure) × consequence over the trajectory; P from noisy-OR of observable signals ([model](trajectory-risk-model.md)) | ONB-03, -11, -12, -15, BAIT-15 | `REQUIRE_APPROVAL_FOR` at high, `HALT_SESSION` at critical |
 
 Notes:
 

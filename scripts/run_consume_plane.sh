@@ -4,6 +4,8 @@
 # Usage: scripts/run_consume_plane.sh [events.jsonl [contracts.jsonl]]
 #   With no arguments it replays the bundled demo: 10 tool calls in 10 s, which trips the
 #   drop-in plugin plugins/velocity_guard.py (limit: 8 calls per 10 s).
+#   A sibling <name>.contracts.jsonl is used automatically when no contracts file is given.
+#   Risk demo: scripts/run_consume_plane.sh tests/consume_plane/fixtures/risky_onboarding.jsonl
 #
 # Environment:
 #   CONFIG=path       config file (default: consume_plane.yaml)
@@ -25,6 +27,8 @@ EVENTS=${1:-$DEMO_EVENTS}
 CONTRACTS=${2:-}
 if [[ -z "$CONTRACTS" && "$EVENTS" == "$DEMO_EVENTS" ]]; then
     CONTRACTS=$DEMO_CONTRACTS
+elif [[ -z "$CONTRACTS" && -f "${EVENTS%.jsonl}.contracts.jsonl" ]]; then
+    CONTRACTS="${EVENTS%.jsonl}.contracts.jsonl"   # convention: <name>.jsonl + <name>.contracts.jsonl
 fi
 CONFIG=${CONFIG:-consume_plane.yaml}
 LEDGER=${LEDGER:-:memory:}
@@ -33,8 +37,8 @@ for f in "$EVENTS" "$CONFIG" ${CONTRACTS:+"$CONTRACTS"}; do
     [[ -f "$f" ]] || { echo "error: file not found: $f" >&2; exit 1; }
 done
 
-# The JSONL sink appends; clear the demo's previous findings so the output reflects this run only.
-if [[ "$EVENTS" == "$DEMO_EVENTS" ]]; then
+# The JSONL sink appends; clear the bundled demos' previous findings so the output reflects this run only.
+if [[ "$EVENTS" == tests/consume_plane/fixtures/* ]]; then
     rm -f runs/run_demo/findings.jsonl
 fi
 
