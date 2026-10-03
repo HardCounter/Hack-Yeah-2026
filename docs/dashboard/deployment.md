@@ -1,6 +1,13 @@
 # Deployment
 
-Status: decided, not implemented. This replaces the earlier Oracle / Hugging Face / Modal proposal.
+Status: **live since 2026-10-03.** The environment is created and the first release is deployed. The
+page is a placeholder; the dashboard and API are not built yet.
+
+- URL: <https://18-197-138-116.sslip.io> (health check: `/healthz`, shows the deployed commit)
+- Release: `git push origin main:deploy`
+- Run locally: `cp .env.example .env && docker compose up -d --build`, then open `http://localhost`
+
+This replaces the earlier Oracle / Hugging Face / Modal proposal.
 
 Goal: judges open one public HTTPS URL and everything works. No team laptops, no venue Wi-Fi.
 
@@ -64,8 +71,9 @@ under sustained load.
 | LLM (the agent we protect) | Stronger API model with tool calling (e.g. Claude Sonnet 5.5), configured in OpenCode's provider settings. Provider and model can be swapped without code changes |
 | Storage | SQLite files (audit store, consumer ledger, synthetic bank database) on a Docker volume |
 
-None of the web parts are in the repository yet: there is no FastAPI app, no `Dockerfile` and no
-`compose.yaml`. FastAPI and uvicorn are new dependencies; today the only one is `pyyaml`.
+In the repository: `web/main.py` (FastAPI, `/healthz` plus the `static/` mount), `static/index.html`
+(placeholder), `Dockerfile`, `compose.yaml`, `Caddyfile`, `.env.example`, `infra/main.tf` and
+`.github/workflows/deploy.yml`.
 
 ---
 
@@ -157,6 +165,7 @@ locally and the deploy workflow only uses SSH.
 | Terraform state (`infra/*.tfstate`) | Owner's machine, git-ignored | Owner |
 | Deploy SSH private key | Generated on the owner's machine; stored as GitHub Actions secret `DEPLOY_SSH_KEY` | Owner. GitHub hides secret values from collaborators |
 | Instance address | GitHub Actions secret `DEPLOY_HOST` (also public: it is the judges' URL) | Everyone |
+| Instance SSH host key | GitHub Actions secret `DEPLOY_KNOWN_HOSTS`, so the workflow only connects to the real instance | Not sensitive |
 | LLM API key | `/opt/app/.env` on the instance, written once by the owner over SSH | Owner |
 | Admin token (policy changes, data reset) | `/opt/app/.env` on the instance | Owner, and whoever the owner shares it with |
 
@@ -242,7 +251,7 @@ Add `DEPLOY_SSH_KEY` and `DEPLOY_HOST` in the repository's Actions secrets.
 2. First job: run the test suite (`uv run pytest`). If it fails, nothing is deployed.
 3. Second job: SSH to the instance and run
    `git fetch && git reset --hard origin/deploy && docker compose up -d --build`,
-   then `docker compose exec app uv run python data/generate.py` to regenerate the demo data.
+   then `docker compose exec -T app python data/generate.py` to regenerate the demo data.
 4. Request `https://<url>/healthz`. If it does not answer, print `docker compose logs --tail 200 app`
    and fail the job. This is how the team sees cloud-only errors without instance access.
 5. `concurrency` group so two pushes cannot deploy at the same time.
