@@ -413,6 +413,7 @@ class AuditContext:
     action_name: str
     payload: dict
     current_policy_level: str  # "standard", "strict", "quarantine"
+    task_contract: dict | None = None  # Bound at session start (allowed_tools, budgets, postconditions)
 
 @dataclass
 class AuditDecision:

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -39,7 +39,7 @@ const auditors = Object.keys(agents).filter((name) => agents[name] === "subagent
 const binary = process.env.OPENCODE_BIN || spawnSync("which", ["opencode"], { encoding: "utf8" }).stdout?.trim();
 assert(binary, "Install OpenCode or set OPENCODE_BIN to its executable path");
 assert(!existsSync("/Library/Managed Preferences"), "Managed macOS preferences need additional isolation");
-const temp = await mkdtemp(path.join(os.tmpdir(), "opencode-agents-smoke-"));
+const temp = await realpath(await mkdtemp(path.join(os.tmpdir(), "opencode-agents-smoke-")));
 const fixture = path.join(temp, "project");
 let server;
 let scenario;
