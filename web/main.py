@@ -1,9 +1,11 @@
-"""Minimal web app: health check plus the static frontend. API endpoints are added later."""
+"""Web app: health check, the one-shot run API and the static frontend."""
 import os
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+
+from web import runs
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
 
@@ -15,4 +17,5 @@ def healthz():
     return {"status": "ok", "commit": os.environ.get("GIT_SHA", "dev")}
 
 
+app.include_router(runs.router)
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")

@@ -5,22 +5,152 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI Control Layer</title>
 <style>
-  body { font: 16px/1.5 system-ui, sans-serif; background: #f6f3ec; color: #111; margin: 0; padding: 2rem 1rem; }
-  main { max-width: 40rem; margin: 0 auto; }
-  code { font-family: ui-monospace, monospace; }
+  :root { --ink: #111; --paper: #f6f3ec; --rule: #c9c3b4; --block: #a3271f; --allow: #2e5a3a; --warn: #8a5a00; }
+  * { box-sizing: border-box; }
+  body { font: 16px/1.5 system-ui, sans-serif; background: var(--paper); color: var(--ink); margin: 0; padding: 1.5rem 1rem 3rem; }
+  main { max-width: 52rem; margin: 0 auto; }
+  h1 { margin: 0 0 .25rem; font-size: 1.5rem; }
+  h2 { font-size: 1rem; margin: 1.75rem 0 .5rem; border-bottom: 1px solid var(--rule); padding-bottom: .25rem; }
+  .note { color: #555; margin: 0 0 1rem; font-size: .9rem; }
+  label { display: block; font-size: .85rem; margin: .75rem 0 .25rem; }
+  select, textarea, button { font: inherit; padding: .5rem; border: 1px solid var(--ink); background: #fff; color: var(--ink); border-radius: 0; }
+  textarea { width: 100%; min-height: 4.5rem; resize: vertical; }
+  button { margin-top: .75rem; cursor: pointer; background: var(--ink); color: var(--paper); padding: .5rem 1.25rem; }
+  button:disabled { opacity: .5; cursor: default; }
+  code, .mono, td, th { font-family: ui-monospace, Consolas, monospace; font-size: .85rem; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: .3rem .6rem .3rem 0; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  .ALLOW, .PASS, .VERIFIED_SUCCESS, .finished { color: var(--allow); font-weight: 600; }
+  .BLOCK, .FAIL, .failed, .FAILED_POSTCONDITIONS { color: var(--block); font-weight: 600; }
+  .REDACT, .ALERT, .REQUIRE_APPROVAL, .VERIFICATION_INCOMPLETE, .INCOMPLETE, .running, .queued { color: var(--warn); font-weight: 600; }
+  #error { color: var(--block); }
 </style>
 </head>
 <body>
 <main>
   <h1>AI Control Layer</h1>
-  <p>Placeholder page. The deployment works; the dashboard is not built yet.</p>
-  <p>Deployed commit: <code id="commit">loading</code></p>
+  <p class="note">Test page for the run API. One run sends one synthetic KYC application to the OpenCode agent
+    through the control gateway. Deployed commit: <code id="commit">loading</code></p>
+
+  <label for="application">Application</label>
+  <select id="application"></select>
+  <label for="prompt">Prompt (optional; empty uses the default instruction)</label>
+  <textarea id="prompt" maxlength="4000" placeholder="Process the application. Use the governed KYC tools and finish with exactly one decision."></textarea>
+  <button id="start">Run</button>
+  <p id="error" role="alert"></p>
+
+  <h2>Run <span class="mono" id="run-id"></span> <span id="run-status"></span></h2>
+  <div class="scroll"><table>
+    <thead><tr><th>#</th><th>Type</th><th>Name</th><th>Decision</th><th>Status</th><th>Rule</th></tr></thead>
+    <tbody id="events"></tbody>
+  </table></div>
+
+  <h2>Verification <span id="verdict"></span></h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead>
+    <tbody id="checks"></tbody>
+  </table></div>
+
+  <h2>Findings</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Severity</th><th>Rule</th><th>Plugin</th></tr></thead>
+    <tbody id="findings"></tbody>
+  </table></div>
+
+  <h2>Recent runs</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Run</th><th>Application</th><th>Status</th><th>Created (UTC)</th></tr></thead>
+    <tbody id="recent"></tbody>
+  </table></div>
 </main>
 <script>
-fetch("/healthz")
-  .then(r => r.json())
-  .then(d => { document.getElementById("commit").textContent = d.commit; })
-  .catch(() => { document.getElementById("commit").textContent = "unreachable"; });
+const $ = id => document.getElementById(id);
+let source = null;
+
+// All server values are written with textContent, never as HTML.
+function row(body, cells) {
+  const tr = document.createElement("tr");
+  for (const cell of cells) {
+    const td = document.createElement("td");
+    const [text, cls] = Array.isArray(cell) ? cell : [cell, null];
+    td.textContent = text == null ? "" : String(text);
+    if (cls) td.className = String(cls);
+    tr.appendChild(td);
+  }
+  body.appendChild(tr);
+  return tr;
+}
+
+function setStatus(el, text) { el.textContent = text || ""; el.className = text || ""; }
+
+function addEvent(e) {
+  const meta = e.interception_metadata || {};
+  const details = e.action_details || {};
+  const hit = (meta.auditor_decisions || []).find(d => d.decision !== "ALLOW");
+  row($("events"), [e.seq, e.action_type, details.name || details.phase || details.change || "",
+    [meta.final_decision || "", meta.final_decision], e.status, hit ? hit.rule_id : ""]);
+}
+
+function showResult(run) {
+  setStatus($("run-status"), run.status + (run.detail ? " (" + run.detail + ")" : ""));
+  $("run-status").className = run.status;
+  const v = run.verification || {};
+  setStatus($("verdict"), v.verification_status);
+  $("checks").replaceChildren();
+  for (const c of v.checks || []) row($("checks"), [c.id, [c.status, c.status], c.detail]);
+  $("findings").replaceChildren();
+  for (const f of run.findings || []) row($("findings"), [[f.severity, f.severity === "low" ? "" : "BLOCK"], f.rule_id, f.plugin]);
+}
+
+function watch(runId) {
+  if (source) source.close();
+  $("run-id").textContent = runId;
+  for (const id of ["events", "checks", "findings"]) $(id).replaceChildren();
+  setStatus($("verdict"), "");
+  source = new EventSource("/api/v1/runs/" + runId + "/stream");
+  source.addEventListener("status", m => setStatus($("run-status"), JSON.parse(m.data).status));
+  source.addEventListener("action", m => addEvent(JSON.parse(m.data)));
+  source.addEventListener("result", m => {
+    source.close();
+    showResult(JSON.parse(m.data));
+    $("start").disabled = false;
+    loadRecent();
+  });
+  source.onerror = () => { $("error").textContent = "Live connection lost. Pick the run under Recent runs to reload it."; $("start").disabled = false; };
+}
+
+async function loadRecent() {
+  const data = await (await fetch("/api/v1/runs")).json();
+  $("recent").replaceChildren();
+  for (const r of data.runs.slice(0, 10)) {
+    const tr = row($("recent"), [r.run_id, r.application, [r.status, r.status], r.created_at.replace("T", " ").replace("Z", "")]);
+    tr.style.cursor = "pointer";
+    tr.addEventListener("click", () => watch(r.run_id));
+  }
+}
+
+$("start").addEventListener("click", async () => {
+  $("error").textContent = "";
+  $("start").disabled = true;
+  const body = { application: $("application").value };
+  if ($("prompt").value.trim()) body.prompt = $("prompt").value.trim();
+  const response = await fetch("/api/v1/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!response.ok) {
+    const problem = await response.json().catch(() => ({}));
+    $("error").textContent = typeof problem.detail === "string" ? problem.detail : "The run could not be started.";
+    $("start").disabled = false;
+    return;
+  }
+  watch((await response.json()).run_id);
+  loadRecent();
+});
+
+fetch("/healthz").then(r => r.json()).then(d => { $("commit").textContent = d.commit; }).catch(() => { $("commit").textContent = "unreachable"; });
+fetch("/api/v1/applications").then(r => r.json()).then(d => {
+  for (const id of d.applications) { const o = document.createElement("option"); o.textContent = id; $("application").appendChild(o); }
+});
+loadRecent();
 </script>
 </body>
 </html>

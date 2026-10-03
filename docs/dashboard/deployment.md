@@ -98,6 +98,30 @@ browser ──HTTPS──> Caddy ──> app container
 - **The API contract is not fixed yet.** The infrastructure only needs FastAPI to answer `/healthz`
   and serve `/static`. Endpoints are added later without touching the deployment.
 
+### Run API (implemented)
+
+`web/runs.py` lets the frontend start one-shot OpenCode runs. One run is one synthetic application
+(`APP-0001` to `APP-0015`) plus an optional prompt. It starts `simulation.opencode_runner` as a
+subprocess in its own folder under `/data/pipeline-runs`.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/applications` | Applications the frontend can offer |
+| `POST /api/v1/runs` | Start a run with `{"application": "APP-0001", "prompt": "..."}` (`prompt` optional). Returns `202` and a `run_id` |
+| `GET /api/v1/runs` | The 50 most recent runs |
+| `GET /api/v1/runs/{id}` | Status (`queued`, `running`, `finished`, `failed`), exit code and the verification result |
+| `GET /api/v1/runs/{id}/events` | The run's sanitized events and findings |
+| `GET /api/v1/runs/{id}/stream` | Server-Sent Events: `status`, one `action` per event, then a final `result` |
+
+- `finished` means the agent completed; check `verification.verification_status` for the outcome
+  (`VERIFIED_SUCCESS` or `VERIFICATION_INCOMPLETE`). `failed` means the run itself broke or timed out.
+- Limits: one run at a time, at most three waiting, `RUN_TIMEOUT_S` (300 s) per run, `RUNS_DAILY_CAP`
+  (100) runs per day. Over the limit the API answers `429`.
+- Not available: the agent's text reply (the runner discards OpenCode's output) and raw prompts or
+  tool arguments (events are sanitized by design). The prompt is passed to the agent but not stored.
+- Tests (`tests/test_web_runs.py`) use a stub runner, so they need no OpenCode and no API key.
+- `static/index.html` is a test page for this API, not the final dashboard.
+
 ### Guard vs agent
 
 - The **semantic guard is a security control**. It runs on every request that reaches it, after the
