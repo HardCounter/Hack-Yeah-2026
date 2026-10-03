@@ -1,0 +1,33 @@
+# Synthetic fixtures only. Bind the operator-approved actual session before use.
+schema_version: 1
+runs:
+  synthetic-session:
+    contract_id: synthetic-contract-1
+    allowed_tools: [read_application, create_client]
+    tool_call_budget: 3
+    require_approval: [create_client]
+    argument_equals:
+      read_application: {app_id: APP-0001}
+      create_client: {app_id: APP-0001}
+auditors:
+  - id: tool-scope
+    type: tool_allowlist
+    config:
+      allowed_tools: [read_application, create_client]
+  - id: credential-shield
+    type: pattern_scanner
+    config:
+      patterns: [DEMO_SECRET_123]
+      action: REDACT
+  - id: injection-signatures
+    type: pattern_scanner
+    config:
+      patterns: ["IGNORE THE TASK"]
+      action: BLOCK
+# Optional local auditor: enable only when its server is running.
+#  - id: contextual-review
+#    type: webhook
+#    config:
+#      endpoint: http://127.0.0.1:9090/audit
+#      timeout_ms: 500
+#      on_failure: BLOCK

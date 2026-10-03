@@ -94,3 +94,10 @@ test("unadmitted after-hook errors do not fabricate an execution observation", a
   await hooks["execute.before"](event)
   assert.equal(calls, 1)
 })
+
+test("validated transformation reaches synthetic tool input", async () => {
+  const hooks = await harness(async () => response({ ...allow, modified_arguments: { target: "assigned", text: "[REDACTED]" } }))
+  const proposed = { ...event, input: { target: "assigned", text: "DEMO_SECRET_123" } }
+  await hooks["execute.before"](proposed)
+  assert.equal(proposed.input.text, "[REDACTED]")
+})

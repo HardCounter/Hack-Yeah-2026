@@ -7,6 +7,8 @@ from pathlib import Path
 from .policy import Policy
 from .server import Evidence, Gateway
 from .test_policy import action, configuration
+from .test_auditors import scanner
+from .auditors import Pipeline
 
 
 class ServerTests(unittest.IsolatedAsyncioTestCase):
@@ -73,6 +75,27 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(self.evidence.queue.join(), 5)
         events = [json.loads(line) for line in self.path.read_text().splitlines()]
         self.assertEqual([e["event_type"] for e in events], ["admission", "observation"])
+
+    async def test_pipeline_transformation_returned_but_not_persisted(self):
+        self.gateway.pipeline = Pipeline([scanner()])
+        a = action()
+        a["arguments"]["text"] = "DEMO_SECRET_123"
+        status, result = await self.request(a)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["modified_arguments"]["text"], "[REDACTED]")
+        self.assertEqual(result["auditor_decisions"][0]["decision"], "REDACT")
+        await asyncio.wait_for(self.evidence.queue.join(), 5)
+        saved = self.path.read_text()
+        self.assertNotIn("modified_arguments", saved)
+        self.assertNotIn("DEMO_SECRET_123", saved)
+
+    async def test_transform_cannot_repair_originally_unauthorized_scope(self):
+        self.gateway.policy.config["runs"]["session-1"]["argument_equals"]["write"]["target"] = "[REDACTED]"
+        self.gateway.pipeline = Pipeline([scanner()])
+        status, result = await self.request(action(target="DEMO_SECRET_123"))
+        self.assertEqual(status, 200)
+        self.assertEqual(result["code"], "TASK_SCOPE")
+        self.assertEqual(result["auditor_decisions"], [])
 
 
 if __name__ == "__main__":

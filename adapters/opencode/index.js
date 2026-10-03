@@ -38,6 +38,12 @@ export default Plugin.define({
           !/^[a-f0-9]{64}$/.test(decision.policy_version)) {
         throw new Error("Interception denied or invalid; tool blocked")
       }
+      if (Object.hasOwn(decision, "modified_arguments")) {
+        if (!decision.modified_arguments || typeof decision.modified_arguments !== "object" || Array.isArray(decision.modified_arguments)) {
+          throw new Error("Invalid interception transformation; tool blocked")
+        }
+        event.input = decision.modified_arguments
+      }
       admitted.add(callKey(event))
     })
     await ctx.tool.hook("execute.after", async (event) => {

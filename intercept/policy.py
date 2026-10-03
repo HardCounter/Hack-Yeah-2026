@@ -37,7 +37,8 @@ class Policy:
         self.admitted = {}
         self.completed = set()
 
-    def evaluate(self, action):
+    @staticmethod
+    def validate_action(action):
         if not isinstance(action, dict) or set(action) != {"session_id", "call_id", "tool", "arguments"}:
             raise ValueError("invalid action")
         for field in ("session_id", "call_id", "tool"):
@@ -45,6 +46,9 @@ class Policy:
                 raise ValueError("invalid action identifier")
         if not isinstance(action["arguments"], dict):
             raise ValueError("arguments must be an object")
+
+    def evaluate(self, action, pipeline_decision="ALLOW", *, reserve=True):
+        self.validate_action(action)
         session, call, tool = (action[k] for k in ("session_id", "call_id", "tool"))
         with self.lock:
             run = self.config["runs"].get(session)
@@ -64,11 +68,13 @@ class Policy:
                 code = "TASK_SCOPE"
             elif tool in run["require_approval"]:
                 code = "APPROVAL_NOT_IMPLEMENTED"
+            elif pipeline_decision != "ALLOW":
+                code = "AUDITOR_BLOCK" if pipeline_decision == "BLOCK" else "APPROVAL_NOT_IMPLEMENTED"
             elif self.used.get(session, 0) >= run["tool_call_budget"]:
                 code = "BUDGET_EXHAUSTED"
-            if run is not None and len(self.seen) < 4096:
+            if reserve and run is not None and len(self.seen) < 4096:
                 self.seen.add(key)
-            if code == "ALLOW":
+            if reserve and code == "ALLOW":
                 self.used[session] = self.used.get(session, 0) + 1
                 self.admitted[key] = tool
             return {

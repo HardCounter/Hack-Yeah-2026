@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Interception pipeline configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "runs", "auditors"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "runs": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[A-Za-z0-9_.:-]{1,160}$"},
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false,
+        "required": ["contract_id", "allowed_tools", "tool_call_budget", "require_approval", "argument_equals"],
+        "properties": {
+          "contract_id": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,160}$"},
+          "allowed_tools": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,160}$"}},
+          "require_approval": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,160}$"}},
+          "tool_call_budget": {"type": "integer", "minimum": 0},
+          "argument_equals": {"type": "object", "additionalProperties": {"type": "object"}}
+        }
+      }
+    },
+    "auditors": {
+      "type": "array", "maxItems": 32,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "type", "config"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"},
+          "type": {"enum": ["tool_allowlist", "pattern_scanner", "webhook"]},
+          "config": {"type": "object"}
+        },
+        "allOf": [
+          {"if": {"properties": {"type": {"const": "tool_allowlist"}}},
+           "then": {"properties": {"config": {
+             "type": "object", "additionalProperties": false, "required": ["allowed_tools"],
+             "properties": {"allowed_tools": {"type": "array", "items": {"type": "string"}}}
+           }}}},
+          {"if": {"properties": {"type": {"const": "pattern_scanner"}}},
+           "then": {"properties": {"config": {
+             "type": "object", "additionalProperties": false, "required": ["patterns", "action"],
+             "properties": {
+               "patterns": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+               "action": {"enum": ["BLOCK", "REDACT", "ALERT"]}
+             }
+           }}}},
+          {"if": {"properties": {"type": {"const": "webhook"}}},
+           "then": {"properties": {"config": {
+             "type": "object", "additionalProperties": false, "required": ["endpoint", "timeout_ms", "on_failure"],
+             "properties": {
+               "endpoint": {"type": "string", "pattern": "^http://127\\.0\\.0\\.1(:[0-9]+)?/"},
+               "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 1000},
+               "on_failure": {"const": "BLOCK"}
+             }
+           }}}}
+        ]
+      }
+    }
+  }
+}
