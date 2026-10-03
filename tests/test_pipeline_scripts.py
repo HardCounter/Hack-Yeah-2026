@@ -10,10 +10,13 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_pipeline_scripts_have_valid_bash_syntax():
-    for script in ("scripts/setup_opencode_pipeline.sh", "scripts/run_pipeline.sh"):
-        result = subprocess.run(["bash", "-n", str(ROOT / script)], capture_output=True, text=True)
-        assert result.returncode == 0, result.stderr
+def test_all_scripts_have_valid_bash_syntax_and_are_executable():
+    scripts = sorted((ROOT / "scripts").glob("*.sh"))
+    assert scripts
+    for script in scripts:
+        result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+        assert result.returncode == 0, f"{script.name}: {result.stderr}"
+        assert os.access(script, os.X_OK), f"{script.name} is not executable"
 
 
 def test_setup_help_does_not_require_uv_or_npm(tmp_path):

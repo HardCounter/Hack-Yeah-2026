@@ -11,12 +11,36 @@ Did the correct result exist?  -> independent outcome verification
 ```
 
 ### Current Implementation State
-- **Implemented so far:** The synthetic banking dataset generator (`data/generate.py`, `data/rules.py`, `data/report.py`), the KYC outcome verifier (`data/postconditions.py`), and the 16 agent tools (`sim/tools/` and `simulation/tools/`, of which 6 are **bait tools: fakes** that only exist so the control layer has something to intercept/block).
+- **Implemented so far:** The synthetic banking dataset generator (`data/generate.py`, `data/rules.py`, `data/report.py`), the KYC outcome verifier (`data/postconditions.py`), and the 16 agent tools (`simulation/tools/`, of which 6 are **bait tools: fakes** that only exist so the control layer has something to intercept/block).
 - **Interception Layer:** Initial Python asyncio interception service with configurable allowlist, signature-scanner, and webhook auditors (`intercept/`).
 - **OpenCode Adapter:** JavaScript plugin for OpenCode v2.0.22 (`adapters/opencode/`) that forwards tool calls (always) and prompts/model requests (opt-in) to the Python service. Real OpenCode loads it, which the startup handshake verifies. `intercept/service/receiver.py` is an observe-only Python server for manual checks: it logs and allows everything. See [OpenCode forwarding](docs/intercept/opencode-forwarding.md).
 - **Integrated KYC runtime:** simulation tool proposals now pass through Layer 1, durable Layer 2 evidence/outbox and the existing ConsumerManager with trajectory-risk feedback and lifecycle outcome verification. Both drivers share the governed path. See [local execution and limits](docs/integrated-runtime.md).
 - **Durable Persistence:** `persistence/` supplies sanitized immutable SQLite evidence, atomic outbox commits, bounded consumer delivery with DLQ, run binding and contiguous action indexing, atomic banking receipts and replication, scoped readers with keyset pagination, and maintenance/backup facilities. See [integration and limits](docs/persistence.md).
 - **Architecture & Runtime Scope:** The MVP scope is **KYC only**; AML is deferred.
+
+## Project Layout
+
+One agent action flows through three planes; [details](docs/agent-action-model.md).
+
+```text
+OpenCode agent ─► adapters/opencode ─► intercept (L1) ─► persistence (L2) ─► consume_plane (L3)
+                  plugin hooks         allow/block        evidence + outbox    risk, findings, verification
+                                            ▲                                        │
+                                            └────────── tighten-only feedback ───────┘
+```
+
+| Path | Role |
+|---|---|
+| `contracts/` | Shared models: `ActionProposal`, `AgentAction`, decisions, `TaskContract`, feedback signal, v2.1 decoder |
+| `adapters/opencode/` | OpenCode 2.0.22 plugin: forwards tool calls and prompts to Layer 1 |
+| `intercept/` | Layer 1. `policy/` rules and auditors · `governed/` gateway, prompts, baseline · `service/` HTTP server, receiver · `tools/`, `cli/` |
+| `persistence/` | Layer 2. SQLite evidence store, outbox delivery, `events.py` (Layer 1 → storage), `adapters/` (storage → v2.1) |
+| `consume_plane/` | Layer 3. Async plugin runtime; built-in plugins in `consume_plane/plugins/`, drop-in ones in `plugins/` |
+| `simulation/` | Governed KYC agent (scripted or LLM driver), synthetic tools, central `policy.json` |
+| `data/` | Synthetic bank generator, rules, outcome postconditions |
+| `scripts/` | Run and test entry points (below) |
+| `tests/`, `*/test_*.py` | Python tests; `adapters/opencode/*.test.mjs` for the plugin |
+| `docs/` | Design docs, starting with [project direction](docs/project-direction.md) |
 
 ## Documentation Index
 
@@ -62,6 +86,9 @@ Dev dependencies include `pytest`. The integrated local gateway uses Python asyn
 
 ### Running the Suite
 
+Quick start: `scripts/test.sh` runs every test, and `scripts/run_demo.sh` runs the control layer end to end
+offline. The underlying commands:
+
 ```sh
 # Build the synthetic dataset (deterministic, seed 2026)
 uv run --locked python data/generate.py
@@ -84,7 +111,7 @@ uv run python -m persistence.demo --scenario wrong-state
 
 CI (`.github/workflows/tests.yml`) runs on every push across Linux and Windows. The project uses paid API models (team decision; keys from env vars, never committed). The code has not moved yet: the LLM driver and the live `simulation/tools/test_ollama.py` check still target a loopback Ollama endpoint and skip when it is unavailable. Switching them to the paid API is pending.
 
-Add a test with every change: a `test_*` function next to the code it checks (`data/`, `sim/`, `tests/`).
+Add a test with every change: a `test_*` function next to the code it checks (`data/`, `simulation/`, `intercept/`), or under `tests/`.
 
 ## Deployment
 
@@ -122,6 +149,8 @@ Nobody on the team needs AWS or instance access to release.
 
 | Script | What it does |
 |---|---|
+| `scripts/test.sh [all\|python\|intercept\|persistence\|consume\|e2e\|adapter\|data] [pytest args]` | Runs all tests, or one layer's |
+| `scripts/run_demo.sh [APP-ID] [--fault F]` | Runs the whole control layer offline (scripted agent, no model) and prints the verdict |
 | `scripts/test_consume_plane.sh` | Runs the consume-plane tests (`tests/consume_plane`) |
 | `scripts/run_consume_plane.sh [events.jsonl [contracts.jsonl]]` | Replays a recorded run through the consume plane and prints the findings; e.g. `tests/consume_plane/fixtures/risky_onboarding.jsonl` |
 | `scripts/test_opencode_adapter.sh [--quiet]` | Runs the OpenCode adapter Node tests and prints every JSON request the adapter sends |

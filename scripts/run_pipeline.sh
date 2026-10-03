@@ -12,8 +12,9 @@ command -v uv >/dev/null 2>&1 || { echo "error: uv is required; run scripts/setu
 
 if [[ "${1:-}" != "--help" && "${1:-}" != "-h" && -z "${OPENCODE_BIN:-}" ]]; then
     local_bin="$ROOT/var/opencode-cli/node_modules/.bin/opencode"
-    if [[ ! -x "$local_bin" ]]; then
-        echo "Pinned OpenCode CLI is missing; running scripts/setup_opencode_pipeline.sh" >&2
+    # The runner accepts the pinned CLI or any OpenCode 2.x on PATH; install only when neither exists.
+    if [[ ! -x "$local_bin" ]] && ! command -v opencode >/dev/null 2>&1; then
+        echo "OpenCode CLI is missing; running scripts/setup_opencode_pipeline.sh" >&2
         "$ROOT/scripts/setup_opencode_pipeline.sh"
     fi
 fi
