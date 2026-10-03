@@ -1,5 +1,11 @@
 # Initial interception slice: status and API clarification
 
+> Current integration: [integrated-runtime.md](../integrated-runtime.md). The canonical consumer
+> wire contract is Event Envelope v2.1 and decisions are ALLOW/BLOCK/REDACT/
+> REQUIRE_APPROVAL/ALERT. Older v1/v2.0 examples, uppercase storage enums and
+> standalone/unwired status notes below are historical design or internal formats;
+> they do not define additional supported external contracts.
+
 > **Update 2026-10-03.** The sections below are the original slice record. These later changes
 > supersede parts of it. Details are in [opencode-forwarding.md](opencode-forwarding.md).
 >

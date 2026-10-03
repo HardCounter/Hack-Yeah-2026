@@ -1,8 +1,9 @@
 # Event Envelope v2.1 (Persistence → Consume Plane)
 
-**Status (2026-10-03):** proposed by the consume-plane work and implemented in its decoder
-(`consume_plane/model/decode.py`). Layer 1 and Layer 2 have not adopted it yet, so it needs
-team confirmation.
+**Status (2026-10-03): canonical wire contract.** Layer 2 emits this format through
+`persistence/adapters/consumer_v21.py`; the existing consumer decoder accepts it
+unchanged. Internal storage continues to use v2.0 records; they are not a competing wire contract.
+See [integrated-runtime.md](integrated-runtime.md).
 
 ## Why this exists
 
@@ -18,8 +19,8 @@ The consume plane needs fields that neither existing envelope provides:
 | Attributing scripted faults | missing | `payload.fault_injected` |
 | Bodies kept out of the event (privacy, size) | `result` inline | `*_ref` pointers |
 
-v2.1 is v2.0 with these additions. It keeps v2.0 field names wherever they exist, so a
-v2.0 producer needs additions only, not renames.
+The old examples below explain the historical gaps. Producers use explicit Layer 2
+adapters; uppercase internal decision/status fields require renaming and mapping.
 
 ## Envelope
 
@@ -56,6 +57,9 @@ v2.0 producer needs additions only, not renames.
 ```
 
 ### Required fields
+
+`action_id` is an optional top-level stable action correlation extension shared by
+intent/result/receipt evidence. It is available in `AgentAction.raw`.
 
 `schema_version` (must be `"2.1"`), `event_id`, `seq`, `ts`, `session_id`, `agent_id`,
 `action_type`, `status`. All other fields are optional. `interception_metadata` is omitted for

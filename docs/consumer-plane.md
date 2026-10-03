@@ -1,5 +1,11 @@
 # Consumer Plane: Design and Implementation Plan
 
+> Current integration: [integrated-runtime.md](integrated-runtime.md). The canonical consumer
+> wire contract is Event Envelope v2.1 and decisions are ALLOW/BLOCK/REDACT/
+> REQUIRE_APPROVAL/ALERT. Older v1/v2.0 examples, uppercase storage enums and
+> standalone/unwired status notes below are historical design or internal formats;
+> they do not define additional supported external contracts.
+
 Detailed design for **Layer 3 (Consumer Layer)** of `docs/application-documentation.md`. It refines
 sections 4 and 5.3 of that document into concrete contracts, a package layout, and a build plan.
 
@@ -98,7 +104,7 @@ All plugins receive the same typed record. It is the consumer plane's view of th
 ```python
 @dataclass(frozen=True, slots=True)
 class AgentAction:
-    schema_version: str                 # "2.0"
+    schema_version: str                 # "2.1"
     event_id: str                       # globally unique, used for idempotency
     seq: int                            # per-session monotonic, assigned by Layer 2 on persist
     ts: datetime                        # time the gateway observed the interaction (UTC)
@@ -182,24 +188,13 @@ class ContentRef:
 - Content marked `untrusted` is **data**. A semantic plugin that sends it to a model must treat
   instructions inside it as an injection attempt, not as authority.
 
-### 3.6 Mapping from the existing envelopes
+### 3.6 Canonical mapping
 
-Two envelopes exist in the docs and disagree. The consumer plane parses both into `AgentAction`
-through one adapter function, so plugins do not care:
-
-| `AgentAction` | Envelope v2.0 (`application-documentation.md` 5.1) | Envelope v1.0 (`system-architecture.md` 6) |
-|---|---|---|
-| `kind = "prompt"` | `action_type: "llm_call"` | `type: "llm_call"` |
-| `kind = "tool_use"` | `action_type: "tool_call"` / `"mcp_tool"` | `type: "tool_call"` |
-| `kind = "tool_use", status = "blocked"` | `status: "blocked"` | `type: "policy_denied"` |
-| `kind = "session"` | (missing) | `case_started` / `case_closed` |
-| `kind = "approval"` | (missing) | `human_decision` |
-| `kind = "control"` | `policy_reloaded` (mentioned in 2.2) | (missing) |
-| `seq` | (missing) | `step_id` is per case, set by the agent wrapper |
-| `fault_injected` | (missing) | `payload.fault_injected` |
-
-**Open conflict:** the team should pick one envelope (recommendation: v2.0 plus `seq`, `run_id`,
-`session` events, and `fault_injected`) and record it in `contract/events.schema.json`.
+Only Event Envelope v2.1 is delivered to `decode_event`. Explicit normalization
+belongs in `persistence/adapters/consumer_v21.py`, including lower-case action
+and status values and the canonical decision vocabulary. Historical v1/v2.0
+examples elsewhere are not supported consumer input. The shared Task Contract is
+`contracts.TaskContract`; existing consumer imports alias that definition.
 
 ---
 
@@ -803,7 +798,7 @@ consume_plane/
 │   ├── actions.py              # AgentAction, payloads, ContentRef, GatewayVerdict, Usage
 │   ├── contract.py             # TaskContract, Budget
 │   ├── outputs.py              # FindingDraft, Finding, AdjustmentProposal, PolicyAdjustmentSignal
-│   └── decode.py               # envelope v1/v2 → AgentAction (section 3.6)
+│   └── decode.py               # envelope v2.1 → AgentAction (section 3.6)
 ├── ports/
 │   ├── event_source.py         # EventSource, Delivery
 │   ├── trajectory.py           # TrajectoryReader, Trajectory helper

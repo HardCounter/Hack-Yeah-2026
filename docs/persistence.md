@@ -1,5 +1,11 @@
 # Standalone persistence component
 
+> Current integration: [integrated-runtime.md](integrated-runtime.md). The canonical consumer
+> wire contract is Event Envelope v2.1 and decisions are ALLOW/BLOCK/REDACT/
+> REQUIRE_APPROVAL/ALERT. Older v1/v2.0 examples, uppercase storage enums and
+> standalone/unwired status notes below are historical design or internal formats;
+> they do not define additional supported external contracts.
+
 `persistence/` implements local evidence storage and analytics delivery. It does
 not intercept agents, enforce policy, authorize approvals, reserve budgets, or
 verify banking outcomes. Only trusted gateway/orchestrator code may invoke this

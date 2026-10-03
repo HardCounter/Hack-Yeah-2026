@@ -1,5 +1,11 @@
 # Local Agent Gateway & Control Plane: Architecture
 
+> Current integration: [integrated-runtime.md](integrated-runtime.md). The canonical consumer
+> wire contract is Event Envelope v2.1 and decisions are ALLOW/BLOCK/REDACT/
+> REQUIRE_APPROVAL/ALERT. Older v1/v2.0 examples, uppercase storage enums and
+> standalone/unwired status notes below are historical design or internal formats;
+> they do not define additional supported external contracts.
+
 Status: **proposed runtime interfaces, not yet integrated**. Standalone SQLite persistence primitives are implemented; see [persistence.md](persistence.md) for their scope. The MVP is one KYC workflow; AML,
 multi-provider fallback, arbitrary plugins and broad protocol support are deferred.
 [architecture-contract.md](architecture-contract.md) defines the required trust,
@@ -39,14 +45,10 @@ flowchart TB
 
             ENTRY --> AUDIT_PIPE
             AUDIT_PIPE -- "BLOCK / REJECT" --> ENTRY
-<<<<<<< HEAD
             AUDIT_PIPE -- "ALLOW after required semantic/approval gate + durable intent" --> ROUTER
-=======
-            AUDIT_PIPE -- "ALLOW" --> ROUTER
             OCADAPTER -- "Tool action" --> AUDIT_PIPE
             AUDIT_PIPE -- "Decision / approval state" --> OCADAPTER
             OCADAPTER --> PACKER
->>>>>>> origin/main
             ROUTER <--> UPSTREAM
             ROUTER --> PACKER
             PACKER --> Q1

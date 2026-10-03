@@ -1,5 +1,11 @@
 # Consume Plane: Implementation Notes
 
+> Current integration: [integrated-runtime.md](integrated-runtime.md). The canonical consumer
+> wire contract is Event Envelope v2.1 and decisions are ALLOW/BLOCK/REDACT/
+> REQUIRE_APPROVAL/ALERT. Older v1/v2.0 examples, uppercase storage enums and
+> standalone/unwired status notes below are historical design or internal formats;
+> they do not define additional supported external contracts.
+
 Companion to [consumer-plane.md](consumer-plane.md). It records what is built, the decisions taken
 where the design was silent, and what is deferred.
 

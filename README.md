@@ -14,12 +14,13 @@ Did the correct result exist?  -> independent outcome verification
 - **Implemented so far:** The synthetic banking dataset generator (`data/generate.py`, `data/rules.py`, `data/report.py`), the KYC outcome verifier (`data/postconditions.py`), and the 16 agent tools (`sim/tools/` and `simulation/tools/`, of which 6 are **bait tools: fakes** that only exist so the control layer has something to intercept/block).
 - **Interception Layer:** Initial Python asyncio interception service with configurable allowlist, signature-scanner, and webhook auditors (`intercept/`).
 - **OpenCode Adapter:** JavaScript plugin for OpenCode v2.0.22 (`adapters/opencode/`) that forwards tool calls (always) and prompts/model requests (opt-in) to the Python service. Real OpenCode loads it, which the startup handshake verifies. `intercept/receiver.py` is an observe-only Python server for manual checks: it logs and allows everything. See [OpenCode forwarding](docs/intercept/opencode-forwarding.md).
-- **Consume Plane (Layer 3):** `consume_plane/` runs asynchronous plugins over persisted agent actions (drop-in Python files, read-only trajectory access, at-least-once delivery, tighten-only feedback), plus a deterministic `trajectory-risk` plugin (expected loss = Σ P(failure) × consequence). It is tested on replayed JSONL runs only and is not yet wired to the persistence layer. See [consume plane](docs/consumer-plane.md).
+- **Integrated KYC runtime:** simulation tool proposals now pass through Layer 1, durable Layer 2 evidence/outbox and the existing ConsumerManager with trajectory-risk feedback and lifecycle outcome verification. Both drivers share the governed path. See [local execution and limits](docs/integrated-runtime.md).
 - **Durable Persistence:** `persistence/` supplies sanitized immutable SQLite evidence, atomic outbox commits, bounded consumer delivery with DLQ, run binding and contiguous action indexing, atomic banking receipts and replication, scoped readers with keyset pagination, and maintenance/backup facilities. See [integration and limits](docs/persistence.md).
 - **Architecture & Runtime Scope:** The MVP scope is **KYC only**; AML is deferred.
 
 ## Documentation Index
 
+- [Integrated local KYC execution](docs/integrated-runtime.md)
 - [Project direction](docs/project-direction.md)
 - [Required runtime architecture contract](docs/architecture-contract.md)
 - [Architecture review findings and remaining gates](docs/architecture-review.md)
@@ -35,9 +36,9 @@ Did the correct result exist?  -> independent outcome verification
 - [Mock banking dataset specification](docs/mock-data-spec.md)
 - [System architecture & execution lifecycle](docs/system-architecture.md)
 - [Control Gateway & Interception layer specification](docs/application-documentation.md)
-- [Judge dashboard UI design](docs/dashboard-ui.md)
-- [Technical challenge and criteria](GoldmanSachsCriteria.md)
-- [Competition rules](GoldmanSachsRules.md)
+- [Judge dashboard UI design](docs/dashboard/dashboard-ui.md)
+- [Technical challenge and criteria](docs/goldman/GoldmanSachsCriteria.md)
+- [Competition rules](docs/goldman/GoldmanSachsRules.md)
 - [OpenCode agents, NVIDIA setup, and review commands](.opencode/README.md)
 - [Shared engineering instructions](AGENTS.md)
 
@@ -55,7 +56,7 @@ uv lock --check
 ```
 
 `pyproject.toml` allows Python >=3.11; `.python-version` pins local development to 3.12.
-Dev dependencies include `pytest`. Runtime framework choices for the gateway remain open.
+Dev dependencies include `pytest`. The integrated local gateway uses Python asyncio and SQLite.
 
 ### Running the Suite
 
@@ -65,6 +66,9 @@ uv run --locked python data/generate.py
 
 # Render the dataset explorer report
 uv run --locked python data/report.py
+
+# Run the governed end-to-end demo
+uv run python -m simulation.agent APP-0001 --driver scripted
 
 # Run the complete test suite (offline and locked)
 uv run --locked --offline pytest
