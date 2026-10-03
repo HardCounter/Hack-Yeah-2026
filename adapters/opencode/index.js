@@ -1,5 +1,8 @@
-import { Plugin } from "@opencode/plugin"
+// No runtime import of @opencode/plugin: in 2.0.22 `Plugin.define(plugin)` returns `plugin` unchanged
+// (dist/promise/plugin.js), and OpenCode does not install a local plugin's dependencies. Exporting the
+// same { id, setup } object lets OpenCode load this directory without `npm install`.
 
+const PLUGIN_ID = "hardcounter.intercept"
 const LOOPBACK_ENDPOINT = /^(http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):(\d{1,5}))\/?$/
 const PROMPT_MODES = new Set(["off", "observe", "enforce"])
 const PART_TEXT_LIMIT = 16000
@@ -46,14 +49,42 @@ function normalizeMessage(message) {
 
 // Necessary runtime shim only; all policy decisions belong to Python.
 // Opt-in: deliberately not loaded into the repository's development agent.
-export default Plugin.define({
-  id: "hardcounter.intercept",
+export default /** @type {import("@opencode/plugin").Plugin.Plugin} */ ({
+  id: PLUGIN_ID,
   async setup(ctx) {
     const endpoint = loopbackEndpoint(ctx.options.endpoint)
+    if (!endpoint) throw new Error("Interception requires a loopback http endpoint (options.endpoint)")
     const token = process.env.INTERCEPT_TOKEN
-    if (!endpoint || !token || token.length < 32) {
-      throw new Error("Interception requires a loopback http endpoint and INTERCEPT_TOKEN")
+    // Diagnostic handshake: tells the Python side the plugin loaded (or why it did not). Best effort.
+    const announce = async (status, extra) => {
+      if (ctx.options.announce === false) return
+      globalThis.console?.error?.(`[${PLUGIN_ID}] ${status}${extra.reason ? `: ${extra.reason}` : ""}`)
+      try {
+        await fetch(`${endpoint}/v1/adapter/hello`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json",
+                     ...(status === "ready" ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ adapter: PLUGIN_ID, status, prompts: ctx.options.prompts ?? "off",
+                                 directory: ctx.location?.directory ?? null, ...extra }),
+          signal: AbortSignal.timeout(1000),
+          redirect: "error",
+        })
+      } catch {}
     }
+    try {
+      if (!token || token.length < 32) {
+        throw new Error("INTERCEPT_TOKEN (>= 32 chars) is not set in the environment of the OpenCode server")
+      }
+      const hooks = await install(ctx, endpoint, token)
+      await announce("ready", { hooks })
+    } catch (error) {
+      await announce("error", { reason: String(error?.message ?? error).slice(0, 300) })
+      throw error
+    }
+  },
+})
+
+async function install(ctx, endpoint, token) {
     const promptMode = ctx.options.prompts ?? "off"
     if (!PROMPT_MODES.has(promptMode)) throw new Error("options.prompts must be off, observe or enforce")
     let observationsHealthy = true
@@ -194,9 +225,12 @@ export default Plugin.define({
       // Never claim a post-action telemetry failure prevented/rolled back execution.
     })
 
-    if (promptMode === "off") return
+    const registered = ["tool.execute.before", "tool.execute.after"]
+    if (gatewayTools.size) registered.push("tool.transform(gateway tools)", "command:intercept-run")
+    // Tool use is always intercepted (execute.before / execute.after above). Prompts are opt-in.
+    if (promptMode === "off") return registered
     const enforce = promptMode === "enforce"
-    const forwarded = new Map() // sessionID -> { count, system, seq }
+    const forwarded = new Map() // `${sessionID}|${kind}` -> { count, system, seq }
 
     // observe: best effort, never blocks. enforce: fail closed unless Python answers ALLOW for this request.
     const submitPrompt = async (body) => {
@@ -244,11 +278,15 @@ export default Plugin.define({
       }
     })
 
-    // Every model request of the agent loop. Only messages not yet forwarded for the session are sent;
-    // the system prompt is sent when it changes. A shrunken history (compaction) resends everything.
-    await ctx.session.hook("context", async (event) => {
+    // Model requests. OpenCode V2 runs one hook per request kind (SessionRequestKind):
+    //   context    -> "primary": every step of the agent loop
+    //   compaction -> history summarisation, generate -> session.generate(), title -> session title
+    // Per (session, kind) only messages not yet forwarded are sent, plus the system prompt when it
+    // changes; a shrunken history resends everything with history_reset: true.
+    const forwardModelRequest = async (kind, event) => {
       const messages = Array.isArray(event.messages) ? event.messages : []
-      const state = forwarded.get(event.sessionID) ?? { count: 0, system: null, seq: 0 }
+      const key = `${event.sessionID}|${kind}`
+      const state = forwarded.get(key) ?? { count: 0, system: null, seq: 0 }
       const historyReset = messages.length < state.count
       const start = historyReset ? 0 : state.count
       const system = (event.system ?? []).map((part) => (typeof part === "string" ? part : part?.text ?? "")).join("\n")
@@ -256,9 +294,10 @@ export default Plugin.define({
       await submitPrompt({
         action_type: "llm_request",
         source: "agent",
-        request_id: `${event.sessionID}:${seq}`,
+        kind,
+        request_id: `${event.sessionID}:${kind}:${seq}`,
         session_id: event.sessionID,
-        agent: event.agent,
+        ...(event.agent ? { agent: event.agent } : {}), // title requests carry no agent
         model: { id: event.model?.id, provider_id: event.model?.providerID },
         request_seq: seq,
         message_count: messages.length,
@@ -267,7 +306,11 @@ export default Plugin.define({
         messages: messages.slice(start).map(normalizeMessage),
         tools: Object.keys(event.tools ?? {}).sort(),
       })
-      forwarded.set(event.sessionID, { count: messages.length, system, seq })
-    })
-  },
-})
+      forwarded.set(key, { count: messages.length, system, seq })
+    }
+    await ctx.session.hook("context", (event) => forwardModelRequest("primary", event))
+    await ctx.session.hook("compaction", (event) => forwardModelRequest("compaction", event))
+    await ctx.session.hook("generate", (event) => forwardModelRequest("generate", event))
+    await ctx.session.hook("title", (event) => forwardModelRequest("title", event))
+    return [...registered, ...["prompt", "context", "compaction", "generate", "title"].map((h) => `session.${h}`)]
+}

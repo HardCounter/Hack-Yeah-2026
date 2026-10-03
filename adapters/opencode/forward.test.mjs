@@ -14,12 +14,15 @@ const quiet = process.env.FORWARD_QUIET === "1"
 // Stands in for the Python control service: logs each request and answers ALLOW.
 async function captureServer() {
   const requests = []
+  const hellos = []
   const server = http.createServer((req, res) => {
     let raw = ""
     req.on("data", (chunk) => { raw += chunk })
     req.on("end", () => {
       const body = JSON.parse(raw)
-      requests.push({ path: req.url, body, authorized: req.headers.authorization === `Bearer ${"x".repeat(32)}` })
+      const record = { path: req.url, body, authorized: req.headers.authorization === `Bearer ${"x".repeat(32)}` }
+      if (req.url === "/v1/adapter/hello") hellos.push(record)  // startup handshake, kept apart
+      else requests.push(record)
       if (!quiet) process.stdout.write(`\n--> POST ${req.url}\n${JSON.stringify(body, null, 2)}\n`)
       const reply = req.url === "/v1/actions/outcome" ? { ok: true }
         : { decision: "ALLOW", policy_version: POLICY_VERSION, session_id: body.session_id,
@@ -28,7 +31,7 @@ async function captureServer() {
     })
   })
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
-  return { requests, server, endpoint: `http://127.0.0.1:${server.address().port}` }
+  return { requests, hellos, server, endpoint: `http://127.0.0.1:${server.address().port}` }
 }
 
 async function loadPlugin(options) {
@@ -63,9 +66,14 @@ const toolResult = { role: "tool", content: [
 ] }
 
 test("forwards prompts, LLM requests and tool use as JSON", async () => {
-  const { requests, server, endpoint } = await captureServer()
+  const { requests, hellos, server, endpoint } = await captureServer()
   try {
     const hooks = await loadPlugin({ endpoint, prompts: "enforce" })
+    // setup announced itself, authenticated, with the hooks it registered
+    assert.equal(hellos.length, 1)
+    assert.equal(hellos[0].authorized, true)
+    assert.equal(hellos[0].body.status, "ready")
+    assert.ok(hellos[0].body.hooks.includes("tool.execute.before") && hellos[0].body.hooks.includes("session.context"))
 
     // 1. user prompt enters the session
     const prompt = { sessionID: SESSION, messageID: "msg_01", delivery: "queue",
@@ -100,6 +108,7 @@ test("forwards prompts, LLM requests and tool use as JSON", async () => {
     assert.deepEqual(Object.keys(admission).sort(), ["arguments", "call_id", "session_id", "tool"])
     assert.deepEqual(Object.keys(outcome).sort(), ["call_id", "session_id", "status", "tool"])
     // delta only, system unchanged so not resent, reasoning dropped, tool result marked untrusted
+    assert.equal(second.kind, "primary")
     assert.equal(second.request_seq, 2)
     assert.equal(second.messages.length, 2)
     assert.equal(Object.hasOwn(second, "system"), false)
@@ -120,9 +129,57 @@ test("enforce mode blocks a prompt when the service is down; observe mode does n
   await observed.session.prompt({ sessionID: SESSION, messageID: "msg_y", delivery: "queue", prompt: { text: "hi" } })
 })
 
+test("registers tool hooks always and every prompt hook when prompts are on", async () => {
+  const hooks = await loadPlugin({ endpoint: "http://127.0.0.1:8080", prompts: "observe" })
+  assert.deepEqual(Object.keys(hooks.tool).sort(), ["execute.after", "execute.before"])
+  assert.deepEqual(Object.keys(hooks.session).sort(), ["compaction", "context", "generate", "prompt", "title"])
+})
+
+test("auxiliary model requests (compaction, generate, title) are forwarded with their kind", async () => {
+  const { requests, server, endpoint } = await captureServer()
+  try {
+    const hooks = await loadPlugin({ endpoint, prompts: "enforce" })
+    const base = { sessionID: SESSION, model: MODEL, system: [{ type: "text", text: "Summarise." }], messages: [user], options: {} }
+    await hooks.session.compaction({ ...base, agent: "build", tools: TOOLS })
+    await hooks.session.generate({ ...base, agent: "build", tools: {} })
+    await hooks.session.title(base)                      // SessionTitle has no agent and no tools
+    await hooks.session.compaction({ ...base, agent: "build", tools: TOOLS, messages: [user, assistantCall] })
+    const bodies = requests.map((r) => r.body)
+    assert.deepEqual(bodies.map((b) => [b.kind, b.request_id]), [
+      ["compaction", `${SESSION}:compaction:1`],
+      ["generate", `${SESSION}:generate:1`],
+      ["title", `${SESSION}:title:1`],
+      ["compaction", `${SESSION}:compaction:2`],
+    ])
+    assert.equal(Object.hasOwn(bodies[2], "agent"), false)
+    assert.equal(bodies[3].messages.length, 1)          // delta is tracked per kind
+  } finally {
+    server.close()
+  }
+})
+
 test("prompt forwarding is off by default and non-loopback endpoints are refused", async () => {
   const hooks = await loadPlugin({ endpoint: "http://127.0.0.1:8080" })
   assert.deepEqual(Object.keys(hooks.session), [])
+  assert.deepEqual(Object.keys(hooks.tool).sort(), ["execute.after", "execute.before"])
   await assert.rejects(() => loadPlugin({ endpoint: "http://example.com:8080" }), /loopback/)
   await assert.rejects(() => loadPlugin({ endpoint: "http://127.0.0.1:8080", prompts: "maybe" }), /off, observe or enforce/)
+})
+
+test("a setup failure is announced to the receiver, without the token", async () => {
+  const { hellos, server, endpoint } = await captureServer()
+  try {
+    const context = vm.createContext({ fetch, AbortSignal, process: { env: {} } })
+    const dependency = new vm.SyntheticModule([], function () {}, { context })
+    const module = new vm.SourceTextModule(source, { context })
+    await module.link(() => dependency)
+    await module.evaluate()
+    await assert.rejects(() => module.namespace.default.setup({ options: { endpoint, prompts: "observe" } }), /INTERCEPT_TOKEN/)
+    assert.equal(hellos.length, 1)
+    assert.equal(hellos[0].body.status, "error")
+    assert.match(hellos[0].body.reason, /INTERCEPT_TOKEN .* not set/)
+    assert.equal(hellos[0].authorized, false)
+  } finally {
+    server.close()
+  }
 })
