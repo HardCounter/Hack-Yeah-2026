@@ -1007,10 +1007,12 @@ Informacja odpowiada odpisowi aktualnemu z rejestru."""))
     def write(self, out):
         out = Path(out)
         db = out / "bank.db"
-        db.unlink(missing_ok=True)
+        for f in (db, out / "bank.db-wal", out / "bank.db-shm"):  # WAL side files from earlier tool runs
+            f.unlink(missing_ok=True)
         shutil.rmtree(out / "documents", ignore_errors=True)
         (out / "documents").mkdir(parents=True)
         con = sqlite3.connect(db)
+        con.execute("PRAGMA journal_mode=WAL")  # persistent; lets parallel tool calls queue (docs/plans/tools/README.md)
         con.executescript(SCHEMA)
         dump = lambda v: json.dumps(v, ensure_ascii=False, sort_keys=True)
 
