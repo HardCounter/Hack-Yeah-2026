@@ -1,0 +1,8 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "nvidia/deepseek-ai/deepseek-v4.1-flash",
+  "small_model": "nvidia/deepseek-ai/deepseek-v4.1-flash",
+  "default_agent": "control-builder",
+  "share": "disabled",
+  "instructions": ["docs/project-direction.md"]
+}
