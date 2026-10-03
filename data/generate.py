@@ -998,9 +998,9 @@ Informacja odpowiada odpisowi aktualnemu z rejestru."""))
         con.commit()
         con.close()
         for d in self.documents:
-            (out / "documents" / f"{d['doc_id']}.txt").write_text(d["ocr_text"], encoding="utf-8", newline="\n")
+            (out / "documents" / f"{d['doc_id']}.txt").write_text(d["ocr_text"], encoding="utf-8")
         self.gt["dq_issues"] = dict(sorted(self.gt["dq_issues"].items()))
-        (out / "ground_truth.json").write_text(json.dumps(self.gt, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8", newline="\n")
+        (out / "ground_truth.json").write_text(json.dumps(self.gt, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 CLIENT_COLS = ["client_id", "client_type", "full_name", "date_of_birth", "incorporation_date", "nationality", "national_id",
