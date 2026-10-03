@@ -1,6 +1,6 @@
 """ONB-P1..P6 against the onboarding scenarios in docs/use-cases.md.
 
-    python data/test_postconditions.py      (or: pytest data/)
+    uv run pytest data/test_postconditions.py
 
 Builds a fresh dataset in a temp dir, then simulates each scenario's persisted outcome
 (clients row, application status) and gateway trace, and checks which postconditions fail.

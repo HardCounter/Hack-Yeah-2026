@@ -1,6 +1,6 @@
-"""Checks for sim/tools (docs/plans/tools/01..04 and the README's Definition of done), all through registry.call().
+"""Checks for simulation/tools (docs/plans/tools/01..04 and the README's Definition of done), all through registry.call().
 
-    python sim/tools/test_tools.py      (or: pytest sim/tools)
+    uv run pytest simulation/tools/test_tools.py
 
 Builds one dataset per run; every test works on its own copy of bank.db.
 """

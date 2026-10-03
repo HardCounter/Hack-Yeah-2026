@@ -1,6 +1,6 @@
 """Generate the mock banking dataset described in docs/mock-data-spec.md.
 
-    python data/generate.py
+    uv run python data/generate.py
 
 Writes data/bank.db, data/ground_truth.json and data/documents/*.txt. Stdlib only.
 Deterministic: the script builds everything twice and asserts the outputs are byte-identical.

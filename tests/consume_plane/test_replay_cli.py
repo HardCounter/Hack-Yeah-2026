@@ -14,7 +14,7 @@ def test_replay_runs_velocity_guard_and_exports_findings(tmp_path):
     config.write_text(textwrap.dedent(f"""
         consume_plane:
           source: {{poll_timeout_s: 0.01}}
-          plugin_dirs: ["{REPO / 'plugins'}"]
+          plugin_dirs: ["{(REPO / 'plugins').as_posix()}"]
           ledger_path: "var/ledger.db"
           sinks:
             - {{type: jsonl, path: "runs/{{run_id}}/findings.jsonl"}}
