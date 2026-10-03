@@ -1,0 +1,6 @@
+{$SITE_HOST} {
+	reverse_proxy app:8000 {
+		# keep Server-Sent Events streaming instead of buffering them
+		flush_interval -1
+	}
+}

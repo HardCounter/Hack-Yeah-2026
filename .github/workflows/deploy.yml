@@ -1,0 +1,70 @@
+name: deploy
+
+# Releases happen by moving the deploy branch: git push origin main:deploy
+on:
+  push:
+    branches: [deploy]
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false  # never interrupt a deploy that is already running
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run python data/generate.py
+      - run: uv run pytest
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Prepare SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "ubuntu@$DEPLOY_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          cd /opt/app
+          git fetch origin deploy
+          git checkout -B deploy origin/deploy
+          export GIT_SHA=$(git rev-parse --short HEAD)
+          docker compose up -d --build
+          # fresh synthetic bank on every deploy (deterministic, seed 2026)
+          docker compose exec -T app python data/generate.py
+          REMOTE
+
+      - name: Health check
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS "https://$DEPLOY_HOST/healthz"; then echo; exit 0; fi
+            sleep 5
+          done
+          echo "health check failed" >&2
+          exit 1
+
+      - name: Container logs on failure
+        if: failure()
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "ubuntu@$DEPLOY_HOST" \
+            'cd /opt/app && docker compose logs --tail 200 app caddy'

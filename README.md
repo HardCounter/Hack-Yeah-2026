@@ -87,7 +87,7 @@ Add a test with every change: a `test_*` function next to the code it checks (`d
 
 ## Deployment
 
-Planned, not implemented yet. Full plan, cost and secret handling: [docs/dashboard/deployment.md](docs/dashboard/deployment.md).
+Full plan, cost and secret handling: [docs/dashboard/deployment.md](docs/dashboard/deployment.md).
 
 - The app runs on one AWS EC2 instance under Docker Compose, behind one public HTTPS URL.
 - Pushing to `main` runs the tests and does **not** deploy.
@@ -101,6 +101,17 @@ git push origin main:deploy
 # Roll back to an earlier commit
 git push --force origin <good-sha>:deploy
 ```
+
+Run the same stack locally (needs Docker):
+
+```sh
+cp .env.example .env
+docker compose up -d --build
+# open http://localhost  (health check: http://localhost/healthz)
+docker compose down
+```
+
+The web app is `web/main.py` (FastAPI) and the frontend files are in `static/`.
 
 The deploy workflow runs the test suite, rebuilds the app container on the instance and checks its
 health endpoint. If the check fails, the container logs are printed in the GitHub Actions run.

@@ -1,0 +1,12 @@
+.git
+.venv
+var/
+infra/
+data/bank.db*
+data/runs/
+data/ground_truth.json
+data/documents/
+node_modules
+.env
+__pycache__
+.pytest_cache

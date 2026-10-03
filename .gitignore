@@ -851,3 +851,11 @@ data/report.html
 
 # consume plane outputs
 runs/
+
+# deployment
+infra/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+infra/deploy_key
+infra/deploy_key.pub
