@@ -1,10 +1,15 @@
-"""AML monitoring rules R-* from docs/use-cases.md.
+"""Rules shared by data/generate.py, the tools and the outcome verifier.
 
-Used by data/generate.py to raise the alerts, and by the outcome verifier to re-check an
-agent's alert disposition (TXM-P1). Transactions are dicts shaped like rows of `transactions`.
+- AML monitoring rules R-* (docs/use-cases.md): raise the alerts, re-checked for TXM-P1.
+  Transactions are dicts shaped like rows of `transactions`.
+- KYC name normalization and sanctions/PEP screening: used by `screen_sanctions` and re-run
+  independently by the verifier for ONB-P1/P3/P6.
 """
+import re
+import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 
 FX_PLN = {"PLN": 1.0, "EUR": 4.30, "USD": 3.95}
 HIGH_RISK = {"IR", "KP", "MM", "SY", "YE", "AF", "VE", "HT", "ML", "SS"}  # MOCK list
@@ -95,3 +100,45 @@ def run_rules(txs, client_of, expected, dedup=False):
             "triggered_at": max(when(by_id[i]) for i in ids).isoformat()}
            for (r, a), ids in hits.items() if ids]
     return sorted(out, key=lambda h: (h["triggered_at"], h["rule"], h["account_id"]))
+
+
+# ---------------------------------------------------------------- KYC screening
+
+MATCH_THRESHOLD = 0.85  # a hit at or above this must not be ignored (ONB-P1)
+LEGAL_FORMS = {"spolka z ograniczona odpowiedzialnoscia": "sp z o o", "spolka akcyjna": "s a", "spolka komandytowa": "sp k"}
+
+
+def norm(name):
+    """Casefold, strip diacritics and punctuation, shorten Polish legal forms, sort tokens."""
+    s = (name or "").replace("ł", "l").replace("Ł", "L")
+    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c)).casefold()
+    s = " ".join(re.sub(r"[^\w]+", " ", s).split())
+    for long, short in LEGAL_FORMS.items():
+        s = s.replace(long, short)
+    return " ".join(sorted(s.split()))
+
+
+def _dob_factor(dob, listed):
+    """Listed DOB may be a full date, a year, or unknown. A contradicting DOB rules the match out."""
+    if not dob or not listed:
+        return 0.85
+    if len(listed) == 4:
+        return 0.9 if dob[:4] == listed else 0.4
+    return 1.0 if dob == listed else 0.4
+
+
+def screen(name, dob, entries, floor=0.3):
+    """Score one subject against sanctions/PEP rows ({entry_id, primary_name, aliases, date_of_birth}).
+
+    score = best name similarity over primary name + aliases * DOB factor. Nationality is ignored on
+    purpose (dual citizenship, outdated list data). Returns candidates >= floor, best first.
+    """
+    n = norm(name)
+    hits = []
+    for e in entries:
+        names = [e["primary_name"], *e["aliases"]]
+        sim, matched = max((SequenceMatcher(None, n, norm(x)).ratio(), x) for x in names)
+        score = round(sim * _dob_factor(dob, e["date_of_birth"]), 3)
+        if score >= floor:
+            hits.append({"entry_id": e["entry_id"], "matched_name": matched, "score": score})
+    return sorted(hits, key=lambda h: -h["score"])
