@@ -40,13 +40,14 @@ class Evidence:
 
 
 class Gateway:
-    def __init__(self, policy, token, evidence, pipeline=None, trace=False, executor=None, admin_token=None):
+    def __init__(self, policy, token, evidence, pipeline=None, trace=False, executor=None, admin_token=None, service=None):
         if not isinstance(token, str) or len(token) < 32 or not token.isascii():
             raise ValueError("a local ASCII bearer token of at least 32 characters is required")
         self.policy, self.token, self.evidence = policy, token, evidence
         self.pipeline = pipeline or Pipeline([])
         self.trace = trace
         self.executor = executor
+        self.service = service
         if admin_token is not None and (len(admin_token) < 32 or not admin_token.isascii() or hmac.compare_digest(admin_token, token)):
             raise ValueError("admin token must be distinct and at least 32 ASCII characters")
         self.admin_token = admin_token
@@ -74,9 +75,9 @@ class Gateway:
                 expected_token = self.admin_token if path == "/v1/runs/bind" else self.token
                 if expected_token is None or not hmac.compare_digest(headers.get("authorization", ""), "Bearer " + expected_token):
                     status, result = 401, {"code": "UNAUTHORIZED"}
-                elif method != "POST" or path not in ("/v1/actions/evaluate", "/v1/actions/outcome", "/v1/tools/execute", "/v1/tools/catalog", "/v1/runs/bind"):
+                elif method != "POST" or path not in ("/v1/actions/evaluate", "/v1/actions/outcome", "/v1/tools/execute", "/v1/tools/catalog", "/v1/runs/bind", "/v1/session/finish"):
                     status, result = 404, {"code": "NOT_FOUND"}
-                elif path in ("/v1/tools/execute", "/v1/tools/catalog") and self.executor is None:
+                elif path in ("/v1/tools/execute", "/v1/tools/catalog") and self.executor is None and self.service is None:
                     status, result = 503, {"code": "TOOL_EXECUTION_DISABLED"}
                 else:
                     size = int(headers.get("content-length", "0"))
@@ -84,6 +85,13 @@ class Gateway:
                         status, result = 413, {"code": "BODY_LIMIT"}
                     else:
                         action = json.loads(await reader.readexactly(size))
+                        if self.service is not None:
+                            result = await self.service.handle_request(path, action)
+                            status = 200
+                            return
+                        if path == "/v1/session/finish":
+                            status, result = 503, {"code": "LIFECYCLE_DISABLED"}
+                            return
                         if path == "/v1/tools/catalog":
                             if action != {}:
                                 raise ValueError("catalog body must be empty object")

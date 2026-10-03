@@ -85,7 +85,9 @@ def _dump(v):
     return json.dumps(v, ensure_ascii=False, sort_keys=True)
 
 
-def call(name: str, args: dict, ctx: Ctx) -> dict:
+def call(name: str, args: dict, ctx: Ctx, *, before_execute=None, before_commit=None,
+         audit_projection=None, gateway_action_id: str | None = None,
+         durable: bool = False, after_audit=None) -> dict:
     """Validate, execute and audit one tool call. Unknown tool / bad args: error, nothing executed, no audit row."""
     t = REGISTRY.get(name)
     if t is None:
@@ -93,12 +95,19 @@ def call(name: str, args: dict, ctx: Ctx) -> dict:
     if err := _check(t, args):
         return {"error": err}
     con = sqlite3.connect(ctx.db, timeout=5, isolation_level=None)
-    con.execute("PRAGMA synchronous=NORMAL")  # WAL: no disk sync per commit, still corruption-safe
+    con.execute("PRAGMA synchronous=FULL" if durable else "PRAGMA synchronous=NORMAL")
     try:
         with _LOCK:  # calls in this process queue here instead of in SQLite's sleeping busy-wait (README, Concurrency)
             con.execute("BEGIN IMMEDIATE")  # reads too: every call writes an audit row (README, Concurrency)
             try:
+                # Trusted gateway callback rechecks persisted state after admission and
+                # while holding SQLite's write lock, closing the precheck/dispatch race.
+                if before_execute is not None:
+                    before_execute(con, ctx, name, args)
                 result = t.fn(con, ctx, **args)
+                if before_commit is not None and "error" not in result:
+                    # Business receipts must share the same transaction as the effect.
+                    before_commit(con, ctx, name, args, result)
             except ToolError as e:
                 con.rollback()
                 con.execute("BEGIN IMMEDIATE")
@@ -107,12 +116,26 @@ def call(name: str, args: dict, ctx: Ctx) -> dict:
                 con.rollback()
                 raise
             logged = result
+            audited_args, audited_result = args, result
+            if audit_projection is not None:
+                audited_args, audited_result = audit_projection(name, args, result)
             if not t.log_result and "error" not in result:
-                s = _dump(result)
+                s = _dump(audited_result)
                 logged = {"sha256": hashlib.sha256(s.encode()).hexdigest(), "chars": len(s)}
-            con.execute("INSERT INTO audit_actions (ts, session_id, agent, tool, args_json, result_json) VALUES (?, ?, ?, ?, ?, ?)",
-                        (datetime.now(CEST).isoformat(timespec="milliseconds"), ctx.session_id, ctx.agent, name,
-                         _dump(args), _dump(logged)))
+            else:
+                logged = audited_result
+            audit_ts = datetime.now(CEST).isoformat(timespec="milliseconds")
+            columns = {row[1] for row in con.execute("PRAGMA table_info(audit_actions)")}
+            if "action_id" in columns:
+                con.execute("INSERT INTO audit_actions (ts, session_id, agent, tool, args_json, result_json, action_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (audit_ts, ctx.session_id, ctx.agent, name,
+                             _dump(audited_args), _dump(logged), gateway_action_id))
+            else:
+                con.execute("INSERT INTO audit_actions (ts, session_id, agent, tool, args_json, result_json) VALUES (?, ?, ?, ?, ?, ?)",
+                            (audit_ts, ctx.session_id, ctx.agent, name,
+                             _dump(audited_args), _dump(logged)))
+            if after_audit is not None:
+                after_audit(con, ctx, name, args, result, audit_ts)
             con.commit()
             return result
     finally:

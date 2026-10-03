@@ -28,6 +28,7 @@ _IDS = {
     "application_id", "client_id", "receipt_id", "action_id", "contract_id",
     "run_id", "approval_id", "intervention_id", "policy_version", "feed_version",
     "rule", "reason_code", "model", "model_version", "forbidden_tool",
+    "app_id", "document_id", "doc_id", "resource_id", "target_id",
 }
 _STATES = {"status", "verification_status", "side_effect_class", "decision"}
 
@@ -76,7 +77,7 @@ def evidence(value: Any) -> dict[str, Any]:
     return result
 
 
-def sanitize_event(event: ActionEventEnvelope) -> ActionEventEnvelope:
+def sanitize_event(event: ActionEventEnvelope, *, allow_unindexed_run: bool = False) -> ActionEventEnvelope:
     # Roundtrip creates an owned snapshot and validates enums even for dataclass
     # callers. Raw content is omitted before serializing to any durable medium.
     if len(event.interception_metadata.auditor_decisions) > 128:
@@ -91,8 +92,50 @@ def sanitize_event(event: ActionEventEnvelope) -> ActionEventEnvelope:
     details = data["action_details"]
     details["name"] = token(details["name"], required=True)
     details["parameters"] = evidence(details["parameters"])
-    details["result"] = evidence(details["result"]) if details["result"] is not None else None
+    if isinstance(details["result"], dict) and "ref" in details["result"]:
+        details["result"] = _content_ref(details["result"])
+    else:
+        details["result"] = evidence(details["result"]) if details["result"] is not None else None
     details["error"] = OMITTED if details["error"] is not None else None
+    if details.get("side_effect") not in (None, "read", "write", "irreversible"):
+        raise ValueError("Invalid action side_effect")
+    if details.get("transport") not in (None, "inproc", "mcp", "http"):
+        raise ValueError("Invalid action transport")
+    # v2.1 lifecycle/control fields are a strict scalar allowlist. Bodies and
+    # arbitrary nested values can never hitch a ride in this extension.
+    safe_wire = {}
+    for key, value in details.get("wire_details", {}).items():
+        if key in {"phase", "change", "decision", "end_reason", "approver_role", "stop_reason"}:
+            if value is not None:
+                safe_wire[key] = token(value)
+        elif key in {"contract_id", "policy_version", "signal_id", "target_event_id", "model", "provider", "method", "host", "path"}:
+            if value is not None:
+                if key == "path":
+                    if (not isinstance(value, str) or not value.startswith("/")
+                            or "?" in value or "#" in value
+                            or not re.fullmatch(r"/[A-Za-z0-9_./-]{0,512}", value)):
+                        raise ValueError("Invalid egress path metadata")
+                    safe_wire[key] = value
+                else:
+                    safe_wire[key] = token(value)
+        elif key in {"status_code", "delay_ms"}:
+            if value is not None:
+                safe_wire[key] = number(value)
+        elif key in {"tool_calls_requested"}:
+            # Only tool names and already-sanitized scalar parameters.
+            safe_wire[key] = [
+                {"name": token(item.get("name"), required=True),
+                 "parameters": evidence(item.get("parameters", {}))}
+                for item in value
+            ]
+        elif key in {"messages", "completion", "body"}:
+            safe_wire[key] = _content_ref(value)
+        elif key in {"provider", "model"}:
+            pass
+        else:
+            raise ValueError(f"Unsupported structured wire detail: {key}")
+    if safe_wire:
+        details["wire_details"] = safe_wire
     if details["bytes_returned"] is not None:
         number(details["bytes_returned"])
     meta = data["interception_metadata"]
@@ -108,7 +151,11 @@ def sanitize_event(event: ActionEventEnvelope) -> ActionEventEnvelope:
         number(decision["latency_ms"])
     meta["sanitized_fields"] = ["parameters", "result", "error", "reason", "modifications"]
     context = data["context"]
-    if (context["run_id"] is None) != (context["action_index"] is None):
+    # A trusted gateway may provide run_id/action_id before persistence; Layer 2
+    # fills action_index transactionally. An index without run identity is invalid.
+    if context["run_id"] is None and context["action_index"] is not None:
+        raise ValueError("Run action index requires run identity")
+    if context["run_id"] is not None and context["action_index"] is None and not allow_unindexed_run:
         raise ValueError("Run identity and gateway event index must be supplied together")
     for key, value in context.items():
         if key == "action_index":
@@ -125,6 +172,29 @@ def sanitize_event(event: ActionEventEnvelope) -> ActionEventEnvelope:
         else:
             context[key] = token(value)
     return ActionEventEnvelope.from_dict(data)
+
+
+def _content_ref(value: Any) -> dict[str, Any] | list[dict[str, Any]] | None:
+    """Validate the metadata-only ContentRef representation."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [_content_ref(item) for item in value]  # type: ignore[list-item]
+    if not isinstance(value, dict) or set(value) - {"ref", "sha256", "size_bytes", "redacted", "trust"}:
+        raise ValueError("Invalid ContentRef metadata")
+    raw_ref = value.get("ref")
+    prefix = "store://agent_content/"
+    if not isinstance(raw_ref, str) or not raw_ref.startswith(prefix):
+        raise ValueError("ContentRef must use the agent_content store URI")
+    ref = prefix + str(token(raw_ref[len(prefix):], required=True))
+    sha = value.get("sha256")
+    if not isinstance(sha, str) or not re.fullmatch(r"[a-f0-9]{64}", sha):
+        raise ValueError("ContentRef sha256 must be a SHA-256 hex digest")
+    size = value.get("size_bytes", 0)
+    if not isinstance(value.get("redacted", False), bool) or value.get("trust", "untrusted") not in ("trusted", "untrusted"):
+        raise ValueError("Invalid ContentRef metadata")
+    return {"ref": ref, "sha256": sha, "size_bytes": number(size),
+            "redacted": value.get("redacted", False), "trust": value.get("trust", "untrusted")}
 
 
 def sanitize_alert(alert: AlertEvent) -> AlertEvent:

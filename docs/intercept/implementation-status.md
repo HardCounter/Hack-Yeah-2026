@@ -1,5 +1,35 @@
 # Initial interception slice: status and API clarification
 
+> Current integration: [integrated-runtime.md](../integrated-runtime.md). The canonical consumer
+> wire contract is Event Envelope v2.1 and decisions are ALLOW/BLOCK/REDACT/
+> REQUIRE_APPROVAL/ALERT. Older v1/v2.0 examples, uppercase storage enums and
+> standalone/unwired status notes below are historical design or internal formats;
+> they do not define additional supported external contracts.
+
+> **Update 2026-10-03.** The sections below are the original slice record. These later changes
+> supersede parts of it. Details are in [opencode-forwarding.md](opencode-forwarding.md).
+>
+> - **Live loading is now verified.** Real `opencode v2.0.22` (`--standalone`) loads
+>   `adapters/opencode` from a `plugins` entry, and the adapter's startup handshake reaches Python
+>   (`scripts/check_opencode_pipeline.sh`). Tool-block propagation and MCP/built-in tool coverage
+>   in a real conversation are still untested.
+> - **No package install is needed.** The adapter no longer imports `@opencode/plugin` at runtime.
+>   `Plugin.define` is an identity function in 2.0.22, and OpenCode does not install a local
+>   plugin's dependencies, so the earlier "must be installed by OpenCode's plugin loader" note no
+>   longer applies.
+> - **`INTERCEPT_TOKEN` must reach OpenCode's server process.** Use `opencode --standalone`; the
+>   shared background service does not inherit the shell's environment. Without the token the
+>   adapter's setup fails, and it now reports this through `POST /v1/adapter/hello`.
+> - **`options.endpoint`** may be any `http://` loopback origin and port, not only `127.0.0.1:8080`.
+> - **New options:** `options.prompts` (`off` default, `observe`, `enforce`) adds prompt and
+>   model-request forwarding to `/v1/prompts/evaluate`. `options.announce` (default `true`) controls
+>   the handshake. Tool request bodies are unchanged.
+> - **New `intercept/receiver.py`:** an observe-only diagnostic server for manual OpenCode runs.
+>   It logs every request and ALLOWs it, and checks the request shapes against this gateway.
+>   `intercept/server.py` itself was not changed and still has no prompt endpoint.
+> - **Current test counts:** `intercept/` 35 Python tests; `adapters/opencode` 9 (`test.mjs`) + 6
+>   (`forward.test.mjs`) Node tests (`scripts/test_opencode_adapter.sh`).
+
 Work now takes place on `main`, per the team's latest instruction; the older plan's
 `intercept` branch assumption is historical. Stack: [Python, asyncio, uv](../stack.md).
 

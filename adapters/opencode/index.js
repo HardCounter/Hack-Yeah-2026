@@ -1,15 +1,92 @@
-import { Plugin } from "@opencode/plugin"
+// No runtime import of @opencode/plugin: in 2.0.22 `Plugin.define(plugin)` returns `plugin` unchanged
+// (dist/promise/plugin.js), and OpenCode does not install a local plugin's dependencies. Exporting the
+// same { id, setup } object lets OpenCode load this directory without `npm install`.
+
+const PLUGIN_ID = "hardcounter.intercept"
+const LOOPBACK_ENDPOINT = /^(http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):(\d{1,5}))\/?$/
+const PROMPT_MODES = new Set(["off", "observe", "enforce"])
+const PART_TEXT_LIMIT = 16000
+
+// Only a plain http://<loopback>:<port> origin; the control service must be local.
+function loopbackEndpoint(value) {
+  const match = typeof value === "string" ? LOOPBACK_ENDPOINT.exec(value) : null
+  if (!match || Number(match[2]) < 1 || Number(match[2]) > 65535) return null
+  return match[1]
+}
+
+function clip(text) {
+  if (typeof text !== "string") return { text: "", truncated: false }
+  return text.length > PART_TEXT_LIMIT
+    ? { text: text.slice(0, PART_TEXT_LIMIT), truncated: true, length: text.length }
+    : { text, truncated: false }
+}
+
+// OpenCode message part -> forwarded part. Reasoning is never forwarded (no private chain-of-thought);
+// media bytes are never forwarded; tool results are labelled untrusted data.
+function normalizePart(part) {
+  if (typeof part === "string") return { type: "text", ...clip(part) }
+  switch (part?.type) {
+    case "text": return { type: "text", ...clip(part.text) }
+    case "tool-call": return { type: "tool-call", id: part.id, name: part.name, input: part.input ?? null }
+    case "tool-result": {
+      const serialized = JSON.stringify(part.result ?? null)
+      return {
+        type: "tool-result", id: part.id, name: part.name, trust: "untrusted",
+        result: serialized.length > PART_TEXT_LIMIT ? { type: "omitted", length: serialized.length } : part.result ?? null,
+      }
+    }
+    case "reasoning": return null
+    default: return { type: String(part?.type ?? "unknown") }
+  }
+}
+
+function normalizeMessage(message) {
+  const parts = typeof message?.content === "string" ? [message.content] : Array.isArray(message?.content) ? message.content : []
+  const content = parts.map(normalizePart).filter(Boolean)
+  const omitted = parts.length - content.length
+  return { role: String(message?.role ?? "unknown"), content, ...(omitted ? { reasoning_parts_omitted: omitted } : {}) }
+}
 
 // Necessary runtime shim only; all policy decisions belong to Python.
 // Opt-in: deliberately not loaded into the repository's development agent.
-export default Plugin.define({
-  id: "hardcounter.intercept",
+export default /** @type {import("@opencode/plugin").Plugin.Plugin} */ ({
+  id: PLUGIN_ID,
   async setup(ctx) {
-    const endpoint = ctx.options.endpoint
+    const endpoint = loopbackEndpoint(ctx.options.endpoint)
+    if (!endpoint) throw new Error("Interception requires a loopback http endpoint (options.endpoint)")
     const token = process.env.INTERCEPT_TOKEN
-    if (endpoint !== "http://127.0.0.1:8080" || !token || token.length < 32) {
-      throw new Error("Interception requires the loopback service and INTERCEPT_TOKEN")
+    // Diagnostic handshake: tells the Python side the plugin loaded (or why it did not). Best effort.
+    const announce = async (status, extra) => {
+      if (ctx.options.announce === false) return
+      globalThis.console?.error?.(`[${PLUGIN_ID}] ${status}${extra.reason ? `: ${extra.reason}` : ""}`)
+      try {
+        await fetch(`${endpoint}/v1/adapter/hello`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json",
+                     ...(status === "ready" ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ adapter: PLUGIN_ID, status, prompts: ctx.options.prompts ?? "off",
+                                 directory: ctx.location?.directory ?? null, ...extra }),
+          signal: AbortSignal.timeout(1000),
+          redirect: "error",
+        })
+      } catch {}
     }
+    try {
+      if (!token || token.length < 32) {
+        throw new Error("INTERCEPT_TOKEN (>= 32 chars) is not set in the environment of the OpenCode server")
+      }
+      const hooks = await install(ctx, endpoint, token)
+      await announce("ready", { hooks })
+    } catch (error) {
+      await announce("error", { reason: String(error?.message ?? error).slice(0, 300) })
+      throw error
+    }
+  },
+})
+
+async function install(ctx, endpoint, token) {
+    const promptMode = ctx.options.prompts ?? "off"
+    if (!PROMPT_MODES.has(promptMode)) throw new Error("options.prompts must be off, observe or enforce")
     let observationsHealthy = true
     const admitted = new Set()
     const gatewayTools = new Set()
@@ -53,7 +130,7 @@ export default Plugin.define({
               })
               if (!response.ok) throw new Error("Gateway execution unavailable; do not retry an ambiguous write")
               const result = await response.json()
-              if (result.decision !== "ALLOW" || result.session_id !== context.sessionID ||
+              if (!["ALLOW", "REDACT", "ALERT"].includes(result.decision) || result.session_id !== context.sessionID ||
                   result.call_id !== context.id || result.tool !== definition.name || !result.tool_result ||
                   typeof result.tool_result !== "object" || Array.isArray(result.tool_result)) {
                 throw new Error("Gateway execution denied or invalid")
@@ -147,5 +224,93 @@ export default Plugin.define({
       }
       // Never claim a post-action telemetry failure prevented/rolled back execution.
     })
-  },
-})
+
+    const registered = ["tool.execute.before", "tool.execute.after"]
+    if (gatewayTools.size) registered.push("tool.transform(gateway tools)", "command:intercept-run")
+    // Tool use is always intercepted (execute.before / execute.after above). Prompts are opt-in.
+    if (promptMode === "off") return registered
+    const enforce = promptMode === "enforce"
+    const forwarded = new Map() // `${sessionID}|${kind}` -> { count, system, seq }
+
+    // observe: best effort, never blocks. enforce: fail closed unless Python answers ALLOW for this request.
+    const submitPrompt = async (body) => {
+      let decision
+      try {
+        const response = await fetch(`${endpoint}/v1/prompts/evaluate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(3000),
+          redirect: "error",
+        })
+        if (!response.ok) throw new Error("status")
+        decision = await response.json()
+      } catch {
+        if (enforce) throw new Error("Prompt interception unavailable; request blocked")
+        return null
+      }
+      if (!enforce) return null
+      if (decision?.decision !== "ALLOW" || decision.session_id !== body.session_id ||
+          decision.request_id !== body.request_id || typeof decision.policy_version !== "string" ||
+          !/^[a-f0-9]{64}$/.test(decision.policy_version)) {
+        throw new Error("Prompt interception denied or invalid; request blocked")
+      }
+      return decision
+    }
+
+    // A user (or command) prompt entering the session, before the agent loop sees it.
+    await ctx.session.hook("prompt", async (event) => {
+      const files = Array.isArray(event.prompt?.files) ? event.prompt.files : []
+      const decision = await submitPrompt({
+        action_type: "prompt",
+        source: "user",
+        request_id: String(event.messageID),
+        session_id: event.sessionID,
+        message_id: event.messageID,
+        delivery: event.delivery,
+        ...clip(event.prompt?.text),
+        files: files.map((f) => ({ uri: f.uri, ...(f.name ? { name: f.name } : {}) })),
+        agents: (event.prompt?.agents ?? []).map((a) => a.name),
+      })
+      if (decision && Object.hasOwn(decision, "modified_text")) {
+        if (typeof decision.modified_text !== "string") throw new Error("Invalid prompt transformation; request blocked")
+        event.prompt.text = decision.modified_text
+      }
+    })
+
+    // Model requests. OpenCode V2 runs one hook per request kind (SessionRequestKind):
+    //   context    -> "primary": every step of the agent loop
+    //   compaction -> history summarisation, generate -> session.generate(), title -> session title
+    // Per (session, kind) only messages not yet forwarded are sent, plus the system prompt when it
+    // changes; a shrunken history resends everything with history_reset: true.
+    const forwardModelRequest = async (kind, event) => {
+      const messages = Array.isArray(event.messages) ? event.messages : []
+      const key = `${event.sessionID}|${kind}`
+      const state = forwarded.get(key) ?? { count: 0, system: null, seq: 0 }
+      const historyReset = messages.length < state.count
+      const start = historyReset ? 0 : state.count
+      const system = (event.system ?? []).map((part) => (typeof part === "string" ? part : part?.text ?? "")).join("\n")
+      const seq = state.seq + 1
+      await submitPrompt({
+        action_type: "llm_request",
+        source: "agent",
+        kind,
+        request_id: `${event.sessionID}:${kind}:${seq}`,
+        session_id: event.sessionID,
+        ...(event.agent ? { agent: event.agent } : {}), // title requests carry no agent
+        model: { id: event.model?.id, provider_id: event.model?.providerID },
+        request_seq: seq,
+        message_count: messages.length,
+        history_reset: historyReset,
+        ...(system !== state.system ? { system: clip(system) } : {}),
+        messages: messages.slice(start).map(normalizeMessage),
+        tools: Object.keys(event.tools ?? {}).sort(),
+      })
+      forwarded.set(key, { count: messages.length, system, seq })
+    }
+    await ctx.session.hook("context", (event) => forwardModelRequest("primary", event))
+    await ctx.session.hook("compaction", (event) => forwardModelRequest("compaction", event))
+    await ctx.session.hook("generate", (event) => forwardModelRequest("generate", event))
+    await ctx.session.hook("title", (event) => forwardModelRequest("title", event))
+    return [...registered, ...["prompt", "context", "compaction", "generate", "title"].map((h) => `session.${h}`)]
+}

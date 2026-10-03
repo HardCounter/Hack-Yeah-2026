@@ -1,5 +1,11 @@
 # Consumer Plane: Design and Implementation Plan
 
+> Current integration: [integrated-runtime.md](integrated-runtime.md). The canonical consumer
+> wire contract is Event Envelope v2.1 and decisions are ALLOW/BLOCK/REDACT/
+> REQUIRE_APPROVAL/ALERT. Older v1/v2.0 examples, uppercase storage enums and
+> standalone/unwired status notes below are historical design or internal formats;
+> they do not define additional supported external contracts.
+
 Detailed design for **Layer 3 (Consumer Layer)** of `docs/application-documentation.md`. It refines
 sections 4 and 5.3 of that document into concrete contracts, a package layout, and a build plan.
 
@@ -98,7 +104,7 @@ All plugins receive the same typed record. It is the consumer plane's view of th
 ```python
 @dataclass(frozen=True, slots=True)
 class AgentAction:
-    schema_version: str                 # "2.0"
+    schema_version: str                 # "2.1"
     event_id: str                       # globally unique, used for idempotency
     seq: int                            # per-session monotonic, assigned by Layer 2 on persist
     ts: datetime                        # time the gateway observed the interaction (UTC)
@@ -182,24 +188,13 @@ class ContentRef:
 - Content marked `untrusted` is **data**. A semantic plugin that sends it to a model must treat
   instructions inside it as an injection attempt, not as authority.
 
-### 3.6 Mapping from the existing envelopes
+### 3.6 Canonical mapping
 
-Two envelopes exist in the docs and disagree. The consumer plane parses both into `AgentAction`
-through one adapter function, so plugins do not care:
-
-| `AgentAction` | Envelope v2.0 (`application-documentation.md` 5.1) | Envelope v1.0 (`system-architecture.md` 6) |
-|---|---|---|
-| `kind = "prompt"` | `action_type: "llm_call"` | `type: "llm_call"` |
-| `kind = "tool_use"` | `action_type: "tool_call"` / `"mcp_tool"` | `type: "tool_call"` |
-| `kind = "tool_use", status = "blocked"` | `status: "blocked"` | `type: "policy_denied"` |
-| `kind = "session"` | (missing) | `case_started` / `case_closed` |
-| `kind = "approval"` | (missing) | `human_decision` |
-| `kind = "control"` | `policy_reloaded` (mentioned in 2.2) | (missing) |
-| `seq` | (missing) | `step_id` is per case, set by the agent wrapper |
-| `fault_injected` | (missing) | `payload.fault_injected` |
-
-**Open conflict:** the team should pick one envelope (recommendation: v2.0 plus `seq`, `run_id`,
-`session` events, and `fault_injected`) and record it in `contract/events.schema.json`.
+Only Event Envelope v2.1 is delivered to `decode_event`. Explicit normalization
+belongs in `persistence/adapters/consumer_v21.py`, including lower-case action
+and status values and the canonical decision vocabulary. Historical v1/v2.0
+examples elsewhere are not supported consumer input. The shared Task Contract is
+`contracts.TaskContract`; existing consumer imports alias that definition.
 
 ---
 
@@ -713,7 +708,7 @@ Ordered by build priority. Each maps to scenarios in `use-cases.md`.
 | `repeat-side-effect` | det. | `tool_use` (`side_effect != read`) | Second executed write/irreversible call on the same target | ONB-11 | `BLOCK_TOOLS` |
 | `step-order` | det. | `tool_use` | Write call without a required prior step in the trajectory (for example `create_client` with no `screen_sanctions` for the same name) | ONB-03, ONB-10 | `REQUIRE_APPROVAL_FOR` the write tool |
 | `outcome-verifier` | det. | `session` (`ended`) | Runs `verify_onboarding` from `data/postconditions.py` against `bank.db` and `audit_actions`; one finding per failed postcondition; `unverifiable` if the check cannot run | ONB-07, -08, -10, -11, -13 | none (after the fact; detection only, it cannot undo) |
-| `trajectory-grader` | **semantic** | `tool_use` with `side_effect = irreversible` | Local-model (Ollama) judgement of whether the trajectory still serves `contract.objective`; tool results passed as untrusted, delimited data | ONB-17 class | `REQUIRE_APPROVAL_FOR` only |
+| `trajectory-grader` | **semantic** | `tool_use` with `side_effect = irreversible` | Judgement by the user-provided LLM (own API key or locally hosted model) of whether the trajectory still serves `contract.objective`; tool results passed as untrusted, delimited data | ONB-17 class | `REQUIRE_APPROVAL_FOR` only |
 | `trajectory-risk` **(implemented)** | det. | `tool_use`, `egress` | Expected loss = Σ P(failure) × consequence over the trajectory; P from noisy-OR of observable signals ([model](trajectory-risk-model.md)) | ONB-03, -11, -12, -15, BAIT-15 | `REQUIRE_APPROVAL_FOR` at high, `HALT_SESSION` at critical |
 
 Notes:
@@ -803,7 +798,7 @@ consume_plane/
 │   ├── actions.py              # AgentAction, payloads, ContentRef, GatewayVerdict, Usage
 │   ├── contract.py             # TaskContract, Budget
 │   ├── outputs.py              # FindingDraft, Finding, AdjustmentProposal, PolicyAdjustmentSignal
-│   └── decode.py               # envelope v1/v2 → AgentAction (section 3.6)
+│   └── decode.py               # envelope v2.1 → AgentAction (section 3.6)
 ├── ports/
 │   ├── event_source.py         # EventSource, Delivery
 │   ├── trajectory.py           # TrajectoryReader, Trajectory helper

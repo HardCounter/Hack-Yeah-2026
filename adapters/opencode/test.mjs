@@ -8,7 +8,9 @@ const source = await readFile(new URL("./index.js", import.meta.url), "utf8")
 
 async function harness(fetch, options = { endpoint: "http://127.0.0.1:8080" }) {
   const context = vm.createContext({
-    fetch, AbortSignal,
+    // the adapter's diagnostic /v1/adapter/hello handshake is answered here and not counted
+    fetch: (url, options) => url.endsWith("/v1/adapter/hello") ? Promise.resolve({ ok: true, json: async () => ({}) }) : fetch(url, options),
+    AbortSignal,
     process: { env: { INTERCEPT_TOKEN: "x".repeat(32), INTERCEPT_ADMIN_TOKEN: "y".repeat(32) } },
   })
   const dependency = new vm.SyntheticModule(["Plugin"], function () {
@@ -132,6 +134,22 @@ test("registered tools dispatch once through Python without duplicate admission"
   await hooks["execute.after"]({ ...event, status: "completed" })
   assert.equal(result.metadata.verification, "NOT_VERIFIED")
   assert.deepEqual(requests.map(r => r.url.split("/").at(-1)), ["catalog", "execute"])
+})
+
+test("registered tools accept executed redaction and alert outcomes", async () => {
+  for (const decision of ["REDACT", "ALERT"]) {
+    let executions = 0
+    const hooks = await harness(async (url) => {
+      if (url.endsWith("catalog")) return response({ tools: [{ name: "write", description: "write", input: { type: "object" } }] })
+      executions++
+      return response({ ...allow, decision, tool_result: { status: "done" } })
+    }, { endpoint: "http://127.0.0.1:8080", registerTools: true, contractId: "contract-1" })
+    const result = await hooks.registered.get("write").execute(event.input, {
+      sessionID: event.sessionID, id: event.id, signal: new AbortController().signal,
+    })
+    assert.equal(executions, 1)
+    assert.equal(result.content, '{"status":"done"}')
+  }
 })
 
 test("operator command binds actual session before forwarding prompt", async () => {

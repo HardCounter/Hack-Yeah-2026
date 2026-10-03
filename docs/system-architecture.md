@@ -1,6 +1,11 @@
 # Monitored Banking Agents: Target System Architecture
 
-Status: **proposed runtime, not yet integrated**. The synthetic generator, simulation tools (`sim/tools/`), synthetic postcondition verifier and standalone [persistence primitives](persistence.md) are implemented. The target design monitors one autonomous **Client Onboarding (KYC)** workflow, intercepted by a synchronous **AI Control Layer** and an independent **Evaluation & Metrics Layer** with sealed ground truth and persisted-state verification. **AML is deferred**, even though the dataset includes AML fixtures.
+Status: **historical target design**. The local KYC integration is implemented and
+tested; see [integrated-runtime.md](integrated-runtime.md) for current execution,
+coverage and limits. Proposed packages, schemas, stack choices and unimplemented
+status notes below describe the earlier design. They do not define another wire
+contract: consumer delivery uses [Event Envelope v2.1](consumer-plane-event-envelope.md).
+**AML is deferred**, even though the dataset includes AML fixtures.
 
 The normative execution/trust requirements are in [architecture-contract.md](architecture-contract.md). That contract resolves older proposals below; stack options are suggestions, not selections. The initial agent-runtime integration is planned for OpenCode only. Its plugin adapter is intended to govern OpenCode-managed tool calls that pass through validated hooks. LLM-provider and MCP proxies are separate optional boundaries; no path is covered merely because it appears in this target diagram. See [application-documentation.md](application-documentation.md) for the OpenCode coverage limits and [use-cases.md](use-cases.md) for the current KYC demo scope.
 
@@ -34,7 +39,7 @@ flowchart LR
     end
 
     subgraph PROXY["AI Control Layer (Proxy)"]
-        LLMP[LLM proxy<br/>(Ollama / vLLM / OpenAI)]
+        LLMP[LLM proxy<br/>(user-provided LLM: own API key or locally hosted, e.g. Ollama / vLLM)]
         TOOLP[Tool proxy<br/>(In-line guardrails)]
         POL[Pinned Policy + Trusted Task Contract<br/>Hard Checks + Selective Semantic Gate]
     end
@@ -283,7 +288,11 @@ The only interface between the simulation/proxy and monitoring. Version it (`sch
 | `human_decision` | Authorized review queue (stub labelled in tests) | Action/contract/policy/state-bound approval reference, reviewer, expiry and decision |
 | `verification_result` | Independent verifier | Status, per-check evidence source, snapshot/verifier version and failed/incomplete invariant IDs |
 
-Examples are illustrative, not an implemented schema. The canonical required envelope is in `architecture-contract.md`; both architecture documents must use that envelope when implemented. Raw prompts and tool results are not persisted by default; an opaque `*_ref` does not make sensitive content safe. Default event fields are allowlisted metadata and bounded sanitized summaries. Verification, semantic assessments and policy/intervention events need explicit records with evidence-source and version references.
+The v1 example and event taxonomy above are obsolete design history. The sole
+consumer wire contract is [Event Envelope v2.1](consumer-plane-event-envelope.md),
+normalized explicitly by Layer 2; independent verification results are persisted
+separately by session. Raw prompts and tool results are excluded by default; an
+opaque reference does not make sensitive content safe.
 
 ---
 

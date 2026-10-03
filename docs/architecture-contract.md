@@ -1,8 +1,10 @@
 # Runtime architecture contract
 
-Status: **required runtime design, not yet integrated or demonstrated**. Standalone
-evidence/outbox primitives exist in `persistence/`; see [persistence.md](persistence.md)
-for their tested boundaries. They do not establish runtime enforcement. This document resolves
+Status: **architectural authority**. The local KYC integration is implemented in
+`simulation/governed.py`; see [integrated-runtime.md](integrated-runtime.md) for
+executable boundaries, tests and limits. Requirements below also cover deferred
+deployment/containment and live semantic features; implementation is not proof
+that every requirement is demonstrated. This document resolves
 the architecture contradictions identified in the October 3 review. It specializes
 [project-direction.md](project-direction.md); competition documents remain unchanged.
 The MVP is **one KYC workflow**. AML, broad provider compatibility, distributed queues,
@@ -27,7 +29,7 @@ The contract is mandatory and immutable, and includes:
 
 The authenticated principal is bound server-side to the contract. Correlation headers are
 trace hints, not authentication or authorization; reject conflicting IDs. The gateway
-allocates action IDs and ordering. Tools receive identity from the gateway, not model-filled
+allocates action IDs. Persistence assigns per-session `seq` at durable commit. Tools receive identity from the gateway, not model-filled
 arguments. The agent cannot register contracts, change modes, grant approvals or reset budgets.
 
 Changing `base_url` alone is **cooperative interception**, not bypass prevention. A contained
@@ -123,9 +125,12 @@ as well as successful calls. Bound queues, retries and retention; pause writes o
 audit failure/backpressure. Unknown outcomes remain unknown until state reconciliation.
 Consumer retries deduplicate by event ID and cannot replay business effects.
 
-Audit envelopes include schema/contract/run/action IDs, authenticated identity, policy/feed
+Internal audit evidence includes schema/contract/run/action IDs, authenticated identity, policy/feed
 versions, intervention/approval references, reserved/actual usage, decision/reason, timestamps,
-semantic assessment metadata, effect receipt ID and verification status. Persist only
+and effect receipt IDs where applicable. Semantic assessment metadata is required when a
+semantic evaluator runs. Consumer delivery uses the metadata projection defined by Event
+Envelope v2.1. Independent verification results are persisted separately by session ID,
+after the session-ended event; they do not rewrite the immutable action evidence. Persist only
 allowlisted sanitized fields. Never retain raw secrets/PII in blobs, exceptions, free-text
 reasons or dashboard excerpts. Hashing a short identifier is not anonymization. Separate
 agent-facing redactions from protected verifier state; any required sensitive baseline is
@@ -139,12 +144,14 @@ arguments, tool receipts alone, event traces or an agent's “done” message. Q
 writes before verification and read a consistent snapshot. Use a disposable database copy
 per run; concurrency tests explicitly share an application to test global uniqueness.
 
-The generator already has `clients.application_id` linkage. Required remaining KYC schema
-additions are a unique non-null application key for created clients; durable decision/effect receipts with action/run IDs;
-server-recorded screening evidence bound to normalized subject, DOB, source/version and time;
-and decision document/registry/UBO provenance. Enforce a unique client per application and
-atomic related account/status writes. `audit_actions` records fake bait execution only;
-its count does not by itself prove KYC correctness or real email/code/network safety.
+The generator provides `clients.application_id` linkage. The local governed runtime adds
+a unique application key, durable effect receipts with action/run IDs, and successful
+screening evidence bound to the baseline subject, source/version and time. The protected
+baseline records document/registry/UBO provenance. These are implemented in the synthetic
+KYC slice; future adapters must preserve the same invariants. Enforce a unique client per
+application and atomic related account/status writes. The governed `audit_actions` projection
+records KYC process evidence; lower-level fixtures also record fake bait execution. Its
+count does not by itself prove KYC correctness or real email/code/network safety.
 
 Verify persisted identity fields against the protected approved baseline, application status,
 expected client/account links, required screening and decision evidence, and client count
@@ -175,7 +182,7 @@ No real external banking-system verification is claimed for this SQLite simulati
 ## 6. Build and acceptance order
 
 Use **uv** with `pyproject.toml` and committed `uv.lock`; Python 3.12 is the development pin,
-and project metadata allows Python >=3.11. Dependencies are currently empty. Add only
+and project metadata allows Python >=3.11. Dependencies are listed in `pyproject.toml`. Add only
 dependencies actually selected for a slice and check licenses; no `requirements.txt` is needed.
 
 1. Mandatory trusted KYC contract, centralized policy and isolated run fixture.

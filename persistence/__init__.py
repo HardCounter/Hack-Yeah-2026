@@ -6,6 +6,8 @@ explicitly best effort. Critical dispatch must await the file-backed store.
 """
 
 from persistence.business import EffectReceipt, record_effect, replicate_effects
+from persistence.governed import GovernedPersistence
+from persistence.adapters.consumer_v21 import to_consumer_v21
 from persistence.models import (
     ActionDetails,
     AuditContext,
@@ -70,6 +72,7 @@ __all__ = [
     "InterceptionMetadata",
     "MaintenanceReport",
     "PersistenceEngine",
+    "GovernedPersistence",
     "PersistenceSettings",
     "PersistenceWorker",
     "ReadScope",
@@ -82,4 +85,5 @@ __all__ = [
     "record_effect",
     "replicate_effects",
     "restore_store",
+    "to_consumer_v21",
 ]

@@ -127,7 +127,7 @@ reads actual state and reports failed `ONB-P2`. (Earlier AML concept `TXM-03` is
 - **Hostile input**: render all payloads as plain text (never HTML), cap input size; a giant paste should hit the
    size limit before allocating model work. Demonstrate token/tool budgets separately.
 - **Honesty**: anything mocked, recorded or sample data is labelled. Never show fake numbers as live.
-- **Warm-up**: load the Ollama model before judging starts.
+- **Warm-up**: make sure the user-provided LLM (own API key or locally hosted model) is reachable and warmed up before judging starts.
 
 ---
 

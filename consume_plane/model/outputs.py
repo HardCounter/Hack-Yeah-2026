@@ -63,20 +63,4 @@ class AdjustmentProposal:
     scope: Literal["session", "agent"] = "session"
 
 
-@dataclass(frozen=True, kw_only=True)
-class PolicyAdjustmentSignal:
-    """Format from docs/application-documentation.md section 4.2, plus provenance fields."""
-    signal_id: str
-    ts: datetime
-    target_scope: Mapping[str, str]
-    action: AdjustmentAction
-    policy_modifications: Mapping[str, Any]
-    reason: str
-    ttl_seconds: int
-    source_plugin: str
-    trigger_event_id: str
-
-    def to_dict(self) -> dict[str, Any]:
-        d = asdict(self)
-        d["ts"] = self.ts.isoformat()
-        return d
+from contracts.feedback import PolicyAdjustmentSignal  # canonical public compatibility import

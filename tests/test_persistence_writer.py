@@ -167,5 +167,10 @@ async def test_append_effect_records_executed_receipt(tmp_path):
     assert envelope.context.effect_receipt_id == "rcpt-001"
     assert envelope.context.action_index == 0
     assert envelope.action_details.name == "create_client"
+    from persistence.adapters.consumer_v21 import to_consumer_v21
+    from consume_plane.model.decode import decode_event
+    recovered = decode_event(to_consumer_v21(await store.get_event("eff-event-1")))
+    assert recovered.payload.side_effect == "irreversible"
+    assert recovered.payload.result is None
 
     await store.close()
