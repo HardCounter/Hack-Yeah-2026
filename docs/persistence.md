@@ -128,3 +128,7 @@ Integration still must establish authenticated contract/policy binding,
 high-impact dispatch sequencing, business-transaction receipts, independent
 verification, retention policy and deployment isolation. Passing these component
 tests does not establish those runtime properties.
+
+The [persistence completion plan](superpowers/plans/2026-10-03-persistence-completion.md)
+defines the remaining work, interfaces, priorities and acceptance tests. It is a
+plan, not a claim that those additions have been implemented.
