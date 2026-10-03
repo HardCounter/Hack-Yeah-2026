@@ -1,26 +1,24 @@
-# Monitored Banking Agents: System Architecture
+# Monitored Banking Agents: Target System Architecture
 
-Status: **proposed, not implemented** apart from the synthetic data generator. The MVP
-monitors one **Client Onboarding (KYC)** workflow, intercepted by a synchronous
-**AI Control Layer** and an independent persisted-state verifier. **AML is deferred**,
-even though the dataset includes AML fixtures. No runtime controls or product tests exist yet.
+Status: **proposed, not implemented** apart from the synthetic data generator and initial simulation tools (`sim/tools/`). The target design monitors one autonomous **Client Onboarding (KYC)** workflow, intercepted by a synchronous **AI Control Layer** and an independent **Evaluation & Metrics Layer** with sealed ground truth and persisted-state verification. **AML is deferred**, even though the dataset includes AML fixtures.
 
-The normative execution/trust requirements are in [architecture-contract.md](architecture-contract.md).
-That contract resolves older proposals below; stack options are suggestions, not selections.
+The normative execution/trust requirements are in [architecture-contract.md](architecture-contract.md). That contract resolves older proposals below; stack options are suggestions, not selections. The initial agent-runtime integration is planned for OpenCode only. Its plugin adapter is intended to govern OpenCode-managed tool calls that pass through validated hooks. LLM-provider and MCP proxies are separate optional boundaries; no path is covered merely because it appears in this target diagram. See [application-documentation.md](application-documentation.md) for the OpenCode coverage limits and [use-cases.md](use-cases.md) for the current KYC demo scope.
 
 ---
 
 ## 1. Design principles
 
-1. **Enforcement is external to agents.** Agents use the gateway; backend credentials, tool implementations and writable state are isolated from them. A base URL alone does not prevent bypass.
-2. **The proxy is the single control and observation point.** Every LLM call and every tool call crosses it synchronously. It enforces policy (ALLOW, BLOCK, REDACT, REQUIRE_APPROVAL, ALERT) before execution.
+1. **Enforcement is external to agents.** Agents use the gateway; backend credentials, tool implementations and writable state are isolated from them. A base URL alone does not prevent bypass. Use explicit integration boundaries (e.g. OpenCode plugin adapter or provider proxy). The agent must not be able to silently bypass a boundary that a deployment claims to enforce.
+2. **The proxy is the single control and observation point.** Coverage is deployment-specific. The initial OpenCode adapter covers only tool executions shown to pass through its validated hooks; a proxy is a single control point only when all relevant traffic is forced through it. It enforces policy (ALLOW, BLOCK, REDACT, REQUIRE_APPROVAL, ALERT) synchronously before execution.
 3. **The monitoring layer is a separate deployable.** It consumes the event stream and shares no code or imports with the monitored agents. The only contract is the event schema (section 6).
-4. **Ground truth must be protected.** The synthetic oracle is generated as `data/ground_truth.json`. Agents receive scoped tool results, not filesystem/SQL access to either data file. Verifier access must be separately read-only.
-5. **Deterministic fixtures are replayable.** Scripted scenarios can be reproducible; live agent and semantic-model results are not deterministic. Replay verification also requires an immutable persisted-state snapshot.
+4. **Ground truth must be protected and sealed.** The synthetic oracle is generated as `data/ground_truth.json`. Agents receive scoped tool results, not filesystem/SQL access to either data file (`data/bank.db` or `data/ground_truth.json`). Only the independent evaluator/verifier reads ground truth and trusted persisted state after a run.
+5. **Deterministic fixtures are replayable.** Scripted scenarios can be reproducible with seeded runs, append-only events, and deterministic scripted faults; live agent and semantic-model results are not deterministic. Replay verification also requires an immutable persisted-state snapshot.
 
 ---
 
 ## 2. System overview
+
+The diagram shows the **full-proxy target deployment**, not current coverage. In the initial OpenCode integration, only tool calls that pass through validated plugin hooks are in scope. A direct provider or MCP route remains uncovered unless that route is separately proxied and bypass paths are constrained.
 
 ```mermaid
 flowchart LR
@@ -29,7 +27,7 @@ flowchart LR
         ORCH[Scenario Runner /<br/>Orchestrator]
         subgraph AGENTS["Monitored Agents"]
             ONB[Client Onboarding<br/>Agent]
-            AML[AML Agent<br/>DEFERRED]
+            AML[AML Agent<br/>(deferred)]
         end
         TOOLS[Tool servers<br/>bank.db SQLite tools<br/>OCR, Sanctions, Registry]
         HQ[Compliance / Human<br/>Review Queue]
@@ -90,10 +88,9 @@ Runs independently of downstream monitoring. Powered by the deterministic mock d
 | Agent | Objective | Key Tools | Authority & Guardrails |
 |---|---|---|---|
 | **Client Onboarding Agent** | Triage and decide onboarding applications (`APP-…`) | `read_application`, `read_documents`, `extract_fields`, `check_registry`, `screen_sanctions`, `compute_risk`, `create_client`, `request_more_docs`, `escalate_edd`, `reject_application` | `create_client` writes to `clients` & `accounts`; requires prior sanctions screening and unexpired docs. |
-| **AML Transaction Monitoring Agent (deferred)** | Future alert investigation (`ALR-…`) | Deferred tools in `docs/use-cases.md` | Not part of the KYC MVP or claimed coverage. |
+| **AML Transaction Monitoring Agent (deferred)** | Future alert investigation (`ALR-…`) | Deferred tools in `docs/use-cases.md` | Future scope: `close_alert`, `file_sar`, `freeze_account` mutate state; `contact_customer` forbidden after SAR filing (anti-tipping-off). Not part of the KYC MVP. |
 
-A planned agent runs against a configured model through the proxy. Model/provider choice is
-not yet implemented. Correlation headers (section 4.3) carry no authorization authority.
+In a full-proxy deployment, agents route model calls through the proxy with correlation headers (section 4.3). For the initial OpenCode integration, tool-hook coverage and provider-proxy coverage are separate; configuring one does not imply the other. Correlation headers carry no authorization authority.
 
 ### 3.3 Tool implementation
 
@@ -104,10 +101,11 @@ Neither tools nor these schema additions are implemented yet.
 
 ### 3.4 Orchestrator / Scenario Runner
 
-Creates trusted immutable Task Contracts, isolates state per run and drives the planned KYC,
-bait and gateway scenarios in `docs/use-cases.md`. Fault injection is test-only and occurs
-before enforcement; an agent cannot enable it. AML scenarios are deferred, and scenario
-tables are not executed test results.
+Creates trusted immutable Task Contracts, isolates state per run, and drives the planned KYC,
+bait, and gateway scenarios (`ONB-01`..`ONB-17`) in `docs/use-cases.md`. Fault injection is
+test-only and occurs before enforcement; an agent cannot enable it. AML scenarios
+(`TXM-01`..`TXM-13`) are deferred, and scenario tables are planned coverage targets,
+not executed test results.
 
 ### 3.5 Human Review Queue (Compliance Desk)
 
@@ -117,25 +115,25 @@ Receives escalations (`escalate_edd`, approval requests) and records human decis
 
 ## 4. Proxy layer
 
-The proxy sits between agents and everything they call. It is the only source of per-call telemetry.
+In a full-proxy deployment, route the relevant agent traffic through the proxy to obtain synchronous enforcement and per-call telemetry. The initial OpenCode adapter does not by itself provide this complete topology; uncovered paths must be identified explicitly.
 
 ### 4.1 LLM proxy
 
-- Exposes an API-compatible endpoint (same request/response shape as the upstream provider), so agents need no code changes beyond `base_url`.
-- Forwards only after hard checks, atomic budget reservation and any required semantic gate.
+- Exposes an API-compatible endpoint (same request/response shape as upstream OpenAI-compatible provider), so agents need no code changes beyond `base_url`.
+- Forwards only after Stage 1 hard checks, atomic budget reservation, and any required selective semantic gate.
 - Buffers responses and inspects outputs before delivery; unchecked streaming is deferred.
-- Records sanitized allowlisted metadata: model/version, usage, latency, status, retries and decisions. No raw prompt/completion or secret-bearing blob retention.
-- Reserves cost/token/compute bounds synchronously from centralized policy, including semantic calls and retries; reconciles actual or conservatively unknown usage.
+- Records sanitized allowlisted metadata: model/version, usage, latency, status, retries, and decisions. Raw prompts/completions are excluded by default; no secret-bearing blob retention.
+- Reserves cost/token bounds synchronously before dispatch from centralized policy; reconciles actual usage post-response.
 
 ### 4.2 Tool proxy
 
-- Fronts all tool servers. Agents call tools through it.
-- Records sanitized tool/action metadata, decision, receipt reference, latency and bytes; raw arguments/results are not general audit evidence.
-- Can enforce permission scopes per agent identity (e.g. Onboarding Agent may not call `freeze_account` or `file_sar`, and AML Agent may not call `contact_customer` after filing a SAR). A denied call is itself an event.
+- Fronts configured tool servers. In a proxy deployment, agents must have no direct route around it for the deployment to claim protocol-level coverage.
+- Records sanitized tool/action metadata, decision, receipt reference, latency, and execution status; raw arguments/results are not general audit evidence.
+- Enforces permission scopes per agent identity (e.g. `onboarding-agent` may not call AML tools or unallowed bait tools). A denied call is recorded as a blocked event.
 
 ### 4.3 Correlation headers
 
-Every agent request includes:
+Every request routed through the full proxy deployment includes:
 
 | Header | Meaning |
 |---|---|
@@ -262,10 +260,11 @@ The only interface between the simulation/proxy and monitoring. Version it (`sch
     "latency_ms": 2310,
     "status": 200,
     "stop_reason": "tool_use",
-    "cost_usd": 0.0116,
     "decision": "ALLOW",
     "reason_code": "checks_passed",
     "reserved_cost_usd": 0.02,
+    "request_ref": null,
+    "response_ref": null,
     "fault_injected": false
   }
 }
@@ -284,11 +283,7 @@ The only interface between the simulation/proxy and monitoring. Version it (`sch
 | `human_decision` | Authorized review queue (stub labelled in tests) | Action/contract/policy/state-bound approval reference, reviewer, expiry and decision |
 | `verification_result` | Independent verifier | Status, per-check evidence source, snapshot/verifier version and failed/incomplete invariant IDs |
 
-Examples are illustrative, not a implemented schema. The canonical required envelope is in
-`architecture-contract.md`; both architecture documents must use that envelope when implemented.
-Only sanitized allowlisted fields are stored/exported. Large raw prompts/results do not go
-to blobs by default. Verification, semantic assessments and policy/intervention events need
-explicit records with evidence-source and version references.
+Examples are illustrative, not an implemented schema. The canonical required envelope is in `architecture-contract.md`; both architecture documents must use that envelope when implemented. Raw prompts and tool results are not persisted by default; an opaque `*_ref` does not make sensitive content safe. Default event fields are allowlisted metadata and bounded sanitized summaries. Verification, semantic assessments and policy/intervention events need explicit records with evidence-source and version references.
 
 ---
 
@@ -350,10 +345,10 @@ ai-control-layer/
 │   ├── ground_truth.json     # Sealed answer key read ONLY by the Outcome Verifier
 │   └── documents/            # Mock applicant OCR files (passports, proof of address)
 ├── sim/                      # Monitored banking simulation (docs/use-cases.md)
-│   ├── agents/               # Planned KYC agent; AML deferred
-│   ├── tools/                # SQLite tool implementations (sanctions, registry, bank ops)
+│   ├── agents/               # OpenCode KYC integration / planned agent runtime; AML deferred
+│   ├── tools/                # Implemented tools (sim/tools/kyc.py, bait.py, registry.py)
 │   ├── human_queue/          # Simulated compliance desk stub
-│   └── orchestrator.py       # Planned trusted contract + KYC scenario driver
+│   └── orchestrator.py       # Planned trusted contract + KYC scenario driver (ONB-01..17); AML deferred
 ├── proxy/                    # Synchronous AI Control Layer (docs/application-documentation.md)
 │   ├── gateway.py            # FastAPI / LiteLLM reverse proxy
 │   ├── policy_engine.py      # In-line auditors: PII, prompt injection, budget, tool permissions
@@ -364,11 +359,12 @@ ai-control-layer/
 ├── monitoring/               # Independent evaluation & dashboard
 │   ├── ingest/               # Event subscriber / worker
 │   ├── store/                # DuckDB / SQLite schema
-│   ├── verifier/             # Independent postcondition checker (ONB-P1..P6; TXM deferred)
+│   ├── verifier/             # Independent postcondition checker (ONB-P1..P6; data/postconditions.py; TXM deferred)
 │   └── dashboard/            # Judge-facing audit ledger UI (docs/dashboard-ui.md)
 ├── tests/                    # Automated self-testing suite (pytest)
-│   ├── test_onboarding.py    # Planned positive/negative KYC and persisted-state tests
-│   └── test_gateway.py       # Planned bait/gateway tests; no AML suite claimed
+│   ├── test_onboarding.py    # Planned KYC positive/negative and persisted-state tests
+│   ├── test_gateway.py       # Planned bait/gateway tests; no AML suite claimed
+│   └── (sim/tools/ tests)    # sim/tools/test_tools.py, data/test_postconditions.py
 └── docker-compose.yml        # Zero-prep local startup
 ```
 
@@ -391,12 +387,17 @@ ai-control-layer/
 
 ## 10. Suggested build order
 
-Follow `architecture-contract.md` section 6: trusted contract and centralized policy first;
-one deterministic KYC gateway-to-persisted-write slice with budgets and durable evidence;
-independent state verifier and positive/negative tests; selective live semantic supervision;
-then a minimal dashboard, approvals and reload demos. The data generator already exists.
-Do not add a second agent before this path is demonstrated. Use **uv** for Python environment,
-dependencies and execution; `pyproject.toml` and `uv.lock` are the current setup evidence.
+Follow `architecture-contract.md` section 6:
+1. **Contract:** write `events.schema.json` and task contract schemas first; centralized policy configuration (`proxy/policy.yaml`).
+2. **Generator & Tools:** seeded mock banking data (`data/generate.py`, `data/rules.py`) with planted faults and sealed ground truth, plus tested deterministic tools (`sim/tools/`).
+3. **Single agent through proxy/adapter:** Client Onboarding Agent (e.g. `ONB-01` baseline) through the OpenCode adapter and gateway, with JSONL/SQLite durable event emitter.
+4. **KYC tool path:** route one KYC side-effecting tool through the OpenCode adapter and deterministic policy before expanding tool coverage; provider/MCP proxies remain separate.
+5. **Monitoring ingest and store:** load sanitized events into local storage and build per-case traces without raw prompt/secret retention.
+6. **Evaluator & Verifier:** independently verify KYC postconditions (`ONB-P1`..`ONB-P6`, implemented in `data/postconditions.py`) against trusted persisted state (`data/bank.db`) and sealed ground truth.
+7. **Dashboard:** audit ledger UI (`docs/dashboard-ui.md`) with Attack Console and trajectory/outcome replay.
+8. **KYC fault injection and policy rules:** run in-scope onboarding scenarios (`ONB-01`..`ONB-17`) with positive and negative controls. AML/TXM work remains deferred.
+
+Use **uv** for Python environment, dependencies, and execution; `pyproject.toml` and `uv.lock` are the current setup evidence.
 
 ---
 

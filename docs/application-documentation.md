@@ -23,7 +23,9 @@ The system operates across three tightly scoped layers connected by asynchronous
 flowchart TB
     subgraph LOCAL_HOST["Local Host / Agent Environment"]
         subgraph AGENT_ENV["Agent Execution Plane"]
-            AGENT["Agentic Loop / Runtime"]
+            AGENT["OpenCode Runtime<br/>(initial planned integration)"]
+            OCADAPTER["OpenCode Plugin Adapter<br/>(tool-execution hooks)"]
+            AGENT <--> OCADAPTER
         end
 
         subgraph LAYER1["Layer 1: Interception Layer (Gateway & Policy Guard)"]
@@ -37,7 +39,14 @@ flowchart TB
 
             ENTRY --> AUDIT_PIPE
             AUDIT_PIPE -- "BLOCK / REJECT" --> ENTRY
+<<<<<<< HEAD
             AUDIT_PIPE -- "ALLOW after required semantic/approval gate + durable intent" --> ROUTER
+=======
+            AUDIT_PIPE -- "ALLOW" --> ROUTER
+            OCADAPTER -- "Tool action" --> AUDIT_PIPE
+            AUDIT_PIPE -- "Decision / approval state" --> OCADAPTER
+            OCADAPTER --> PACKER
+>>>>>>> origin/main
             ROUTER <--> UPSTREAM
             ROUTER --> PACKER
             PACKER --> Q1
@@ -77,8 +86,10 @@ flowchart TB
         FEEDBACK_GEN -. "Audited Restriction/Halt Intervention<br/>(Cannot Relax Pinned Contract)" .-> AUDIT_PIPE
     end
 
-    AGENT <--> ENTRY
+    AGENT <-->|Optional provider/MCP proxy path| ENTRY
 ```
+
+The OpenCode plugin path and the optional HTTP/MCP gateway path are distinct. The plugin sends hooked tool actions to policy and receives a decision; it does not imply that OpenCode provider traffic or all operating-system effects pass through the gateway.
 
 ### Architectural Highlights
 
@@ -129,12 +140,65 @@ sequenceDiagram
     end
 ```
 
-### 2.1 Interception Scope
+The architecture supports three separate interception boundaries; a deployment does not automatically cover all of them:
 
-The gateway intercepts agent actions at three natural boundary interfaces:
-1. **MVP LLM Proxy:** One configured model path with buffered output inspection. OpenAI-compatible shape is proposed; Anthropic and unchecked SSE support are deferred.
-2. **MVP Tool Gateway:** One authenticated tool endpoint/wrapper for scoped KYC and fake bait calls; tests and dashboard use the same path. General MCP support is deferred.
-3. **Containment:** Only the gateway has backend credentials and access to tools/writable data. Network/OS boundaries must deny direct agent access. An in-process wrapper on an unsandboxed agent alone is cooperative, bypassable instrumentation.
+1. **MVP LLM Proxy:** Exposes standard OpenAI (`/v1/chat/completions`) compatible endpoint with buffered output inspection before agent delivery. Anthropic and unchecked SSE streaming are deferred.
+2. **MVP Tool Gateway / OpenCode Plugin Adapter:** An authenticated tool execution endpoint and OpenCode plugin hook adapter for scoped KYC and fake bait calls; tests and dashboard use the same path. Protocol-level MCP proxy is deferred.
+3. **Containment & Egress:** Only the gateway has backend credentials and access to tools/writable data. Network/OS boundaries must deny direct agent access. An in-process wrapper on an unsandboxed agent alone is cooperative, bypassable instrumentation.
+
+#### 2.1.1 Initial Runtime Adapter: OpenCode (Planned)
+
+The OpenCode adapter is the runtime-specific edge of the control layer; policy evaluation and the Task Contract remain in the shared control plane. The first integration will use an OpenCode plugin's `tool.execute.before` and `tool.execute.after` hooks from the [OpenCode plugin API](https://opencode.ai/docs/plugins/), subject to compatibility testing against the pinned OpenCode version. The current development environment reports OpenCode `v2.0.22`; that version has not yet been validated with this adapter.
+
+The enforcement described here applies only to actions that actually pass through the hooked OpenCode tool-execution path. A `bash` call exposes a command string, not a complete mediation point for all subprocess, filesystem, or network effects. Provider traffic needs a separately configured LLM proxy. MCP tools exposed through OpenCode must be checked to confirm the hook executes before their side effect; protocol-level MCP enforcement requires routing them through an MCP proxy. Direct routes, other plugins, or a disabled adapter may bypass these hooks. Where those paths matter, constrain credentials and OS/network access, and report any unmediated path as uncovered rather than claiming comprehensive protection. The [initial coverage inventory and acceptance plan](intercept/opencode-adapter-plan.md) records the planned scope; coverage remains unverified until the listed tests pass.
+
+Before a hooked tool executes, the adapter will normalize its name and proposed arguments, attach trusted run/contract context available to the integration, and synchronously request a decision from the control layer. The shared policy evaluates task-scoped tool permissions, argument constraints, approvals, and run budgets, and returns the policy version used. Budget accounting and hard constraints remain deterministic and centralized; semantic supervision cannot override a deny, missing approval, or exhausted budget. The adapter must enforce hard policy constraints before execution:
+
+- `ALLOW`: continue with the checked action.
+- `BLOCK`: stop the invocation before the tool can run.
+- `REDACT` / `MODIFY`: apply only an explicit policy-produced argument change supported by the OpenCode hook API.
+- `REQUIRE_APPROVAL`: pause until an authorized approval is obtained for the specific action; approval is not an immediate allow.
+
+After execution, the adapter will observe the tool outcome and send a sanitized event to the asynchronous ingestion path. Events should use an allowlist of necessary fields; raw arguments, tool results, authorization headers, and unbounded error text are excluded by default. Apply secret/PII scrubbing and bounded summaries before enqueueing. Policy evaluation remains synchronous; persistence must not delay the decision. The exact hook payload, supported argument mutation, blocking behavior, and any ability to alter results must be verified for the pinned OpenCode version. Do not claim output redaction if a hook can only observe the result; enforce it at a response boundary that supports modification.
+
+Event enqueueing records an observed tool outcome; it is not independent outcome verification. For a workflow with side effects, a separate verifier must query trusted external state, check explicit postconditions (including uniqueness where needed), and distinguish verified success, failed postconditions, and verification that could not be completed.
+
+```mermaid
+sequenceDiagram
+    participant OC as OpenCode runtime
+    participant Adapter as OpenCode plugin adapter
+    participant Policy as Control-layer policy
+    participant Tool as OpenCode tool
+    participant Queue as Async event ingestion
+
+    OC->>Adapter: tool.execute.before(tool, arguments, run context)
+    Adapter->>Policy: Evaluate normalized action against Task Contract
+    Policy-->>Adapter: Decision + policy version
+    alt BLOCK or approval rejected/timed out
+        Adapter-->>OC: Stop execution
+    else REQUIRE_APPROVAL
+        Adapter-->>OC: Hold invocation while approval is pending
+        Adapter->>Policy: Validate authorized approval for this action/version
+        Policy-->>Adapter: Approval granted or denied
+        alt Approval denied
+            Adapter-->>OC: Stop execution
+        else Approval granted
+            Adapter-->>OC: Continue with approved arguments
+            OC->>Tool: Execute tool
+            Tool-->>OC: Result or failure
+            OC->>Adapter: tool.execute.after(outcome)
+            Adapter-->>Queue: Enqueue sanitized action event
+        end
+    else ALLOW or permitted modification
+        Adapter-->>OC: Continue with permitted arguments
+        OC->>Tool: Execute tool
+        Tool-->>OC: Result or failure
+        OC->>Adapter: tool.execute.after(outcome)
+        Adapter-->>Queue: Enqueue sanitized action event
+    end
+```
+
+Other agent runtimes may later use separate adapters to translate their hooks into the shared action and decision contracts. No other runtime adapter is part of the initial implementation scope.
 
 ### 2.2 Synchronous Action Auditing & Pluggable Policies
 
@@ -148,9 +212,17 @@ Execution follows a strict two-stage pipeline:
 Each auditor returns a structured decision:
 - `ALLOW`: The action complies with policies; forward immediately.
 - `BLOCK`: The action violates policy; reject immediately and return a structured error to the agent.
+<<<<<<< HEAD
 - `REDACT`: Sanitize data before forwarding/delivery and revalidate. If a transformation alters approved baseline identity fields or financial amounts, the gateway converts it to a hard `BLOCK`.
 - `REQUIRE_APPROVAL`: Pause with no dispatch. An authorized external reviewer grants a single-use approval bound to contract, action/arguments digest, policy, state version and expiry; recheck hard rules and budget before execution.
 - `ALERT`: Allow the action to proceed, but emit a high-priority warning event to the dashboard and increase session risk score.
+=======
+- `REDACT`: Sanitize sensitive fields (e.g., tokens, PII) in arguments before forwarding.
+- `REQUIRE_APPROVAL`: Pause execution until an external local confirmation is provided.
+- `ALERT`: Emit a high-priority warning and increase session risk score. It is not authorization and never overrides another control; the action proceeds only if the resolved policy otherwise permits it.
+
+The pipeline uses deterministic conflict resolution, not first-match allow: hard `BLOCK` (including exhausted budget) takes precedence over `REQUIRE_APPROVAL`, which takes precedence over `ALLOW`; `ALERT` is additive and never grants permission. Apply configured argument transformations in order, then re-run hard checks against the final payload before execution. Bind approval to the finalized action, run, policy version, and active intervention/overlay version; a changed action or applicable policy overlay invalidates the approval and requires a new decision. Record every auditor decision, including alerts and denials, in sanitized audit evidence.
+>>>>>>> origin/main
 
 #### Dual Plugin Delivery Mechanisms
 Two future trusted plugin modes are proposed, not implemented. Plugin code/config is part
@@ -188,14 +260,11 @@ interception:
 ```
 
 #### Dynamic Configuration Hot-Reloading
-Use **one** centralized policy source (file name to be selected at implementation), including
-the routing/auditor sections illustrated here and versioned signature-feed references.
-Authorized configuration changes are schema-validated and atomically loaded; invalid reloads
-retain the last valid snapshot. New sessions bind to the new content-hashed version. Active
-runs keep their pinned policy and contract. Emergency restrictions/halt require an explicit
-audited intervention, never silent rebinding or authority expansion. Record policy/feed
-versions and intervention IDs on every decision. A trusted revision/new session is required
-for changed authority; stale approvals are invalid. Test both new and existing sessions.
+The policy engine continuously monitors the centralized policy file (e.g. `gateway_config.yaml` / `policy.yaml`) for file modification events (via inotify / file watcher). When configuration files are modified (e.g. judges adjusting thresholds, toggling allowlists, or updating token budgets during evaluation):
+- Updated policies are immediately validated against schemas and swapped in-memory. Invalid or partially written configuration is rejected; the last valid snapshot remains active and a sanitized reload-failure event is emitted.
+- A validated policy snapshot is atomically activated for new runs and new sessions; each in-flight run remains bound to the pinned policy version in its Task Contract.
+- Any authorized emergency tightening for an in-flight run is an explicit, scoped, versioned, monotonic overlay/intervention; it may tighten or pause, but never relax the run's bound hard constraints. Record its issuer, scope, reason, lifetime, and intervention ID. Re-evaluate affected pending actions and invalidate approvals that no longer match the active policy/overlay versions.
+- A `policy_reloaded` event records the old and new content-hashed policy version hashes and activation outcome.
 
 ### 2.3 Backend Routing & Deferred Fallback
 
@@ -378,6 +447,8 @@ To maintain clean separation and make the system truly extendable, all component
 
 ### 5.1 Application Action Event Envelope (Stored in DB & Queues)
 
+This illustrative envelope is not a license to store raw payloads. Persist only allowlisted metadata and sanitized, bounded summaries by default; exclude raw arguments/results, credentials, authorization headers, and unbounded error text unless a separately approved retention policy explicitly permits a redacted form.
+
 ```json
 {
   "schema_version": "proposed-1.0",
@@ -392,19 +463,22 @@ To maintain clean separation and make the system truly extendable, all component
   "case_id": "APP-0001",
   "agent_id": "onboarding-agent",
   "ts": "2026-10-03T15:42:10.500Z",
+  "task_contract_id": "contract_APP0001_v1",
+  "policy_version": "sha256:synthetic-policy-hash",
   "action_type": "tool_call", 
-  "source": "tool_proxy",
+  "source": "opencode_plugin_adapter",
   "status": "completed", 
   
   "action_details": {
     "name": "create_client",
-    "parameters": {
+    "parameters_summary": {
       "application_id": "APP-0001",
-      "name": "Jan Nowak"
+      "sanitized_name": "Jan Nowak"
     },
     "result": {
       "effect_receipt_id": "effect_0001",
       "created_client_id": "CLI-0151",
+      "status": "created",
       "created_at": "2026-10-03T15:42:10Z"
     }
   },
@@ -417,7 +491,7 @@ To maintain clean separation and make the system truly extendable, all component
         "latency_ms": 0.8
       }
     ],
-    "routed_upstream": "mcp-accounting-service",
+    "routed_upstream": null,
     "fallback_triggered": false,
     "interception_overhead_ms": 1.2
   },
@@ -425,7 +499,9 @@ To maintain clean separation and make the system truly extendable, all component
   "metrics": {
     "input_tokens": 450,
     "output_tokens": 85,
-    "latency_ms": 142.5
+    "latency_ms": 142.5,
+    "tool_calls_used": 4,
+    "tool_call_budget": 30
   },
 
   "risk_metadata": {

@@ -107,9 +107,9 @@ Our differentiator. Single-message filters are what every team builds; this show
 
 KYC example: an approved APP-0007 instruction produces a persisted client with the wrong
 legal identity and the agent reports success. The deterministic pre-action ONB-07 test
-should block a proposed substitution. A separate **corrupted-writer test fixture** deliberately
+should block a proposed substitution. A separate **corrupted-writer test fixture** (`CW-01`) deliberately
 persists incorrect state despite valid submitted terms, proving the independent verifier
-reads actual state and reports failed ONB-P2. Do not disable enforcement through the public UI.
+reads actual state and reports failed `ONB-P2`. (Earlier AML concept `TXM-03` is deferred in the current KYC-only scope; use KYC scenarios for the initial live demo). Do not disable enforcement through the public UI.
 
 - Judge clicks **Run scenario**; steps appear one by one on a timeline, each with its own check.
 - Final step stamped `FAILED POSTCONDITIONS — persisted identity mismatch`, with read-only
