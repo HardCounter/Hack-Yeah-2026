@@ -1,5 +1,6 @@
 """Real synthetic SQLite side effects through HTTP, independently read afterward."""
 import asyncio
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -46,7 +47,7 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         return {"session_id": "session-1", "call_id": call, "tool": tool, "arguments": args}
 
     def query(self, sql, *params):
-        with sqlite3.connect(self.db) as con:
+        with closing(sqlite3.connect(self.db)) as con:
             return con.execute(sql, params).fetchall()
 
     async def test_allowed_persisted_once_concurrent_replay_denied(self):
@@ -68,7 +69,7 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.query("SELECT COUNT(*) FROM audit_actions"), [(0,)])
 
     async def test_tool_success_is_not_business_verification(self):
-        with sqlite3.connect(self.db) as con:
+        with closing(sqlite3.connect(self.db)) as con:
             declared = json.loads(con.execute("SELECT declared FROM onboarding_applications WHERE application_id='APP-0001'").fetchone()[0])
         _, result = await self.request(self.proposal("create", tool="create_client",
             extra={"name": declared["name"], "dob": declared["date_of_birth"], "nationality": declared["nationality"]}), path="/v1/tools/execute")
@@ -76,7 +77,7 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["verification"], "NOT_VERIFIED")
         self.assertIn("client_id", result["tool_result"])
         # Deliberately incomplete workflow: no screening. Independent verifier detects it.
-        with sqlite3.connect(self.db) as con:
+        with closing(sqlite3.connect(self.db)) as con:
             checks = verify_onboarding(con, "APP-0001", calls_from_audit(con, "session-1"))
         self.assertTrue(any(c["id"] == "ONB-P1" and c["ok"] is False for c in checks))
 
