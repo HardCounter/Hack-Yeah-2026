@@ -14,5 +14,6 @@ dependencies = []
 dev = ["pytest>=8"]
 
 [tool.pytest.ini_options]
-testpaths = ["data", "sim"]
+testpaths = ["data", "sim", "tests"]
+pythonpath = ["."]
 addopts = "-ra"
