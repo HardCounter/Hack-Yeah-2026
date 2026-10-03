@@ -1,0 +1,11 @@
+[project]
+name = "hack-yeah-2026"
+version = "0.1.0"
+description = "AI Control Layer for Autonomous Agents"
+readme = "README.md"
+authors = [
+    { name = "HardCounter Team" }
+]
+requires-python = ">=3.11"
+dependencies = []
+

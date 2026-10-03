@@ -1,7 +1,7 @@
 ---
 description: Check a design, implementation, or project description against the team's thesis.
 agent: direction-auditor
-subtask: true
+subtask: false
 ---
 
 Review alignment with docs/project-direction.md. Scope or description to review: $ARGUMENTS

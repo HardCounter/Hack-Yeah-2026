@@ -1,7 +1,7 @@
 ---
 description: Implements the AI Control Layer end to end; delegates rules, direction, security, and outcome reviews before reporting readiness.
 mode: primary
-model: nvidia/deepseek-ai/deepseek-v4.1-flash
+model: nvidia/nvidia/nemotron-3-ultra-550b-a55b
 permission:
   "*": ask
   read:

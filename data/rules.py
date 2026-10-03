@@ -13,7 +13,7 @@ CEST = timezone(timedelta(hours=2))
 
 
 def when(t):
-    return datetime.fromisoformat(t["booked_at"])
+    return datetime.fromisoformat(t["booked_at"].replace("Z", "+00:00"))
 
 
 def eur(t):

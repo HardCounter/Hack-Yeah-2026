@@ -13,6 +13,11 @@ Did the correct result exist?  -> independent outcome verification
 This repository currently contains the competition documents, recorded project direction, and OpenCode development/review configuration. Runtime implementation and executable product tests are not present yet.
 
 - [Project direction](docs/project-direction.md)
+- [Monitored banking use cases](docs/use-cases.md)
+- [Mock banking dataset specification](docs/mock-data-spec.md)
+- [System architecture & execution lifecycle](docs/system-architecture.md)
+- [Control Gateway & Interception layer specification](docs/application-documentation.md)
+- [Judge dashboard UI design](docs/dashboard-ui.md)
 - [Technical challenge and criteria](GoldmanSachsCriteria.md)
 - [Competition rules](GoldmanSachsRules.md)
 - [OpenCode agents, NVIDIA setup, and review commands](.opencode/README.md)
