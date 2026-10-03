@@ -14,13 +14,14 @@ jobs:
     steps:
       - run: git config --global init.defaultBranch main  # silences git's hint inside checkout
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: astral-sh/setup-uv@v10
         with:
-          python-version: "3.11"  # minimum from pyproject.toml
-      - run: python -m pip install "pytest>=8"
+          enable-cache: true
+      - name: Install Python (.python-version) and locked dependencies
+        run: uv sync --locked
       - name: Generate dataset (self-checks + determinism)
-        run: python data/generate.py
+        run: uv run python data/generate.py
       - name: Test suite (Ollama test skips itself here)
-        run: python -m pytest
+        run: uv run pytest
       - name: Report renders
-        run: python data/report.py
+        run: uv run python data/report.py
