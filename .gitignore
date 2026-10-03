@@ -844,3 +844,4 @@ FodyWeavers.xsd
 data/bank.db
 data/ground_truth.json
 data/documents/
+data/report.html
