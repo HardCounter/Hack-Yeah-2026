@@ -2,7 +2,7 @@
 
     uv run pytest simulation/test_agent.py
 
-The LLM driver is not tested here (non-deterministic); simulation/tools/test_ollama.py covers the model side.
+The LLM driver is not tested here (non-deterministic).
 """
 import atexit
 import json

@@ -26,7 +26,7 @@ jobs:
         run: uv sync --locked
       - name: Generate dataset (self-checks + determinism)
         run: uv run python data/generate.py
-      - name: Test suite (Ollama test skips itself here)
+      - name: Test suite
         run: uv run pytest
       - name: Report renders
         run: uv run python data/report.py
