@@ -1,7 +1,7 @@
 ---
 description: Reviews architecture, code, README, project descriptions, and pitches for alignment with the Task Contract, trajectory supervision, and independent outcome-verification thesis.
 mode: subagent
-model: nvidia/deepseek-ai/deepseek-v4.1-flash
+model: nvidia/nvidia/nemotron-3-ultra-550b-a55b
 steps: 24
 permission:
   "*": deny

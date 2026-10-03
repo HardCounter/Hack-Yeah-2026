@@ -1,7 +1,7 @@
 ---
 description: Reviews independent persisted-state outcome checks and test coverage for wrong results, duplicates, false success, retries, and policy changes.
 mode: subagent
-model: nvidia/deepseek-ai/deepseek-v4.1-flash
+model: nvidia/nvidia/nemotron-3-ultra-550b-a55b
 steps: 30
 permission:
   "*": deny

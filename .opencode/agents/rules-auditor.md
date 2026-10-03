@@ -1,7 +1,7 @@
 ---
 description: Checks designs, repository evidence, demos, and submissions against Goldman Sachs hackathon rules, technical requirements, and judging criteria.
 mode: subagent
-model: nvidia/deepseek-ai/deepseek-v4.1-flash
+model: nvidia/nvidia/nemotron-3-ultra-550b-a55b
 steps: 24
 permission:
   "*": deny

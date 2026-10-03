@@ -19,23 +19,29 @@ The builder's Task permission explicitly permits only these specialists, not unr
 
 ## NVIDIA Model and Credentials
 
-All six agents and the project default/small model use:
+All six agents and the project default model use:
 
 ```text
-Display: NVIDIA / DeepSeek V4.1 Flash
-OpenCode: nvidia/deepseek-ai/deepseek-v4.1-flash
-NVIDIA API model ID: deepseek-ai/deepseek-v4.1-flash
+Display: NVIDIA / Nemotron 3 Ultra 550B A55B
+OpenCode: nvidia/nvidia/nemotron-3-ultra-550b-a55b
+NVIDIA API model ID: nvidia/nemotron-3-ultra-550b-a55b
 ```
 
-The exact ID was checked on 2026-10-03 using both `opencode models nvidia` and NVIDIA's live `GET https://integrate.api.nvidia.com/v1/models` catalog. The dot in `v4.1` matters. No custom provider or invented model alias is needed: OpenCode has a built-in NVIDIA provider. Catalog presence does not prove your account has inference access or sufficient quota.
+The lightweight `small_model` uses `nvidia/nvidia/nemotron-3.5-lightning-30b-a3b` for title/summary work rather than the larger review model.
+
+Both exact IDs were checked on 2026-10-03 using `opencode models nvidia --refresh` and NVIDIA's live `GET https://integrate.api.nvidia.com/v1/models` catalog. The first `nvidia/` is OpenCode's provider prefix; the second belongs to NVIDIA's API model ID. No custom provider or invented alias is needed. Ultra was selected for the substantive reviews because OpenCode advertises reasoning, tool calls, and a large context window, and a live read-tool smoke test succeeded. Lightning also passed a live response check. These checks establish availability on the tested account, not a comparative benchmark or guaranteed access for every teammate.
+
+The previous DeepSeek configuration was catalog-listed and passed mock orchestration, but the requested live reviewer invocations were cancelled before producing findings. This replacement is backed by live Nemotron checks as well as the local harness; catalog presence alone does not prove successful inference.
 
 1. Obtain an API key from [NVIDIA Build](https://build.nvidia.com/).
 2. In OpenCode, run `/connect`, select NVIDIA, and enter the key. OpenCode stores it outside the project; do not commit it.
 3. Alternatively, export `NVIDIA_API_KEY` securely in the environment that launches OpenCode. A repository `.env` is not required.
-4. Check `/models` or `opencode models nvidia` lists `nvidia/deepseek-ai/deepseek-v4.1-flash`. If your catalog is stale, run `opencode models nvidia --refresh` and check again.
+4. Check `/models` or `opencode models nvidia` lists both configured Nemotron models. If your catalog is stale, run `opencode models nvidia --refresh` and check again.
 5. Quit and restart OpenCode after adding or changing configuration, agents, or commands. The running session retains its already-loaded setup.
 
-The project config intentionally sets `default_agent`, `model`, `small_model`, and disables session sharing. It does not disable other providers or replace your global configuration. Project settings merge with global settings; inspect local overrides if behavior differs. NVIDIA inference receives the context sent to it, so disabled sharing is not a data-residency guarantee. The same model is used consistently to start with; no unsupported ranking of alternative models or provider-specific sampling settings is assumed.
+The project config intentionally sets `default_agent`, `model`, `small_model`, and disables session sharing. It does not disable other providers or replace your global configuration. Project settings merge with global settings; inspect local overrides if behavior differs. NVIDIA inference receives the context sent to it, so disabled sharing is not a data-residency guarantee. No paid-provider fallback, GPU rental, or production NIM deployment is configured.
+
+NVIDIA's Developer Program provides hosted endpoints for free prototyping under its current terms, but the project configuration is not a billing cap. OpenCode's model catalog assigns nonzero token-cost estimates to Ultra, and those estimates appear in telemetry even when using developer access; they do not prove actual charges or free entitlement. Confirm your own NVIDIA account terms/quota before use. Lightning currently has zero catalog cost. See the [official NVIDIA FAQ](https://docs.api.nvidia.com/nim/docs/product) for the development-versus-production distinction.
 
 ## Usage
 

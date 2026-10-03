@@ -1,7 +1,7 @@
 ---
 description: Audits the control layer for interception bypasses, prompt injection, data leakage, approval misuse, policy tampering, and resource-governance failures.
 mode: subagent
-model: nvidia/deepseek-ai/deepseek-v4.1-flash
+model: nvidia/nvidia/nemotron-3-ultra-550b-a55b
 steps: 30
 permission:
   "*": deny

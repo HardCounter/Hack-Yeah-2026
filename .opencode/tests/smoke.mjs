@@ -9,8 +9,9 @@ import { fileURLToPath } from "node:url";
 
 // Keep real user config, credentials, and project data out of the CLI fixture.
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const modelID = "deepseek-ai/deepseek-v4.1-flash";
+const modelID = "nvidia/nemotron-3-ultra-550b-a55b";
 const model = `nvidia/${modelID}`;
+const smallModel = "nvidia/nvidia/nemotron-3.5-lightning-30b-a3b";
 const agents = {
   "control-builder": "primary",
   "control-architect": "all",
@@ -111,7 +112,7 @@ try {
   const config = JSON.parse(await cli(["debug", "config"]));
   assert.equal(config.default_agent, "control-builder");
   assert.equal(config.model, model);
-  assert.equal(config.small_model, model);
+  assert.equal(config.small_model, smallModel);
   assert.equal(config.share, "disabled");
   assert(config.instructions.includes("docs/project-direction.md"));
   for (const [name, target] of Object.entries(commands)) {
