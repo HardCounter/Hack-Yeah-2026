@@ -212,17 +212,11 @@ Execution follows a strict two-stage pipeline:
 Each auditor returns a structured decision:
 - `ALLOW`: The action complies with policies; forward immediately.
 - `BLOCK`: The action violates policy; reject immediately and return a structured error to the agent.
-<<<<<<< HEAD
-- `REDACT`: Sanitize data before forwarding/delivery and revalidate. If a transformation alters approved baseline identity fields or financial amounts, the gateway converts it to a hard `BLOCK`.
+- `REDACT`: Sanitize sensitive fields (e.g., tokens, PII) in arguments before forwarding. If a transformation alters approved baseline identity fields or financial amounts, the gateway converts it to a hard `BLOCK`.
 - `REQUIRE_APPROVAL`: Pause with no dispatch. An authorized external reviewer grants a single-use approval bound to contract, action/arguments digest, policy, state version and expiry; recheck hard rules and budget before execution.
-- `ALERT`: Allow the action to proceed, but emit a high-priority warning event to the dashboard and increase session risk score.
-=======
-- `REDACT`: Sanitize sensitive fields (e.g., tokens, PII) in arguments before forwarding.
-- `REQUIRE_APPROVAL`: Pause execution until an external local confirmation is provided.
 - `ALERT`: Emit a high-priority warning and increase session risk score. It is not authorization and never overrides another control; the action proceeds only if the resolved policy otherwise permits it.
 
 The pipeline uses deterministic conflict resolution, not first-match allow: hard `BLOCK` (including exhausted budget) takes precedence over `REQUIRE_APPROVAL`, which takes precedence over `ALLOW`; `ALERT` is additive and never grants permission. Apply configured argument transformations in order, then re-run hard checks against the final payload before execution. Bind approval to the finalized action, run, policy version, and active intervention/overlay version; a changed action or applicable policy overlay invalidates the approval and requires a new decision. Record every auditor decision, including alerts and denials, in sanitized audit evidence.
->>>>>>> origin/main
 
 #### Dual Plugin Delivery Mechanisms
 Two future trusted plugin modes are proposed, not implemented. Plugin code/config is part
