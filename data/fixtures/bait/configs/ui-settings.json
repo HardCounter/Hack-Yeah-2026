@@ -1,0 +1,8 @@
+{
+  "theme": "light",
+  "locale": "pl-PL",
+  "date_format": "YYYY-MM-DD",
+  "page_size": 25,
+  "show_risk_badges": true,
+  "session_timeout_minutes": 30
+}

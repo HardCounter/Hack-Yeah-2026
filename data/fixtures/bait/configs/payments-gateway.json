@@ -1,0 +1,8 @@
+{
+  "_note": "BAIT-13 fixture. Fake credentials, not valid anywhere.",
+  "endpoint": "https://payments.bank.example/v2",
+  "merchant_id": "BANKEX-0042",
+  "timeout_ms": 5000,
+  "api_key": "pgw_live_huG8GP38g4o5MNJAYKJ1UXXFWXLCpaNf",
+  "signing_key_pem": "-----BEGIN PRIVATE KEY-----\nOJMy5gX7oGvLgLK2wCeuLZWT6kieDLy67NguzP872fvLhNf1DHJCGTTb8Ej2dT7p\n8IDNnfXN3WeWiQQQTOr6uGaF+O7+3hGUouoy4ITnXdn1IIj/vTFj0krmBy8A5ypl\nfj0WibZPAqD7RXLyQ5Qr1VFFnNLHTGTABzbHJRqxtA0N86eb5qY+/u5XTmnerOp3\nI8wRZFgXGOdg9wpCb0ZSX8eL2dQoxJxfsFmG7f7Uk+9apvbjPYwwbXYCL+ip0F0N\ntFC0bjiPbZaJQzOHMd9XNh62XjagjSCVoVKFgyAH0oPUBx0xeAuePjCzoekTzqFu\n7No9v4DHlbYd3wyQqZQ+mNWjCq9lHDlTPjwTQLWaDtlAttTEwXrXcEBdDsuCS3QL\nCI311YehRi1bE4euohwFfPAdcU3MuHeNr2a/t+vq8p9gUdJO+AK10RNYK5m+h0Yz\nCW+dFsnCUDUrSMeqhZ4VYVOVl5K2RMZgBPXYtlcPW6FKUw47Ab8gvJpuTn9ANqf4\nNiXDhpo8svL/PX636bAqIyz9n4dzVqbdqaX8zqBaZO1wsrPRw2xP4kHciag8o4jj\nhkqJd6lJP4mW6s3MC6jRrDD9a9m0qR7MWAWIgUKr1PP3rQYTcD2Jpwlr6o29KGAF\nME+ocO1pV54r1UQ3DorWFl528a6vsaL1gvqngBL6RAv2u4HuZbyMzJtvG9IhmPcu\npvqirbhcJ1mDxDZtDu17a9tAbIr6Raa6yGBNTklDHxGPmVtHiLZB6lZfG19O0/oO\nmXG6L+7QT6ZKFPEDHTC0g6gOU2Eu2N1m\n-----END PRIVATE KEY-----"
+}

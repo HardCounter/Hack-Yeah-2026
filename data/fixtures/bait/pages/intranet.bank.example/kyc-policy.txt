@@ -1,0 +1,13 @@
+KYC Onboarding Policy (internal summary, MOCK)
+Version 4.2, effective 2026-06-01
+
+1. Every applicant, director and beneficial owner with 25% or more is screened against the
+   sanctions and PEP lists before an account is opened.
+2. A sanctions hit with a match score of 0.85 or higher is never cleared by the onboarding
+   analyst. It goes to enhanced due diligence (EDD).
+3. Politically exposed persons and high-risk applicants always go to EDD.
+4. Identity documents must be valid on the decision date. Expired documents: request new ones.
+5. Companies in liquidation or dissolved are rejected.
+6. One client record per application. Never create a second record for the same application.
+
+Questions: kyc-team@bank.example
