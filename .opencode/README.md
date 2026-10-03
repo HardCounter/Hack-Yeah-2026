@@ -19,7 +19,7 @@ The builder's Task permission explicitly permits only these specialists, not unr
 
 ## NVIDIA Model and Credentials
 
-All six agents and the project default model use:
+The builder, architect, and project default model use:
 
 ```text
 Display: NVIDIA / Nemotron 3 Ultra 550B A55B
@@ -27,9 +27,15 @@ OpenCode: nvidia/nvidia/nemotron-3-ultra-550b-a55b
 NVIDIA API model ID: nvidia/nemotron-3-ultra-550b-a55b
 ```
 
-The lightweight `small_model` uses `nvidia/nvidia/nemotron-3.5-lightning-30b-a3b` for title/summary work rather than the larger review model.
+The four auditors and lightweight `small_model` use:
 
-Both exact IDs were checked on 2026-10-03 using `opencode models nvidia --refresh` and NVIDIA's live `GET https://integrate.api.nvidia.com/v1/models` catalog. The first `nvidia/` is OpenCode's provider prefix; the second belongs to NVIDIA's API model ID. No custom provider or invented alias is needed. Ultra was selected for the substantive reviews because OpenCode advertises reasoning, tool calls, and a large context window, and a live read-tool smoke test succeeded. Lightning also passed a live response check. These checks establish availability on the tested account, not a comparative benchmark or guaranteed access for every teammate.
+```text
+Display: NVIDIA / Nemotron 3.5 Lightning 30B A3B
+OpenCode: nvidia/nvidia/nemotron-3.5-lightning-30b-a3b
+NVIDIA API model ID: nvidia/nemotron-3.5-lightning-30b-a3b
+```
+
+Both exact IDs were checked on 2026-10-03 using `opencode models nvidia --refresh` and NVIDIA's live `GET https://integrate.api.nvidia.com/v1/models` catalog. The first `nvidia/` is OpenCode's provider prefix; the second belongs to NVIDIA's API model ID. No custom provider or invented alias is needed. Ultra passed a live read-tool smoke test and remains available for deeper implementation/design work. Lightning completed a full rules review of the pinned Architecture documents in 109 seconds, whereas the Ultra rules run exceeded a 300-second deadline; this is a practical selection observation, not a controlled quality or latency benchmark. Both models advertise tool calls and reasoning. These checks establish availability on the tested account, not guaranteed access for every teammate.
 
 The previous DeepSeek configuration was catalog-listed and passed mock orchestration, but the requested live reviewer invocations were cancelled before producing findings. This replacement is backed by live Nemotron checks as well as the local harness; catalog presence alone does not prove successful inference.
 
@@ -69,12 +75,16 @@ Arguments are optional scopes or questions. The four specialist commands use `su
 Use a new session for an isolated standalone review. These direct commands share the current conversation context and may update its active agent; select the builder again before implementation. Do not use plain `opencode run --agent rules-auditor`: subagent-only agents are rejected by that CLI selector and fall back to the default agent. Use the specialist command instead:
 
 ```sh
-opencode run --command review-rules "Architecture.md and Observability layer.md"
-opencode run --command review-direction "Architecture.md and Observability layer.md"
-opencode run --command review-outcomes "Architecture.md and Observability layer.md"
+opencode run --command review-rules "docs/system-architecture.md and docs/application-documentation.md"
+opencode run --command review-direction "docs/system-architecture.md and docs/application-documentation.md"
+opencode run --command review-outcomes "docs/system-architecture.md and docs/application-documentation.md"
 ```
 
 Normal builder delegation and `@auditor` invocations still use child Task sessions. `/review-project` runs the architect in the main session and intentionally collects/consolidates four child auditor results. It is not a subtask because OpenCode's default nesting depth prevents subagents from spawning further subagents. A delegated architect should perform its own bounded design review rather than rely on nested delegation.
+
+For a deliberately deeper review, opt into Ultra with `opencode run --command review-rules --model nvidia/nvidia/nemotron-3-ultra-550b-a55b "your scope"`. It can be substantially slower; there is no automatic fallback or extra parent pass.
+
+The four auditors set `options.max_tokens: 4096`, verified on the NVIDIA OpenAI-compatible transport, and default to reports under 800 words. This caps each generated response, not total session tokens, number of calls, or wall-clock time. The `steps` setting encourages finishing but is not a hard wall-clock or loop bound in OpenCode 1.18.34. Large reviews still incur upstream inference latency; a timeout or `length` stop is incomplete evidence, not a successful review.
 
 Use ordinary paths/questions as command arguments. OpenCode preprocesses shell-injection syntax and `@file` references in command templates, including expanded arguments, before reviewer tool execution. Do not pass shell-injection syntax or sensitive file references as scope text. Reviewer permissions do not sanitize command preprocessing or user-supplied attachments.
 
@@ -98,7 +108,7 @@ An automated harness is available with Node.js 22+ and OpenCode installed:
 node .opencode/tests/smoke.mjs
 ```
 
-It copies only the configuration and instruction documents into a disposable Git fixture, uses temporary HOME/XDG paths and a clean child-process environment, and redirects inference to a scripted loopback-only OpenAI-compatible endpoint. It checks loading, effective modes/permissions and shared instructions. Each specialist command is tested from both builder and architect: exactly one auditor session, a completed read followed by its final answer, zero child Tasks, and zero parent-model requests. Builder delegation and `/review-project` are separately checked for completed Tasks linked to distinct child sessions and final parent responses. This catches the redundant-parent regression instead of scripting the parent to finish politely. It never needs a real API key or sends model requests to NVIDIA. This validates configuration and tool orchestration, not model quality, authenticated NVIDIA access, or product-runtime enforcement. The fixture is removed on normal completion and caught failures; forcibly interrupting the process can leave temporary artifacts. This isolation is not an OS-level filesystem/network sandbox; the harness refuses to run if macOS managed-preference storage is present because that may introduce configuration outside temporary HOME.
+It copies only the configuration and instruction documents into a disposable Git fixture, uses temporary HOME/XDG paths and a clean child-process environment, and redirects inference to a scripted loopback-only OpenAI-compatible endpoint. It checks loading, effective modes/permissions, shared instructions, and the reviewer output cap on actual provider request bodies. Each specialist command is tested from both builder and architect: exactly one auditor session, a completed read followed by its final answer, zero child Tasks, and zero parent-model requests. Builder delegation and `/review-project` are separately checked for completed Tasks linked to distinct child sessions and final parent responses. This catches the redundant-parent regression instead of scripting the parent to finish politely. It never needs a real API key or sends model requests to NVIDIA. This validates configuration and tool orchestration, not model quality, authenticated NVIDIA access, or product-runtime enforcement. The fixture is removed on normal completion and caught failures; forcibly interrupting the process can leave temporary artifacts. This isolation is not an OS-level filesystem/network sandbox; the harness refuses to run if macOS managed-preference storage is present because that may introduce configuration outside temporary HOME.
 
 ## References
 

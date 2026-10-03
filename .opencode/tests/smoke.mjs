@@ -11,7 +11,8 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const modelID = "nvidia/nemotron-3-ultra-550b-a55b";
 const model = `nvidia/${modelID}`;
-const smallModel = "nvidia/nvidia/nemotron-3.5-lightning-30b-a3b";
+const reviewerModelID = "nvidia/nemotron-3.5-lightning-30b-a3b";
+const smallModel = `nvidia/${reviewerModelID}`;
 const agents = {
   "control-builder": "primary",
   "control-architect": "all",
@@ -123,7 +124,8 @@ try {
   for (const [name, mode] of Object.entries(agents)) {
     const agent = JSON.parse(await cli(["debug", "agent", name]));
     assert.equal(agent.mode, mode);
-    assert.deepEqual(agent.model, { providerID: "nvidia", modelID });
+    assert.deepEqual(agent.model, { providerID: "nvidia", modelID: mode === "subagent" ? reviewerModelID : modelID });
+    if (mode === "subagent") assert.equal(agent.options.max_tokens, 4096);
     assert.equal(permission(agent, "read", path.join(fixture, "AGENTS.md")), "allow");
     for (const secret of [".env", ".env.local", "private.pem", "private.key", "auth.json"]) {
       assert.equal(permission(agent, "read", path.join(fixture, secret)), "deny", `${name}: ${secret}`);
@@ -147,11 +149,12 @@ try {
       let body = "";
       for await (const chunk of request) body += chunk;
       const input = JSON.parse(body);
-      assert.equal(input.model, modelID);
       assert.equal(input.stream, true);
       const system = input.messages.filter((message) => message.role === "system").map((message) => message.content).join("\n");
       const name = Object.keys(signatures).find((agent) => system.includes(signatures[agent]));
       assert(name, "Request must include a known agent prompt");
+      assert.equal(input.model, auditors.includes(name) ? reviewerModelID : modelID);
+      if (auditors.includes(name)) assert.equal(input.max_tokens, 4096, "Reviewer output cap must reach the provider request");
       if (scenario.direct) assert.equal(name, scenario.parent, "Specialist commands must not invoke a parent model");
       assert(system.includes("# Project Instructions"), "AGENTS.md must be loaded");
       assert(system.includes("# AI Control Layer: Project Direction"), "Configured direction must be loaded");
@@ -203,7 +206,7 @@ try {
       }
       const id = `chatcmpl_${name}`;
       response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
-      const send = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created: 1, model: modelID, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
+      const send = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created: 1, model: input.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
       if (calls) {
         send({ role: "assistant", tool_calls: calls });
         send({}, "tool_calls");
@@ -227,9 +230,9 @@ try {
       nvidia: {
         npm: "@ai-sdk/openai-compatible",
         env: [],
-        whitelist: [modelID],
+        whitelist: [modelID, reviewerModelID],
         options: { baseURL: `http://127.0.0.1:${server.address().port}/v1`, apiKey: "synthetic-smoke-only", timeout: 10000 },
-        models: { [modelID]: { name: "Scripted Local Harness", tool_call: true, reasoning: false, interleaved: false, limit: { context: 131072, output: 4096 } } },
+        models: Object.fromEntries([modelID, reviewerModelID].map((id) => [id, { name: "Scripted Local Harness", tool_call: true, reasoning: false, interleaved: false, limit: { context: 131072, output: 4096 } }])),
       },
     },
   });

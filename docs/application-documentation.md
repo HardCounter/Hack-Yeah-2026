@@ -323,14 +323,14 @@ This architecture introduces a **closed-loop feedback mechanism**:
   "signal_id": "sig_01J9ZK49B...",
   "ts": "2026-10-03T15:45:00.120Z",
   "target_scope": {
-    "session_id": "session_trade_execution_981",
-    "agent_id": "execution_agent_v2"
+    "session_id": "sess_onboarding_APP0001",
+    "agent_id": "client_onboarding_agent"
   },
   "action": "ESCALATE_POLICY",
   "policy_modifications": {
     "strict_mode": true,
-    "require_approval_for": ["execute_trade", "transfer_funds"],
-    "blocked_tools": ["shell_exec", "eval_code"]
+    "require_approval_for": ["create_client", "freeze_account", "file_sar"],
+    "blocked_tools": ["shell_exec", "eval_code", "contact_customer"]
   },
   "reason": "Anomalous tool call velocity detected (5 attempts in 2 seconds) with parameter drift.",
   "ttl_seconds": 600
@@ -350,23 +350,23 @@ To maintain clean separation and make the system truly extendable, all component
   "schema_version": "2.0",
   "event_id": "evt_01J9ZK3Q8W2M5N7R4T6V8X0Y1A",
   "trace_id": "tr_4bf92f3577b34da6a3ce929d0e0e4736",
-  "session_id": "sess_reconcile_0042",
-  "agent_id": "financial_reconciler",
+  "session_id": "sess_aml_ALR0002",
+  "case_id": "ALR-0002",
+  "agent_id": "aml_monitoring_agent",
   "ts": "2026-10-03T15:42:10.500Z",
   "action_type": "tool_call", 
-  "source": "mcp_proxy",
+  "source": "tool_proxy",
   "status": "completed", 
   
   "action_details": {
-    "name": "adjust_ledger_balance",
+    "name": "freeze_account",
     "parameters": {
-      "account_id": "ACC-9921",
-      "adjustment_cents": 125000,
-      "reason": "Variance reconciliation"
+      "account_id": "ACC-0042",
+      "reason": "Suspicious structuring alert ALR-0002 confirmed"
     },
     "result": {
       "success": true,
-      "ledger_entry_id": "LED-55102"
+      "frozen_at": "2026-10-03T15:42:10Z"
     }
   },
 
@@ -459,6 +459,19 @@ class ConsumerModule(Protocol):
         """Flush state and cleanup resources."""
         ...
 ```
+
+### 5.4 Gateway-Dashboard API Contract (for Judge UI)
+
+To power the judge-facing audit ledger UI defined in `docs/dashboard-ui.md`, the Gateway exposes the following lightweight HTTP/SSE endpoints:
+
+| Endpoint | Method | Purpose | Payload / Response |
+|---|---|---|---|
+| `/api/v1/inspect` | `POST` | **Attack Console**: Evaluates user prompts or tool calls synchronously against active rules. | **Req**: `{"prompt": "...", "strictness": "strict", "agent_id": "..."}`<br/>**Res**: `{"verdict": "BLOCKED"\|"REDACTED"\|"ALLOWED", "pipeline": [{"step": "01 auth", "status": "pass", "latency_ms": 0.2}, {"step": "02 PII", "status": "REDACT", "latency_ms": 0.6, "matches": ["PESEL"]}], "sanitized_prompt": "...", "model_response": "..."}` |
+| `/api/v1/events/stream` | `GET` | **Live Feed**: Server-Sent Events (SSE) streaming decisions in real-time. | `data: {"event_id": "...", "ts": "...", "verdict": "BLOCKED", "rule": "R-SANCTIONS", "excerpt": "...", "latency_ms": 1.2}` |
+| `/api/v1/policy` | `GET` | **Policy Inspector**: Returns current policy version, loaded rules, and strictness mode. | `{"version": "v12", "mode": "strict", "rules_count": 18, "last_reloaded": "..."}` |
+| `/api/v1/policy/mode` | `POST` | **Strictness Toggle**: Dynamically switches active policy mode without restarting the gateway. | **Req**: `{"mode": "lenient"\|"standard"\|"strict"}`<br/>**Res**: `{"status": "ok", "active_mode": "strict", "version": "v13"}` |
+| `/api/v1/suite/status` | `GET` | **Test Suite Strip**: Returns summary of the 28 automated test scenarios. | `{"total": 28, "passed": 28, "false_positives": 0, "categories": {"pii": "pass", "injection": "pass", "budget": "pass", "trajectory": "pass", "outcome": "pass"}}` |
+| `/api/v1/scenario/replay` | `POST` | **Outcome Replay**: Replays recorded agent run (e.g. `TXM-03` alert close) and evaluates postconditions live. | **Req**: `{"scenario_id": "TXM-03"}`<br/>**Res**: `{"steps": [...], "outcome_verdict": "BLOCKED — outcome mismatch", "postcondition_failed": "TXM-P1", "evidence": "Structuring rule R-2 still fires on ground truth"}` |
 
 ---
 
