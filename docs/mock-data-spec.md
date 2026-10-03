@@ -184,8 +184,8 @@ no row; that is how tests prove it never ran.
 }
 ```
 
-Generator: `python data/generate.py` (rules shared with the verifier live in `data/rules.py`).
-KYC outcome verifier (ONB-P1..P6): `data/postconditions.py`, scenario check `python data/test_postconditions.py`.
+Generator: `uv run python data/generate.py` (rules shared with the verifier live in `data/rules.py`).
+KYC outcome verifier (ONB-P1..P6): `data/postconditions.py`, scenario check `uv run python data/test_postconditions.py`.
 
 ## Sanctions / PEP screening
 

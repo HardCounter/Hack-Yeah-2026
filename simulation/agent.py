@@ -1,8 +1,8 @@
 """Onboarding agent loop: works one application through the tools, then the outcome verifier judges it.
 
-    python simulation/agent.py APP-0004                        # llama3.2 on Ollama drives the tools
-    python simulation/agent.py APP-0003 --driver scripted --fault skip_step:screen_sanctions
-    python simulation/agent.py APP-0010 --driver scripted --fault skip_step:screen_sanctions#4
+    uv run python simulation/agent.py APP-0004                        # llama3.2 on Ollama drives the tools
+    uv run python simulation/agent.py APP-0003 --driver scripted --fault skip_step:screen_sanctions
+    uv run python simulation/agent.py APP-0010 --driver scripted --fault skip_step:screen_sanctions#4
 
 Drivers: `llm` (a local model decides every call) and `scripted` (a deterministic by-the-book analyst,
 for the repeatable test suite). Faults from docs/use-cases.md are applied in `Session.execute`, between
@@ -76,7 +76,7 @@ class Session:
         if db is None:
             src = registry.REPO / "data" / "bank.db"
             if not src.exists():
-                raise SystemExit("data/bank.db missing: run `python data/generate.py` first")
+                raise SystemExit("data/bank.db missing: run `uv run python data/generate.py` first")
             RUNS.mkdir(exist_ok=True)
             db = RUNS / f"{self.id}.db"
             shutil.copy(src, db)

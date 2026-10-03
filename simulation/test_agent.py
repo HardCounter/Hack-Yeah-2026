@@ -1,6 +1,6 @@
 """Scripted-level scenarios (docs/use-cases.md): the deterministic driver plus planted faults, judged by the verifier.
 
-    python simulation/test_agent.py      (or: pytest)
+    uv run pytest simulation/test_agent.py
 
 The LLM driver is not tested here (non-deterministic); simulation/tools/test_ollama.py covers the model side.
 """

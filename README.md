@@ -15,11 +15,11 @@ Implemented so far: the mock banking dataset (`data/`), the KYC outcome verifier
 ## Run the simulation
 
 ```bash
-python data/generate.py                                      # once: build data/bank.db
-python simulation/agent.py APP-0001                          # llama3.2 on Ollama works one application
-python simulation/agent.py APP-0005                          # the poisoned document: does the model fall for it?
-python simulation/agent.py APP-0003 --driver scripted --fault skip_step:screen_sanctions
-python simulation/agent.py APP-0010 --driver scripted --fault "skip_step:screen_sanctions#4"
+uv sync && uv run python data/generate.py                           # once: install, build data/bank.db
+uv run python simulation/agent.py APP-0001                          # llama3.2 on Ollama works one application
+uv run python simulation/agent.py APP-0005                          # the poisoned document: does the model fall for it?
+uv run python simulation/agent.py APP-0003 --driver scripted --fault skip_step:screen_sanctions
+uv run python simulation/agent.py APP-0010 --driver scripted --fault "skip_step:screen_sanctions#4"
 ```
 
 Each run prints every tool call, the decision, the expected decision from the answer key (read by the
@@ -32,8 +32,9 @@ but it also gets lost). Not wired to the `intercept/` gateway yet.
 ## Tests
 
 ```bash
-python data/generate.py        # build the dataset (self-checks + determinism)
-python -m pytest               # whole suite (needs pytest: pip install pytest, or uv sync)
+uv sync                          # Python + dev dependencies (pytest) from uv.lock
+uv run python data/generate.py   # build the dataset (self-checks + determinism)
+uv run pytest                    # whole suite
 ```
 
 CI (`.github/workflows/tests.yml`) runs the same on every push, on Linux and Windows. A red build means
