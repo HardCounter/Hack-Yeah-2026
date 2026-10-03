@@ -24,8 +24,10 @@ something broke; fix it before building on top. `sim/tools/test_ollama.py` talks
 (`ollama pull llama3.2`) and skips itself when Ollama is not running, as in CI.
 
 Add a test with every change: a `test_*` function next to the code it checks (`data/`, `sim/`).
+This repository contains competition documents, project direction, development/review configuration, simulated banking tools, and an initial Python asyncio interception service with an opt-in OpenCode V2 JavaScript adapter. The initial interception Python tests and JavaScript callback-harness tests pass; live OpenCode enforcement and complete architecture coverage are not demonstrated. See the [implementation status and limitations](docs/intercept/implementation-status.md).
 
 - [Project direction](docs/project-direction.md)
+- [Implementation stack: Python asyncio and uv](docs/stack.md)
 - [Monitored banking use cases](docs/use-cases.md)
 - [Mock banking dataset specification](docs/mock-data-spec.md)
 - [System architecture & execution lifecycle](docs/system-architecture.md)
