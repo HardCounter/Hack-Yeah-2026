@@ -847,3 +847,6 @@ data/bank.db-shm
 data/ground_truth.json
 data/documents/
 data/report.html
+
+# consume plane outputs
+runs/

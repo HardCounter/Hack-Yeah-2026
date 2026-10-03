@@ -7,11 +7,15 @@ authors = [
     { name = "HardCounter Team" }
 ]
 requires-python = ">=3.11"
-dependencies = []
-
+dependencies = [
+    "pyyaml>=6.0.3",
+]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=9.1.1",
+]
+
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+pythonpath = ["."]
