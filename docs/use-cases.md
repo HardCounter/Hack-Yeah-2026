@@ -1,8 +1,12 @@
 # Use cases: monitored banking agent
 
-One agentic pipeline that we build as the *monitored* system: **client onboarding (KYC)**. The
-agent is expected to make mistakes (and get attacked). The AI Control Layer intercepts every LLM
-call and tool call, decides allow / redact / block / require_approval, and signals onward.
+One agentic pipeline is in scope for the monitored-system demo: **client onboarding (KYC)**. This
+file specifies intended scenarios and controls; it is not evidence that a runtime or end-to-end
+interception path already exists. The initial runtime integration is planned for OpenCode: its
+plugin adapter will govern tool calls only when they pass through validated OpenCode hooks. LLM
+requests require a separately configured provider proxy, and MCP protocol coverage requires a
+proxy with no direct route around it. Shell command observation does not mediate every OS/network
+side effect.
 
 **Decision (2026-10-03):** we build KYC only. The agent gets the ten KYC tools plus six **bait
 tools** that exist only to trigger the controls the KYC flow does not reach. Everything is driven
@@ -17,8 +21,11 @@ are fixed there.
 ## Shared design
 
 ### Agent runtime
-- One small agent loop with tool calling. All model traffic goes through the gateway
-  (OpenAI-compatible endpoint); all tool calls go through the gateway's tool wrapper.
+- Initial runtime adapter: OpenCode plugin hooks for tool execution. Verify hook coverage per tool
+  before counting a path as intercepted; keep provider and MCP proxy coverage separate.
+- The gateway-driven test harness may call the same tool registry directly for deterministic
+  policy tests. This is a test integration path, not proof that OpenCode or all model traffic is
+  intercepted.
 - Tools are plain Python functions over `data/bank.db` (SQLite).
 - The agent never sees `ground_truth` tables. Only the outcome verifier does.
 

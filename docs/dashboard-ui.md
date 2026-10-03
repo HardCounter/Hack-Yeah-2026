@@ -95,9 +95,11 @@ Must work at 13" laptop width and degrade to a single column on a phone.
 ### 2. Agent said done. Was it? (trajectory / outcome)
 Our differentiator. Single-message filters are what every team builds; this shows a whole agent run.
 
-Example, `TXM-03` (see [use-cases.md](use-cases.md)): the AML agent closes real structuring alert `ALR-0002` as a
-false positive and reports success. Every tool call is individually authorized. The outcome verifier re-runs
-the rule on ground truth, it still fires, postcondition `TXM-P1` fails, the close is blocked.
+Example, `TXM-03` (see [use-cases.md](use-cases.md)): the future AML agent closes real structuring alert `ALR-0002` as a
+false positive and reports success. In the intended scenario, each tool call passes its per-call authorization checks. The outcome verifier re-runs
+the rule on ground truth, it still fires, postcondition `TXM-P1` fails, and the close is blocked. **AML is
+deferred in the current KYC-only scope**; use a KYC scenario such as `ONB-07` for the initial live demo unless
+the team explicitly reopens AML scope.
 
 - Judge clicks **Run scenario**; steps appear one by one on a timeline, each with its own check.
 - Final step stamped `BLOCKED — outcome mismatch` with the evidence.

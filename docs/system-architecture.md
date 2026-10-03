@@ -1,20 +1,24 @@
-# Monitored Banking Agents: System Architecture
+# Monitored Banking Agents: Target System Architecture
 
-A simulated banking environment running autonomous agents (**Client Onboarding** and **AML Transaction Monitoring**), intercepted by a synchronous **AI Control Layer** (LLM & Tool Proxy) and an independent **Evaluation & Metrics Layer** with sealed ground truth.
+Target design for a simulated banking environment with an autonomous **Client Onboarding** agent, a synchronous **AI Control Layer**, and an independent **Evaluation & Metrics Layer** with sealed ground truth. This architecture is not evidence that the runtime components or complete proxy paths are implemented.
+
+The initial agent-runtime integration is planned for OpenCode only. Its plugin adapter is intended to govern OpenCode-managed tool calls that pass through validated hooks. LLM-provider and MCP proxies are separate optional boundaries; no path is covered merely because it appears in this target diagram. See [application-documentation.md](application-documentation.md) for the OpenCode coverage limits and [use-cases.md](use-cases.md) for the current KYC demo scope.
 
 ---
 
 ## 1. Design principles
 
-1. **Agents are unaware of monitoring.** They only know a base URL (the control proxy). No guardrail or tracing code lives inside agent code.
-2. **The proxy is the single control and observation point.** Every LLM call and every tool call crosses it synchronously. It enforces policy (ALLOW, BLOCK, REDACT, REQUIRE_APPROVAL, ALERT) before execution.
+1. **Use explicit integration boundaries.** The initial OpenCode plugin is a runtime adapter; separate provider/MCP proxies are needed for those protocol paths. The agent must not be able to silently bypass a boundary that a deployment claims to enforce.
+2. **Coverage is deployment-specific.** A proxy is a single control and observation point only when all relevant traffic is forced through it. The initial OpenCode adapter covers only tool executions shown to pass through its validated hooks; it does not by itself intercept every LLM request, shell effect, or network call.
 3. **The monitoring layer is a separate deployable.** It consumes the event stream and shares no code or imports with the monitored agents. The only contract is the event schema (section 6).
 4. **Ground truth is sealed.** The simulator knows which faults, injections, and anomalies exist (`data/ground_truth.json`). Agents only see `data/bank.db`. Only the evaluator reads ground truth, after a run.
-5. **Everything is replayable.** Runs are seeded, events are append-only, and test scenarios run deterministically with scripted faults.
+5. **Replayability is a target.** The planned simulation uses seeded runs, append-only events, and deterministic scripted faults; these are not implemented product capabilities yet.
 
 ---
 
 ## 2. System overview
+
+The diagram shows the **full-proxy target deployment**, not current coverage. In the initial OpenCode integration, only tool calls that pass through validated plugin hooks are in scope. A direct provider or MCP route remains uncovered unless that route is separately proxied and bypass paths are constrained.
 
 ```mermaid
 flowchart LR
@@ -23,7 +27,7 @@ flowchart LR
         ORCH[Scenario Runner /<br/>Orchestrator]
         subgraph AGENTS["Monitored Agents"]
             ONB[Client Onboarding<br/>Agent]
-            AML[AML Transaction<br/>Monitoring Agent]
+            AML[AML Transaction<br/>Monitoring Agent<br/>(deferred)]
         end
         TOOLS[Tool servers<br/>bank.db SQLite tools<br/>OCR, Sanctions, Registry]
         HQ[Compliance / Human<br/>Review Queue]
@@ -81,9 +85,9 @@ Runs independently of downstream monitoring. Powered by the deterministic mock d
 | Agent | Objective | Key Tools | Authority & Guardrails |
 |---|---|---|---|
 | **Client Onboarding Agent** | Triage and decide onboarding applications (`APP-…`) | `read_application`, `read_documents`, `extract_fields`, `check_registry`, `screen_sanctions`, `compute_risk`, `create_client`, `request_more_docs`, `escalate_edd`, `reject_application` | `create_client` writes to `clients` & `accounts`; requires prior sanctions screening and unexpired docs. |
-| **AML Transaction Monitoring Agent** | Investigate and dispose AML alerts (`ALR-…`) | `get_alert`, `get_transactions`, `get_customer_profile`, `get_counterparty_info`, `close_alert`, `file_sar`, `freeze_account`, `contact_customer` | `close_alert`, `file_sar`, `freeze_account` mutate state; `contact_customer` forbidden after SAR filing (anti-tipping-off). |
+| **AML Transaction Monitoring Agent (deferred)** | Future investigation and disposition of AML alerts (`ALR-…`) | `get_alert`, `get_transactions`, `get_customer_profile`, `get_counterparty_info`, `close_alert`, `file_sar`, `freeze_account`, `contact_customer` | Future scope: `close_alert`, `file_sar`, `freeze_account` mutate state; `contact_customer` forbidden after SAR filing (anti-tipping-off). |
 
-Agents run against Ollama using tool calling, configured with `base_url = <proxy>`. Each request carries correlation headers (section 4.3).
+In the full-proxy target deployment, agents use Ollama with `base_url = <proxy>` and each request carries correlation headers (section 4.3). For the initial OpenCode integration, tool-hook coverage and provider-proxy coverage are separate; configuring one does not imply the other.
 
 ### 3.3 Tool implementation
 
@@ -91,7 +95,7 @@ Plain Python functions executing over `data/bank.db` (SQLite). Actions with side
 
 ### 3.4 Orchestrator / Scenario Runner
 
-Drives the 28 evaluation scenarios (`ONB-01`..`ONB-15`, `TXM-01`..`TXM-13`), sets `run_id` and `case_id`, attaches Task Contracts, and enables scripted faults for automated testing.
+For the current KYC-only demo, the planned runner drives `ONB-01`..`ONB-15`, sets `run_id` and `case_id`, attaches Task Contracts, and enables scripted faults for automated testing. The 13 AML scenarios (`TXM-01`..`TXM-13`) are deferred with the AML agent.
 
 ### 3.5 Human Review Queue (Compliance Desk)
 
@@ -101,24 +105,24 @@ Receives escalations (`escalate_edd`, approval requests) and records human decis
 
 ## 4. Proxy layer
 
-The proxy sits between agents and everything they call. It is the only source of per-call telemetry.
+In a full-proxy deployment, route the relevant agent traffic through the proxy to obtain synchronous enforcement and per-call telemetry. The initial OpenCode adapter does not by itself provide this complete topology; uncovered paths must be identified explicitly.
 
 ### 4.1 LLM proxy
 
-- Exposes an API-compatible endpoint (same request/response shape as the upstream provider), so agents need no code changes beyond `base_url`.
+- Exposes an API-compatible endpoint (same request/response shape as the upstream provider), so compatible clients need no code changes beyond `base_url`.
 - Forwards to the real provider, streams responses back.
-- Records, per call: model, prompt and completion (or hashes plus a pointer to blob storage), token counts, latency, time-to-first-token, status code, retries, stop reason, tool-use blocks.
+- Records, per call: model, token counts, latency, time-to-first-token, status code, retries, stop reason, and tool-use blocks. Raw prompts/completions are excluded by default; any retained content requires explicit redaction, access, and retention controls. Prefer sanitized summaries or carefully designed fingerprints over content-bearing blobs.
 - Computes cost from a price table (kept in the proxy config, not in agents).
 
 ### 4.2 Tool proxy
 
-- Fronts all tool servers. Agents call tools through it.
+- In a proxy-based deployment, fronts the configured tool servers. Agents must have no direct route around it for the deployment to claim protocol-level coverage.
 - Records: tool name, arguments, result (or hash plus pointer), latency, success or error, bytes returned.
-- Can enforce permission scopes per agent identity (e.g. Onboarding Agent may not call `freeze_account` or `file_sar`, and AML Agent may not call `contact_customer` after filing a SAR). A denied call is itself an event.
+- Can enforce permission scopes per agent identity (e.g. the current KYC agent may not call AML-only tools; a future AML agent may not call `contact_customer` after filing a SAR). A denied call is itself an event.
 
 ### 4.3 Correlation headers
 
-Every agent request includes:
+Every request routed through the full proxy deployment includes:
 
 | Header | Meaning |
 |---|---|
@@ -231,8 +235,8 @@ The only interface between the simulation/proxy and monitoring. Version it (`sch
     "status": 200,
     "stop_reason": "tool_use",
     "cost_usd": 0.0116,
-    "request_ref": "blob://runs/run_0042/req_8f2.json",
-    "response_ref": "blob://runs/run_0042/res_8f2.json",
+    "request_ref": null,
+    "response_ref": null,
     "fault_injected": false
   }
 }
@@ -250,7 +254,7 @@ The only interface between the simulation/proxy and monitoring. Version it (`sch
 | `fault_injected` | Proxy | Fault type, target |
 | `human_decision` | Human queue stub | Decision, delay |
 
-Large bodies (prompts, tool results) go to blob storage and are referenced by `*_ref`, keeping the event log small.
+Raw prompts and tool results are not persisted by default. If a task explicitly requires retaining content, apply secret/PII redaction, least-privilege access, and a retention limit before storing it; an opaque `*_ref` does not make sensitive content safe. Default event fields should be allowlisted metadata and bounded sanitized summaries.
 
 ---
 
@@ -304,10 +308,10 @@ ai-control-layer/
 │   ├── ground_truth.json     # Sealed answer key read ONLY by the Outcome Verifier
 │   └── documents/            # Mock applicant OCR files (passports, proof of address)
 ├── sim/                      # Monitored banking simulation (docs/use-cases.md)
-│   ├── agents/               # Onboarding Agent & AML Monitoring Agent (Ollama client)
+│   ├── agents/               # OpenCode/KYC integration initially; future agents deferred
 │   ├── tools/                # SQLite tool implementations (sanctions, registry, bank ops)
 │   ├── human_queue/          # Simulated compliance desk stub
-│   └── orchestrator.py       # Scenario driver (ONB-01..15, TXM-01..13)
+│   └── orchestrator.py       # Initial KYC scenarios (ONB-01..15); AML deferred
 ├── proxy/                    # Synchronous AI Control Layer (docs/application-documentation.md)
 │   ├── gateway.py            # FastAPI / LiteLLM reverse proxy
 │   ├── policy_engine.py      # In-line auditors: PII, prompt injection, budget, tool permissions
@@ -318,11 +322,11 @@ ai-control-layer/
 ├── monitoring/               # Independent evaluation & dashboard
 │   ├── ingest/               # Event subscriber / worker
 │   ├── store/                # DuckDB / SQLite schema
-│   ├── verifier/             # Independent postcondition checker (ONB-P1..P6, TXM-P1..P6)
+│   ├── verifier/             # Independent KYC postcondition checker initially; AML deferred
 │   └── dashboard/            # Judge-facing audit ledger UI (docs/dashboard-ui.md)
 ├── tests/                    # Automated self-testing suite (pytest)
-│   ├── test_onboarding.py    # 15 positive & negative onboarding scenarios
-│   └── test_aml.py           # 13 positive & negative AML scenarios
+│   ├── test_onboarding.py    # Planned KYC positive & negative scenarios
+│   └── test_aml.py           # Future AML scenarios (deferred)
 └── docker-compose.yml        # Zero-prep local startup
 ```
 
@@ -348,11 +352,11 @@ ai-control-layer/
 1. **Contract:** write `events.schema.json` first.
 2. **Generator:** seeded mock banking data (`data/generate.py`, `data/rules.py`) with planted faults and sealed ground truth.
 3. **Single agent through the proxy:** Client Onboarding Agent (e.g. `ONB-01` baseline) plus LLM proxy plus JSONL/SQLite emitter. Confirm events appear.
-4. **Tool proxy and second agent:** AML Transaction Monitoring Agent (`TXM-01..13`) and SQLite banking tools.
-5. **Monitoring ingest and store:** load events into DuckDB/SQLite, build per-case traces.
-6. **Evaluator:** outcome postcondition checks (`ONB-P1..P6`, `TXM-P1..P6`) against sealed ground truth.
-7. **Dashboard:** audit ledger UI (`docs/dashboard-ui.md`) with Attack Console and Trajectory/Outcome replay.
-8. **Fault injection and policy rules:** execute the 28 test scenarios with positive and negative controls.
+4. **KYC tool path:** route one KYC side-effecting tool through the OpenCode adapter and deterministic policy before expanding tool coverage; provider/MCP proxies remain separate.
+5. **Monitoring ingest and store:** load sanitized events into local storage and build per-case traces.
+6. **Evaluator:** independently verify KYC postconditions against trusted persisted state and sealed ground truth.
+7. **Dashboard:** audit ledger UI (`docs/dashboard-ui.md`) with Attack Console and trajectory/outcome replay.
+8. **KYC fault injection and policy rules:** run the in-scope onboarding scenarios with positive and negative controls. AML/TXM work remains deferred.
 
 ---
 
