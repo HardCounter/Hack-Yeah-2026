@@ -17,6 +17,7 @@ from contracts import ActionProposal
 from intercept.policy.runs import IDENTIFIER, Policy
 from intercept.service.server import Gateway
 from simulation.governed import GovernedRuntime, POLICY_PATH
+from tracing import get_logger
 
 
 class LocalService:
@@ -64,6 +65,8 @@ class LocalService:
                     ctx = self.registry.Ctx(agent="onboarding-agent", session_id=session_id, db=bank_copy)
                     self.runtime = await GovernedRuntime.create(ctx, self.app_id, policy_config=self.config,
                                                                 contract_id=self.contract_id)
+                    get_logger().log("intercept", "session.bound", session=session_id, contract=self.contract_id,
+                                     case=self.app_id)
                 return {"session_id": session_id, "contract_id": self.contract_id,
                         "policy_version": self.runtime.contract.policy_version}
             if self.runtime is None:
@@ -88,6 +91,8 @@ class LocalService:
                 if payload != {"session_id": self.runtime.contract.session_id}:
                     raise ValueError("finish conflicts with trusted binding")
                 result = await self.runtime._finish()
+                get_logger().log("intercept", "session.verified", session=self.runtime.contract.session_id,
+                                 status=result.verification_status)
                 return result.to_dict()
             # This integrated path executes tools inside the trusted gateway.
             # Legacy before/after observation mode remains the separate service.

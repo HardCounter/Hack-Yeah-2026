@@ -157,8 +157,11 @@ Nobody on the team needs AWS or instance access to release.
 
 ## Scripts
 
+Details and a live-trace walkthrough: [scripts/README.md](scripts/README.md).
+
 | Script | What it does |
 |---|---|
+| `scripts/run_live_pipeline.sh [APP-0001]` | Full governed pipeline traced to a file, waiting for an interactive OpenCode session (`scripts/run_opencode_intercepted.sh`) |
 | `scripts/test.sh [all\|python\|intercept\|persistence\|consume\|e2e\|adapter\|data] [pytest args]` | Runs all tests, or one layer's |
 | `scripts/run_demo.sh [APP-ID] [--fault F]` | Runs the whole control layer offline (scripted agent, no model) and prints the verdict |
 | `scripts/test_consume_plane.sh` | Runs the consume-plane tests (`tests/consume_plane`) |

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Terminal 2: start OpenCode wired to the receiver started by scripts/run_intercept_receiver.sh.
+# Terminal 2: start OpenCode wired to the service started in terminal 1, either
+# scripts/run_live_pipeline.sh (governed pipeline) or scripts/run_intercept_receiver.sh (observe-only).
 #
 # Usage: scripts/run_opencode_intercepted.sh [extra opencode flags, e.g. --print-logs]
 #
@@ -11,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ENV_FILE=var/intercept.env
 
-[[ -f "$ENV_FILE" ]] || { echo "error: $ENV_FILE not found; start scripts/run_intercept_receiver.sh first" >&2; exit 1; }
+[[ -f "$ENV_FILE" ]] || { echo "error: $ENV_FILE not found; start scripts/run_live_pipeline.sh or scripts/run_intercept_receiver.sh first" >&2; exit 1; }
 command -v opencode >/dev/null 2>&1 || { echo "error: opencode is not on PATH" >&2; exit 1; }
 # shellcheck disable=SC1090
 source "$ENV_FILE"
@@ -25,4 +26,5 @@ grep -q '"package": ".*adapters/opencode"' "$INTERCEPT_DEMO_DIR/opencode.json" 2
 
 echo "Starting OpenCode in $INTERCEPT_DEMO_DIR (private server, adapter -> 127.0.0.1:$INTERCEPT_PORT)"
 cd "$INTERCEPT_DEMO_DIR"
-INTERCEPT_TOKEN=$INTERCEPT_TOKEN exec opencode --standalone "$@"
+# The admin token is present only for the live governed pipeline (used by /intercept-run to bind the session).
+INTERCEPT_TOKEN=$INTERCEPT_TOKEN INTERCEPT_ADMIN_TOKEN=${INTERCEPT_ADMIN_TOKEN:-} exec opencode --standalone "$@"

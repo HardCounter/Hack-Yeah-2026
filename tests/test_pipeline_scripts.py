@@ -65,3 +65,17 @@ def test_run_wrapper_clears_virtualenv_and_forwards_arguments(tmp_path):
 def sys_executable() -> str:
     import sys
     return sys.executable
+
+
+def test_live_pipeline_help_and_busy_port_check():
+    result = subprocess.run([sys_executable(), "-m", "simulation.live_pipeline", "--help"],
+                            cwd=ROOT, capture_output=True, text=True)
+    assert result.returncode == 0 and "--model" in result.stdout
+    import socket
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        result = subprocess.run([sys_executable(), "-m", "simulation.live_pipeline", "--model", "p/m",
+                                 "--port", str(port)], cwd=ROOT, capture_output=True, text=True)
+    assert result.returncode == 2 and "in use" in result.stderr
