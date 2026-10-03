@@ -708,7 +708,7 @@ Ordered by build priority. Each maps to scenarios in `use-cases.md`.
 | `repeat-side-effect` | det. | `tool_use` (`side_effect != read`) | Second executed write/irreversible call on the same target | ONB-11 | `BLOCK_TOOLS` |
 | `step-order` | det. | `tool_use` | Write call without a required prior step in the trajectory (for example `create_client` with no `screen_sanctions` for the same name) | ONB-03, ONB-10 | `REQUIRE_APPROVAL_FOR` the write tool |
 | `outcome-verifier` | det. | `session` (`ended`) | Runs `verify_onboarding` from `data/postconditions.py` against `bank.db` and `audit_actions`; one finding per failed postcondition; `unverifiable` if the check cannot run | ONB-07, -08, -10, -11, -13 | none (after the fact; detection only, it cannot undo) |
-| `trajectory-grader` | **semantic** | `tool_use` with `side_effect = irreversible` | Judgement by the user-provided LLM (own API key or locally hosted model) of whether the trajectory still serves `contract.objective`; tool results passed as untrusted, delimited data | ONB-17 class | `REQUIRE_APPROVAL_FOR` only |
+| `trajectory-grader` | **semantic** | `tool_use` with `side_effect = irreversible` | Judgement by a paid API model of whether the trajectory still serves `contract.objective`; tool results passed as untrusted, delimited data | ONB-17 class | `REQUIRE_APPROVAL_FOR` only |
 | `trajectory-risk` **(implemented)** | det. | `tool_use`, `egress` | Expected loss = Σ P(failure) × consequence over the trajectory; P from noisy-OR of observable signals ([model](trajectory-risk-model.md)) | ONB-03, -11, -12, -15, BAIT-15 | `REQUIRE_APPROVAL_FOR` at high, `HALT_SESSION` at critical |
 
 Notes:
@@ -770,7 +770,7 @@ plugins:
   trajectory-grader:
     handler: "consume_plane.plugins.trajectory_grader:TrajectoryGrader"
     enabled: false
-    config: {model: "llama3.1:8b", base_url: "http://127.0.0.1:11434"}
+    config: {provider: "anthropic", model: "claude-haiku-4-5", api_key_env: "LLM_API_KEY"}
   velocity-guard:               # file plugin from plugins/; only its config lives here
     config: {window_s: 10, max_calls: 8}
 ```

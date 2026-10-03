@@ -105,7 +105,7 @@ recheck hard rules and budgets after approval. An approval never overrides a har
 Maintain atomic, protected reservation ledgers per run and shared service. Reserve conservative
 input/output token bounds, cost and concurrency/time limits **before** each backend attempt;
 enforce maximum output tokens and tool-call limits synchronously. Include semantic calls,
-retries, fallback attempts and local-model compute limits. Reconcile actual usage; retain
+retries and fallback attempts. Reconcile actual usage; retain
 conservative charges for unknown usage after timeouts. Unknown pricing/usage must not create
 unlimited free calls. Async cost observers report spend; they do not enforce hard ceilings.
 

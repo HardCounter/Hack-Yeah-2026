@@ -1,7 +1,7 @@
 # Integrated local KYC runtime
 
 The executable composition is `simulation/governed.py`. `simulation.agent.Session`
-uses it by default for both scripted and local LLM drivers. Lower-level registry
+uses it by default for both scripted and LLM drivers. Lower-level registry
 fixtures remain available explicitly to test corrupted business state.
 
 ```text
@@ -66,7 +66,7 @@ claims serialize outstanding deliveries within each consumer/session; ACK remove
 the job, NACK retries, exhausted retries enter the existing DLQ. Completion ledgers,
 finding IDs, signal IDs and business receipts make redelivery idempotent.
 
-Local model requests reserve a conservative input bound plus the configured output
+Model requests reserve a conservative input bound plus the configured output
 cap before dispatch. Failed or cancelled attempts retain that charge. Model calls
 hold the same session fence as governed tools, feedback and finish; cancellation
 waits for an outstanding backend before recording a failed result. Model telemetry
@@ -113,14 +113,16 @@ test exercises authentication, execution, denial, persistence, consumption and f
 
 The merged `intercept.receiver` remains an observe-only diagnostic server. It is
 not the integrated enforcement service. OpenCode prompt-hook forwarding and live
-hook behavior are separate from the governed simulation's local model execution.
+hook behavior are separate from the governed simulation's model execution.
 
 ## Limits
 
 This is a cooperative local synthetic demonstration, not an OS sandbox or a live
 financial system. A same-user agent can bypass in-process Python unless deployment
 permissions prevent it. The deterministic trajectory-risk model is heuristic;
-no new semantic model or risk-model rewrite is introduced. Live Ollama/OpenCode
+no new semantic model or risk-model rewrite is introduced. Live LLM/OpenCode
 conversation behavior must be reported separately from mocked/offline tests.
+The project uses paid API models; the LLM driver still targets a loopback
+Ollama endpoint until it is switched to the paid API.
 Active tool sessions cannot resume after gateway restart; durable evidence and
 outbox delivery do survive restart. No new broker, database or framework is needed.

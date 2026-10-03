@@ -51,7 +51,7 @@ Four files. No package-per-tool, no base classes, no plugin loader.
 3. End-to-end check: run the APP-0001 pipeline through `registry.call()`, then
    `verify_onboarding(con, "APP-0001", calls_from_audit(con, session))` returns no failures; the
    same with `screen_sanctions` skipped fails ONB-P1. This proves the tools and verifier agree.
-4. `openai_tools()` output is accepted by Ollama's OpenAI-compatible endpoint (one manual call).
+4. `openai_tools()` output is accepted by the LLM provider's tool-calling API (one manual call).
 5. The concurrency test below passes.
 
 ## Open questions

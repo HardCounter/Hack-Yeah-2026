@@ -267,7 +267,7 @@ The policy engine continuously monitors the centralized policy file (e.g. `gatew
 The future routing layer decouples agent proposals from trusted backend configuration.
 The following multi-provider example is deferred, not part of the first KYC slice:
 
-- **Provider Routing:** Maps abstract model names requested by the agent (e.g., `primary-reasoning-model`) to specific backends (e.g., the user's own API key for Anthropic/OpenAI, or a self-hosted Ollama/vLLM model; the project does not ship an LLM).
+- **Provider Routing:** Maps abstract model names requested by the agent (e.g., `primary-reasoning-model`) to specific backends (paid API providers such as Anthropic or OpenAI, each with its own key from an env var).
 - **LLM Fallback (deferred):** Recheck allowed model, destination/data flow and atomic budget reservation for every attempt. Unknown timeout usage is conservatively charged. No bypass through a fallback provider.
 - **Tool Routing:** Never automatically retry/fail over a side-effecting tool. On ambiguous timeout, reconcile persisted state by original action/business key before any retry; conflicting retries are rejected. MCP transport breadth is deferred.
 
@@ -279,15 +279,15 @@ routing:
         type: "anthropic"
         base_url: "https://api.anthropic.com"
         api_key_env: "ANTHROPIC_API_KEY"
-      ollama_local_fallback:
-        type: "openai_compatible"
-        base_url: "http://127.0.0.1:11434/v1"
-        api_key_env: "EMPTY"
+      openai_fallback:
+        type: "openai"
+        base_url: "https://api.openai.com/v1"
+        api_key_env: "OPENAI_API_KEY"
 
     routes:
-      "claude-3-5-sonnet":
+      "primary-reasoning-model":
         primary: "anthropic_primary"
-        fallback: "ollama_local_fallback"
+        fallback: "openai_fallback"
         timeout_seconds: 30
         retry_on_status: [429, 500, 502, 503, 504]
 ```
@@ -398,7 +398,7 @@ Consumers are designed as isolated, plug-and-play plugins implementing an asynch
 #### Reference Consumer Implementations
 1. **Loop & Oscillation Observer:** Tracks repetitions and requests later restrictions. Hard tool-call ceilings and structurally detectable loops run synchronously in Layer 1.
 2. **Trajectory & Drift Grader:** Analyzes the sequence of actions against the expected workflow or contract. Detects deviations (e.g., agent was tasked with data retrieval but suddenly attempts file deletion or network discovery).
-3. **Spend & Velocity Observer:** Reports burn rate. Layer 1 enforces protected atomic reservations for token/cost/time/tool/concurrency ceilings before calls, including local-model and semantic work, retries and unknown usage. Async accounting alone cannot enforce a hard budget.
+3. **Spend & Velocity Observer:** Reports burn rate. Layer 1 enforces protected atomic reservations for token/cost/time/tool/concurrency ceilings before calls, including semantic-guard calls, retries and unknown usage. Async accounting alone cannot enforce a hard budget.
 
 ### 4.2 Dynamic Feedback Loop: Influencing the Interception Layer
 

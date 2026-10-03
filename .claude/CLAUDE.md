@@ -10,14 +10,14 @@
 Build a lightweight gateway / proxy / middleware / SDK wrapper that sits between AI systems (agents, MCP services, LLMs, APIs) and enforces security, privacy and budget controls in real time: inspect, redact or block unsafe interactions.
 
 Core idea (from the brief):
-- **Hybrid defense**: deterministic controls (regex for PII/secrets, auth/access checks) plus semantic AI-based controls (e.g. prompt-injection detection with a local model).
+- **Hybrid defense**: deterministic controls (regex for PII/secrets, auth/access checks) plus semantic AI-based controls (e.g. prompt-injection detection with an API model).
 - **Centralized policy engine**: one config source (e.g. a YAML file) for controls, thresholds (block vs redact), allowed models and budgets. Judges may edit it live, so changes must apply without a restart.
-- **Budget governance**: token/cost/compute limits for both commercial APIs and local models.
+- **Budget governance**: token/cost limits for the paid API models we call (per session and per day).
 - **Historical attack mitigation**: signature feed for known AI exploits (malicious code execution, unsafe deserialization, model-repo supply-chain). Cover OWASP LLM/agentic risks.
 - **Reporting**: live dashboard (controls, security posture, blocked threats, cost) plus exportable audit logs. Expose performance telemetry.
 - **Self-testing suite**: automated tests with both positive (allowed) and negative (blocked/redacted) cases, including budgets and exploit mitigation. Judges will run it.
 - **Deliverables**: working control layer, architecture diagram, documented sample policy file (with different strictness levels), dashboard, runnable test suite.
-- No LLM is provided. We must supply our own, either via our own API key or a locally hosted model (e.g. Ollama). The rest of the stack is free; check licenses of any open-source base.
+- No LLM is provided. We use **paid API models** (team decision); keys come from env vars / host secrets, never committed. The judge-run test suite must work without an API key (stub). The rest of the stack is free; check licenses of any open-source base.
 
 ## Scoring (pass needs >= 50%)
 Robustness and guardrail quality 30% · Architecture and performance 20% · Security reporting 20% · Self-testing suite 15-20% · Practical implementability/scalability 10-15%.

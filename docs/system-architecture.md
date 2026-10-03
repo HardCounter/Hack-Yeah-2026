@@ -39,7 +39,7 @@ flowchart LR
     end
 
     subgraph PROXY["AI Control Layer (Proxy)"]
-        LLMP[LLM proxy<br/>(user-provided LLM: own API key or locally hosted, e.g. Ollama / vLLM)]
+        LLMP[LLM proxy<br/>(paid API models, e.g. Anthropic)]
         TOOLP[Tool proxy<br/>(In-line guardrails)]
         POL[Pinned Policy + Trusted Task Contract<br/>Hard Checks + Selective Semantic Gate]
     end

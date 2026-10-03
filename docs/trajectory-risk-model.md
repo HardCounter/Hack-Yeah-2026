@@ -93,5 +93,5 @@ replace the default outright, so `prerequisites: {}` disables the prerequisite c
   after Layer 1 accepts the signals. The local governed KYC runtime now connects
   this feedback loop; see [integrated-runtime.md](integrated-runtime.md).
 - **No semantic judgement.** It does not read prompts or tool results. An LLM grader
-  (user-provided: own API key or locally hosted, e.g. Ollama) could be added later as one more signal with a capped weight. It must
+  (a paid API model) could be added later as one more signal with a capped weight. It must
   never lower P, and it must be labelled as semantic.

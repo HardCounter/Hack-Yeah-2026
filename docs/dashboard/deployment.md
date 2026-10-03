@@ -1,22 +1,18 @@
-# Deployment, Domain and LLM Hosting
+# Deployment, Domain and LLM
 
-Status: proposed, not implemented. Free-tier limits below are from memory; verify them on signup.
+Status: proposed, not implemented. Hosting free-tier limits below are from memory; verify them on signup.
 
 Goal: judges open one public HTTPS URL (or scan the QR code) and everything works. No team laptops,
 no venue Wi-Fi, no cold starts during judging.
 
 ---
 
-## Rules check
+## LLM decision
 
-Criteria PDF §7: teams are expected to use open-source libraries and **local models (such as those run
-via Ollama)**, and must be able to **run the entire system on their own setup**. No paid subscriptions (OpenAI, Anthropic, Copilot, ...) are provided.
-
-Our reading:
-- An open-weight model that **we deploy on a cloud machine we control** is "our own setup". Allowed.
-- Paid LLM APIs: not allowed.
-- Free third-party hosted LLM APIs (Groq, Gemini free tier, ...): grey area. Not used for anything judged.
-- The judge-run test suite must work **without any LLM**. The real LLM is used only for the live demo.
+We use **paid LLM APIs** (team decision). Keys come from env vars / host secrets, never committed.
+- The **agent we protect** and the **semantic guard** both call hosted API models.
+- API spend is itself governed: the budget controls in the policy YAML cap tokens and cost per session and per day.
+- The judge-run test suite must work **without any API key**. It uses a stub; the real API is used only for the live demo.
 
 ---
 
@@ -26,38 +22,34 @@ Our reading:
 |---|---|---|
 | Gateway + API | FastAPI + uvicorn | Python like the rest of the repo; serves the API and the dashboard from one process and one origin (no CORS) |
 | Dashboard | Plain HTML/CSS/JS in `/static`, live feed over SSE (`EventSource`) | No build step; meets the "no CDN, everything bundled" rule from [dashboard-ui.md](dashboard-ui.md); the custom audit-ledger look is easy without a framework |
-| Semantic guard | Small prompt-injection classifier, loaded in-process (e.g. `protectai/deberta-v3-base-prompt-injection-v2`, Apache-2.0) | ~1 GB RAM, tens of ms on CPU. Fast enough for every request |
-| LLM (the agent we protect) | `llama-server` (llama.cpp), OpenAI-compatible API, **Qwen2.5-7B-Instruct** GGUF Q4_K_M (~4.7 GB, Apache-2.0), on a GPU | Good tool calling for its size. One binary, the same GGUF works on GPU (CUDA image) and CPU (fallback). The gateway talks to it through one base URL in the policy YAML, so it can be swapped |
-| Packaging | One Docker image (or `docker compose` with gateway + llama-server) | Same artifact locally and in the cloud |
+| Semantic guard | Fast, cheap API model (e.g. Claude Haiku 4.5) as a prompt-injection judge, returning a score | No model weights to host; latency shows in the pipeline trace |
+| LLM (the agent we protect) | Stronger API model (e.g. Claude Sonnet 5.5) with tool calling | Reliable tool calling; the gateway talks to it through one provider/model setting in the policy YAML, so it can be swapped |
+| Packaging | One Docker image | Same artifact locally and in the cloud |
 
 Rejected: Streamlit (reruns the whole script on each interaction, hard to share a live feed between
 judges, can't do the custom look), React (adds a build step with no real benefit for 4 views),
-Ollama on laptops (laptops sleep, venue Wi-Fi isolates clients, slow).
+running on team laptops (laptops sleep, venue Wi-Fi isolates clients).
 
-### Classifier vs LLM
-- The **classifier is a security control**, so it runs on every request and its latency shows in the pipeline trace.
-- The **LLM is the system being protected**: it answers the chat console and drives the agent demo.
+### Guard vs agent
+- The **semantic guard is a security control**, so it runs on every request that reaches it (after the
+  deterministic checks) and its latency shows in the pipeline trace. A hard deny skips it and saves the API call.
+- The **agent LLM is the system being protected**: it answers the chat console and drives the agent demo.
   It never runs as a blocking security check.
-- 7B speed estimates (verify): GPU (L4/A10G) ~30–60 tokens/s; Oracle 4-core ARM CPU ~2–4 tokens/s; HF free 2 vCPU ~1–2 tokens/s.
-  CPU is too slow for live judging (40–90 s per answer), so **7B runs on a GPU**. Always stream responses and cap `max_tokens`.
-- Download model weights into the image **at build time**, not at startup.
+- Always stream agent responses and cap `max_tokens`. Set request timeouts; on provider errors the guard fails closed.
 
 ---
 
-## Server options (free)
+## App hosting (free)
 
-| Option | Resources | Fits | Downsides |
-|---|---|---|---|
-The app and the LLM are hosted separately: the app runs on a free CPU box, and the 7B LLM on a GPU.
+The app (gateway + dashboard) is a light CPU process; the models are behind the API.
 
 | Option | Resources | Role | Downsides |
 |---|---|---|---|
-| **A. Oracle Cloud Always Free, ARM VM** (preferred app host) | up to 4 OCPU / 24 GB RAM, persistent disk | Gateway + dashboard + classifier. Also the **CPU fallback** for the 7B LLM (slow, but it works if Modal is down) | Card needed for verification; ARM capacity is sometimes unavailable; we set up Docker + HTTPS ourselves. **Sign up on day 1.** |
-| **B. Hugging Face Spaces, Docker SDK** (fallback app host) | ~2 vCPU / 16 GB RAM, free CPU tier | Gateway + dashboard + classifier. Too slow for 7B | Disk resets on restart (seed demo data at startup); sleeps after ~48 h without traffic; deploy by `git push` |
-| **C. Modal (serverless GPU, free monthly credits)** (LLM host) | L4 / A10G GPU (24 GB) | `llama-server` CUDA image + Qwen2.5-7B Q4, exposed as an HTTPS web endpoint | Cold start 30–60 s. Keep 1 container warm (`min_containers=1`) **only during judging**; credits (~$30/month, verify) cover roughly 30 GPU-hours. Endpoint protected by a token |
+| **A. Oracle Cloud Always Free, ARM VM** (preferred) | up to 4 OCPU / 24 GB RAM, persistent disk | Gateway + dashboard | Card needed for verification; ARM capacity is sometimes unavailable; we set up Docker + HTTPS ourselves. **Sign up on day 1.** |
+| **B. Hugging Face Spaces, Docker SDK** (fallback) | ~2 vCPU / 16 GB RAM, free CPU tier | Gateway + dashboard | Disk resets on restart (seed demo data at startup); sleeps after ~48 h without traffic; deploy by `git push` |
 
 Not used: Render / Railway / Koyeb free tiers (≤512 MB RAM, cold starts), AWS ECS (Fargate is not free;
-the free EC2 micro has 1 GB RAM), Colab / Kaggle (not meant for serving).
+the free EC2 micro has 1 GB RAM).
 
 ### Option A setup sketch (Oracle)
 1. Create an Ampere A1 VM (Ubuntu, 4 OCPU / 24 GB). Open ports 80/443 in the VCN security list **and** in the VM firewall (`iptables`).
@@ -68,14 +60,7 @@ the free EC2 micro has 1 GB RAM), Colab / Kaggle (not meant for serving).
 ### Option B setup sketch (HF Spaces)
 1. New Space → SDK: Docker. The `Dockerfile` must listen on port `7860` (or set `app_port` in the Space README header).
 2. Push the repo (or a deploy branch) to the Space git remote.
-3. Set `llm.base_url` to the Modal endpoint, and store the Modal token as a Space secret.
-
-### Option C setup sketch (Modal, LLM)
-1. One `modal_llm.py`: a Modal image from `ghcr.io/ggml-org/llama.cpp:server-cuda`, with the Qwen2.5-7B-Instruct Q4_K_M GGUF stored in a Modal Volume (downloaded once, not on every start).
-2. Run `llama-server -m <gguf> -ngl 99 --parallel 4 --ctx-size 16384 --api-key $LLM_TOKEN` as a `@modal.web_server` on an L4.
-   `--parallel 4` lets several judges chat at once.
-3. `modal deploy modal_llm.py` gives a fixed HTTPS URL, which goes into `llm.base_url`.
-4. Before judging, set `min_containers=1` and redeploy. After judging, set it back to 0 so we don't burn credits.
+3. Store the LLM API key as a Space secret.
 
 ---
 
@@ -101,15 +86,18 @@ All environment-specific values come from one place (policy YAML / env vars), so
 
 ```yaml
 llm:
-  base_url: https://<workspace>--llm-serve.modal.run/v1   # fallback: http://llama-server:8080/v1 (7B on Oracle CPU)
-  model: qwen2.5-7b-instruct-q4_k_m
-  api_key_env: LLM_TOKEN
+  provider: anthropic
+  model: claude-sonnet-5-5
+  api_key_env: LLM_API_KEY
   max_tokens: 400
   stream: true
   timeout_s: 60
 semantic_guard:
-  model: protectai/deberta-v3-base-prompt-injection-v2
+  provider: anthropic
+  model: claude-haiku-4-5
+  api_key_env: LLM_API_KEY
   block_threshold: 0.9
+  on_error: block        # fail closed
 ```
 
 Admin actions (policy mode changes, data reset) need a token from an env var / Space secret, never committed.
@@ -120,11 +108,11 @@ Public judge sessions stay sandboxed (see [dashboard-ui.md](dashboard-ui.md#prac
 ## Before judging
 
 - [ ] Public URL loads on a phone over mobile data (not venue Wi-Fi).
-- [ ] Hit the URL once to warm it up (HF Space awake, classifier loaded).
-- [ ] Modal `min_containers=1` deployed; the first chat answer comes back in a few seconds; check the remaining credits.
-- [ ] Fallback tested: change `llm.base_url` to the Oracle CPU `llama-server` and confirm the policy hot-reload picks it up.
+- [ ] Hit the URL once to warm it up (HF Space awake).
+- [ ] API key set as a secret; the first chat answer comes back in a few seconds; check the account spend limit.
+- [ ] Model swap tested: change `llm.model` in the policy YAML and confirm the hot-reload picks it up.
 - [ ] Demo data seeded; the reset button works.
-- [ ] Test suite runs from a fresh clone with **no LLM available** (uses a stub).
+- [ ] Test suite runs from a fresh clone with **no API key** (uses a stub).
 - [ ] If the LLM is down, the chat console shows a clear "LLM offline" state; guard checks still run.
 - [ ] Recorded trajectory replay works without the LLM.
 
@@ -133,5 +121,5 @@ Public judge sessions stay sandboxed (see [dashboard-ui.md](dashboard-ui.md#prac
 ## Open questions
 
 1. Who owns the Oracle signup, and does it succeed (ARM capacity)? If not by the evening of day 1, commit to HF Spaces.
-2. ~~Model size~~: decided, **Qwen2.5-7B-Instruct on a Modal GPU**. Still open: does someone have a Modal account with credits, and is our tool-calling prompt format reliable with 7B?
+2. Who owns the API account and key, and what spend limit do we set on it?
 3. Real domain or the `hf.space` URL? It only matters for the QR code and the slides.
