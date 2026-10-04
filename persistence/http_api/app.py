@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, FastAPI, Path, Query, Request
+from fastapi import APIRouter, FastAPI, Path as FastApiPath, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -43,7 +43,7 @@ SEVERITIES = list(Severity.__args__)
 BUCKET_SECONDS = {"1m": 60, "5m": 300, "1h": 3600, "1d": 86400}
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
 
-Id = Annotated[str, Path(pattern=ID_PATTERN)]
+Id = Annotated[str, FastApiPath(pattern=ID_PATTERN)]
 OptId = Annotated[str | None, Query(pattern=ID_PATTERN)]
 Csv = Annotated[str | None, Query(description="comma-separated values")]
 Limit = Annotated[int, Query(ge=1, le=1000)]

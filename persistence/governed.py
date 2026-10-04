@@ -196,7 +196,7 @@ class GovernedPersistence:
                 if not inserted:
                     return
                 if deliver:
-                    consumers = [r[0] for r in conn.execute("SELECT name FROM consumers")]
+                    consumers = [r[0] for r in conn.execute("SELECT name FROM consumers WHERE status != 'RETIRED'")]
                     pending = conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0]
                     if pending + len(consumers) > self.store.outbox_maxsize:
                         raise AuditBackpressureError("Durable audit outbox capacity exhausted")
@@ -246,7 +246,7 @@ class GovernedPersistence:
 
     async def wire_session(self, session_id: str) -> list[dict[str, Any]]:
         events = await self.store.get_events_by_session_seq(session_id)
-        return [to_consumer_v21(event) for event in events if not is_intent(event)]
+        return [to_consumer_v21(event) for event in events if event.seq is not None and not is_intent(event)]
 
     async def events(self, session_id: str, up_to_seq: int | None = None,
                      kinds: Iterable[str] | None = None, limit: int | None = None) -> list[dict[str, Any]]:
