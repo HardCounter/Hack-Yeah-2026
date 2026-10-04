@@ -5,6 +5,8 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-dev}
     env_file: .env
+    environment:
+      CONFIG_DIR: /data/config   # saved custom configs survive a redeploy
     volumes:
       - appdata:/data
     healthcheck:

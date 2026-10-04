@@ -71,8 +71,8 @@ under sustained load.
 | LLM (the agent we protect) | Stronger API model with tool calling (e.g. Claude Sonnet 5.5), configured in OpenCode's provider settings. Provider and model can be swapped without code changes |
 | Storage | SQLite files (audit store, consumer ledger, synthetic bank database) on a Docker volume |
 
-In the repository: `web/main.py` (FastAPI, `/healthz` plus the `static/` mount), `static/index.html`
-(placeholder), `Dockerfile`, `compose.yaml`, `Caddyfile`, `.env.example`, `infra/main.tf` and
+In the repository: `web/main.py` (FastAPI: `/healthz`, the config and run APIs, and the static mounts),
+`static/html/` (pages: the dashboard and `/opencode-wrapper/`), `static/css/`, `static/js/`, `Dockerfile`, `compose.yaml`, `Caddyfile`, `.env.example`, `infra/main.tf` and
 `.github/workflows/deploy.yml`.
 
 ---
