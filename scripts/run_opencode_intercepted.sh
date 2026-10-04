@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
-# Terminal 2: start OpenCode in the current directory, wired to the service started in terminal 1,
-# either scripts/run_live_pipeline.sh (governed pipeline) or scripts/run_intercept_receiver.sh (observe-only).
+# Terminal 2: start OpenCode wired to the service started in terminal 1, either
+# scripts/run_live_pipeline.sh (governed pipeline) or scripts/run_intercept_receiver.sh (observe-only).
 #
 # Usage: scripts/run_opencode_intercepted.sh [--workspace DIR] [extra opencode flags, e.g. --print-logs]
-# Usage: scripts/run_opencode_intercepted.sh [extra opencode flags, e.g. --print-logs]
-#        OPEN_IN_PROJECT=1 scripts/run_opencode_intercepted.sh   # open in the prepared project dir instead
 #
-# How it attaches without changing directory:
-#   OPENCODE_CONFIG       the prepared opencode.json (loads the adapter plugin with its options)
-#   OPENCODE_CONFIG_DIR   only for the governed pipeline: a temporary copy of your global config dir
-#                         (entries symlinked) plus the governed `onboarding-agent` definition, which
-#                         OpenCode reads only from an agents/ folder; removed when OpenCode exits.
-#   --standalone          private server that inherits INTERCEPT_TOKEN; the shared background service
-#                         would not have it and the plugin would fail to start.
-# Instructions files (AGENTS.md) of the directory you open in are added to the agent's context.
+# OpenCode opens in the run's prepared project directory, or in --workspace DIR. Either way the
+# run-specific config stays in force:
+#   OPENCODE_CONFIG                  the prepared opencode.json (loads the adapter plugin with its options)
+#   OPENCODE_CONFIG_DIR              the prepared .opencode folder (the governed agent definition)
+#   OPENCODE_DISABLE_PROJECT_CONFIG  a workspace's own opencode.json cannot replace the interception config
+#   --standalone                     private server that inherits INTERCEPT_TOKEN; the shared background
+#                                    service would not have it and the plugin would fail to start.
 set -euo pipefail
 
-START_DIR=$PWD
 cd "$(dirname "$0")/.."
 ENV_FILE=$PWD/var/intercept.env
 
@@ -70,32 +66,3 @@ OPENCODE_CONFIG="$INTERCEPT_DEMO_DIR/opencode.json" \
 OPENCODE_CONFIG_DIR="$INTERCEPT_DEMO_DIR/.opencode" \
 OPENCODE_DISABLE_PROJECT_CONFIG=1 \
 exec opencode --standalone "${OPENCODE_ARGS[@]}"
-export INTERCEPT_TOKEN
-export INTERCEPT_ADMIN_TOKEN=${INTERCEPT_ADMIN_TOKEN:-}  # governed pipeline only: /intercept-run binds the session
-
-if [[ "${OPEN_IN_PROJECT:-0}" == "1" ]]; then
-    echo "Starting OpenCode in $INTERCEPT_DEMO_DIR (adapter -> 127.0.0.1:$INTERCEPT_PORT)"
-    cd "$INTERCEPT_DEMO_DIR"
-    exec opencode --standalone "$@"
-fi
-
-export OPENCODE_CONFIG=$CONFIG_FILE
-CONFIG_DIR=""
-AGENTS_SRC=$INTERCEPT_DEMO_DIR/.opencode/agents
-if [[ -d "$AGENTS_SRC" ]]; then
-    GLOBAL_DIR=${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}
-    CONFIG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/opencode-config-XXXXXX")
-    trap 'rm -rf "$CONFIG_DIR"' EXIT
-    shopt -s nullglob dotglob
-    for entry in "$GLOBAL_DIR"/*; do
-        [[ "$(basename "$entry")" == agents ]] || ln -s "$entry" "$CONFIG_DIR/"
-    done
-    mkdir "$CONFIG_DIR/agents"
-    for agent in "$GLOBAL_DIR"/agents/* "$AGENTS_SRC"/*; do ln -sf "$agent" "$CONFIG_DIR/agents/"; done
-    shopt -u nullglob dotglob
-    export OPENCODE_CONFIG_DIR=$CONFIG_DIR
-fi
-
-echo "Starting OpenCode in $START_DIR (adapter -> 127.0.0.1:$INTERCEPT_PORT)"
-cd "$START_DIR"
-opencode --standalone "$@"
