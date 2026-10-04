@@ -22,7 +22,7 @@ from tracing import get_logger
 
 class LocalService:
     def __init__(self, *, bank_path, runs_dir, app_id, contract_id, policy_path=POLICY_PATH, catalog_all=False,
-                 config_service=None):
+                 config_service=None, policy_revision=None):
         # Import the simulation's existing registry through its established path.
         from simulation import agent
         self.registry = agent.registry
@@ -31,6 +31,7 @@ class LocalService:
         self.app_id, self.contract_id = app_id, contract_id
         self.config = json.loads(Path(policy_path).read_text())
         self.config_service = config_service
+        self.policy_revision = policy_revision
         self.catalog_all = catalog_all
         if config_service is not None:
             self.config = config_service.snapshot_for_intercept()["config"]
@@ -78,7 +79,7 @@ class LocalService:
                     ctx = self.registry.Ctx(agent="onboarding-agent", session_id=session_id, db=bank_copy)
                     self.runtime = await GovernedRuntime.create(ctx, self.app_id, policy_config=self.config,
                                                                 contract_id=self.contract_id,
-                                                                policy_revision=policy_revision)
+                                                                policy_revision=policy_revision or self.policy_revision)
                     get_logger().log("intercept", "session.bound", session=session_id, contract=self.contract_id,
                                      case=self.app_id)
                 return {"session_id": session_id, "contract_id": self.contract_id,
@@ -122,7 +123,8 @@ async def serve(args):
     service = LocalService(bank_path=args.bank_db, runs_dir=args.runs_dir, app_id=args.application,
                            contract_id=args.contract_id, policy_path=args.policy or POLICY_PATH,
                            catalog_all=args.catalog_all,
-                           config_service=None if args.policy else ConfigService(args.config_dir))
+                           config_service=None if args.policy else ConfigService(args.config_dir),
+                           policy_revision=args.policy_revision)
     gateway = Gateway(None, os.environ.get("INTERCEPT_TOKEN", ""), None,
                       admin_token=os.environ.get("INTERCEPT_ADMIN_TOKEN"), service=service)
     server = await asyncio.start_server(gateway.handle, "127.0.0.1", args.port, limit=8192)
@@ -142,6 +144,7 @@ def main():
     config_source = parser.add_mutually_exclusive_group()
     config_source.add_argument("--policy", type=Path, help="explicit legacy policy; bypass selected backend config")
     config_source.add_argument("--config-dir", type=Path, help="shared backend config directory (default: CONFIG_DIR)")
+    parser.add_argument("--policy-revision", help="trusted revision for an explicit policy snapshot")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--catalog-all", action="store_true",
                         help="advertise every registered tool (free-agent demo); policy still decides each call")

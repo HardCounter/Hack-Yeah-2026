@@ -37,6 +37,21 @@ def test_prepare_isolated_gateway_only_agent_and_safe_provider_config(tmp_path):
         prepare_project(project, repo, "APP-0001", "contract_demo_v1", "mock/test", "http://127.0.0.1:8080", provider)
 
 
+def test_prepare_uses_selected_policy_tools_not_legacy_policy(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    project = tmp_path / "project"
+    selected = {
+        "allowed_tools": ["read_application"],
+        "name": "standard",
+    }
+    config_path = prepare_project(project, repo, "APP-0001", "contract_demo_v1", "mock/test",
+                                  "http://127.0.0.1:8080", policy_config=selected)
+    agent = (project / ".opencode" / "agents" / "onboarding-agent.md").read_text()
+    assert "  read_application: allow" in agent
+    assert "  create_client: allow" not in agent
+
+
 def test_discover_bound_session_requires_exact_contract_and_application(tmp_path):
     def make(session, contract, app):
         path = tmp_path / f"{session}.bank.db"

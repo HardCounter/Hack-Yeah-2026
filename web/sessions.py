@@ -118,11 +118,17 @@ class OpenCodeBackend:
         token, admin = secrets.token_hex(32), secrets.token_hex(32)
         endpoint = f"http://127.0.0.1:{free_port()}"
         project = folder / "project"
-        prepare_project(project, REPO, APPLICATION, contract, self.model, endpoint, free=True)
+        from configuration.service import ConfigService
+        config_service = ConfigService()
+        snapshot = await asyncio.to_thread(config_service.snapshot_for_intercept)
+        policy_path = folder / "selected-policy.json"
+        policy_path.write_text(json.dumps(snapshot["config"], indent=2) + "\n", encoding="utf-8")
+        policy_path.chmod(0o600)
+        prepare_project(project, REPO, APPLICATION, contract, self.model, endpoint, free=True,
+                        policy_config=snapshot["config"])
         env = _child_env(folder / "config", token, admin)
         # Let the gateway read the operator-owned config directory, not a session workspace.
-        from configuration.service import ConfigService
-        env["CONFIG_DIR"] = str(ConfigService().directory)
+        env["CONFIG_DIR"] = str(config_service.directory)
         for name in ("HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):  # isolate OpenCode's own storage
             env[name] = str(folder / name.lower())
             Path(env[name]).mkdir(parents=True, exist_ok=True)
@@ -131,10 +137,12 @@ class OpenCodeBackend:
         state = session.state
         env["CONTROL_LOG"], env["CONTROL_LOG_FILE"] = "file", str(folder / "control-layer.log")
         state.update(env=env, project=project, evidence=self.runs / f"{session.id}.evidence.db")
+        state["policy_snapshot"] = snapshot
         state["gateway_log"] = open(folder / "gateway.log", "wb")
         state["gateway"] = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "intercept.service.local", "--bank-db", str(self.bank), "--application", APPLICATION,
             "--contract-id", contract, "--runs-dir", str(self.runs), "--port", endpoint.rsplit(":", 1)[1],
+            "--policy", str(policy_path), "--policy-revision", snapshot["revision"].removeprefix("sha256:"),
             "--catalog-all", cwd=REPO, env=env, stdout=state["gateway_log"], stderr=asyncio.subprocess.STDOUT,
             start_new_session=True)
         port = free_port()

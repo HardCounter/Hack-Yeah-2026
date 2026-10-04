@@ -89,7 +89,8 @@ def _validate_provider_config(path: Path | None) -> dict:
     return data
 
 
-def prepare_project(project, repo, appid, contractid, model, endpoint, provider_config=None, free=False):
+def prepare_project(project, repo, appid, contractid, model, endpoint, provider_config=None, free=False,
+                    policy_config=None):
     """Create an isolated, gateway-only OpenCode project; never copies repository context."""
     project, repo = Path(project).resolve(), Path(repo).resolve()
     if project == repo or repo in project.parents or project in repo.parents:
@@ -102,13 +103,11 @@ def prepare_project(project, repo, appid, contractid, model, endpoint, provider_
     providers = _validate_provider_config(provider_config)
     # Import through the existing simulation module so tool signatures stay aligned with policy.
     from simulation.agent import SYSTEM, _signatures
-    policy = json.loads((ROOT / "simulation" / "policy.json").read_text(encoding="utf-8"))
-    tool_names = policy["allowed_tools"]
+    policy = json.loads((ROOT / "simulation" / "policy.json").read_text(encoding="utf-8")) if policy_config is None else json.loads(json.dumps(policy_config))
+    tool_names = list(policy["allowed_tools"])
     prompt = SYSTEM.format(signatures=_signatures(tool_names))
     if free:
-        # Free-agent demo: no fixed procedure, every registered tool is offered, the gateway decides.
-        from simulation import agent
-        tool_names = list(agent.registry.REGISTRY)
+        # Free-agent mode removes the fixed procedure, but still advertises only the selected policy tools.
         prompt = FREE_SYSTEM.format(app_id=appid, signatures=_signatures(tool_names))
     config = {
         "$schema": "https://opencode.ai/config.json",
