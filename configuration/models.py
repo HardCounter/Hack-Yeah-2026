@@ -71,6 +71,18 @@ class AllowlistAuditor(Model):
     config: AllowlistConfig
 
 
+class DomainBlocklistConfig(Model):
+    # Hostname syntax is checked by intercept.policy.auditors.validate_specs.
+    domains: Annotated[list[Annotated[str, Field(min_length=1, max_length=253)]], Field(max_length=512)]
+    action: Literal["BLOCK", "REQUIRE_APPROVAL", "ALERT"]
+
+
+class DomainBlocklistAuditor(Model):
+    id: Annotated[str, Field(pattern=r"^[a-z0-9_-]{1,64}$")]
+    type: Literal["domain_blocklist"]
+    config: DomainBlocklistConfig
+
+
 class VelocityGuardConfig(Model):
     enabled: bool = True
     window_s: Annotated[float, Field(gt=0, le=3600)]
@@ -135,7 +147,7 @@ class PolicyConfig(Model):
     require_approval: Annotated[list[Token], Field(max_length=100)]
     feed_version: Token
     controls: Controls
-    auditors: Annotated[list[Annotated[PatternAuditor | ClassifiedAuditor | AllowlistAuditor,
+    auditors: Annotated[list[Annotated[PatternAuditor | ClassifiedAuditor | AllowlistAuditor | DomainBlocklistAuditor,
                                      Field(discriminator="type")]], Field(max_length=32)]
     intercept: InterceptConfig
 

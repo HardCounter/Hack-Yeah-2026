@@ -85,7 +85,7 @@ def validate_policy(value):
         known = {"name", "description", "allowed_tools", "admin_tools", "budget", "tokens", "tool_calls",
                  "cost_usd", "allowed_models", "max_output_tokens", "require_approval", "feed_version",
                  "controls", "email_recipients", "egress_hosts", "model_source_hosts", "allowed_model_suffixes",
-                 "auditors", "id", "type", "config", "patterns", "action", "classes", "intercept",
+                 "auditors", "id", "type", "config", "patterns", "action", "classes", "domains", "intercept",
                  "trajectory_risk", "velocity_guard", "window_s", "max_calls", "feedback", "enabled",
                  "pattern_match", "fields",
                  "allow_agent_scope", "max_ttl_s", "max_signals_per_session_per_minute", "allowed_actions",
