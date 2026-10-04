@@ -25,7 +25,7 @@
   </div>
   <nav class="wrap tabs" aria-label="Sections">
     <a href="/opencode-wrapper/"><span class="t">PROMPT AGENT YOURSELF</span></a>
-    <a href="#config"><span class="t">Config - configure your agentic tools</span></a>
+    <a href="#config"><span class="t">Config</span></a>
     <a href="#metrics"><span class="t">Metrics</span></a>
     <a href="#tests"><span class="t">Tests</span></a>
   </nav>
@@ -63,14 +63,23 @@
             <label class="slider"><span>Tokens per session</span><input type="range" name="tokens" min="1000" max="100000" step="1000"><output data-for="tokens"></output></label>
             <label class="slider"><span>Tool calls per session</span><input type="range" name="tool_calls" min="1" max="100" step="1"><output data-for="tool_calls"></output></label>
             <label class="slider"><span>Max answer tokens</span><input type="range" name="max_output_tokens" min="128" max="8192" step="128"><output data-for="max_output_tokens"></output></label>
-            <label class="field"><span>Cost limit (USD) <small>empty = no limit</small></span><input type="number" name="cost_usd" min="0" max="1000" step="0.5" placeholder="No limit"></label>
+            <label class="field"><span>Cost limit per session (USD) <small>empty = no limit</small></span><input type="number" name="cost_usd" min="0" max="1000" step="0.5" placeholder="No limit"></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="section">
+          <h3>Models</h3>
+          <div class="two">
+            <div class="field"><span id="cfgAgentModelsLabel">Agent models <small>models agents may call</small></span>
+              <details class="multi" id="cfgAgentModels"><summary aria-labelledby="cfgAgentModelsLabel cfgAgentModelsSum"><span id="cfgAgentModelsSum"></span></summary><ul></ul></details></div>
+            <div class="field"><span id="cfgJudgeModelsLabel">Judge models <small>models the guardrails may use</small></span>
+              <details class="multi" id="cfgJudgeModels"><summary aria-labelledby="cfgJudgeModelsLabel cfgJudgeModelsSum"><span id="cfgJudgeModelsSum"></span></summary><ul></ul></details></div>
           </div>
         </fieldset>
 
         <fieldset class="section">
           <h3>Prompt injection</h3>
           <label class="slider"><span>Block a message when the AI is at least this sure it is an attack</span><input type="range" name="block_threshold" min="0.7" max="0.99" step="0.01"><output data-for="block_threshold"></output></label>
-          <p class="hint">Presets: lenient 95%, standard 90%, strict 80%.</p>
           <label class="slider"><span>Hold for human approval from</span><input type="range" name="approve_threshold" min="0.5" max="0.99" step="0.01"><output data-for="approve_threshold"></output></label>
           <label class="slider"><span>Alert only from</span><input type="range" name="alert_threshold" min="0.3" max="0.99" step="0.01"><output data-for="alert_threshold"></output></label>
           <div class="two">
@@ -112,6 +121,7 @@
 
   <!-- METRICS -->
   <section id="v-metrics" data-view hidden aria-labelledby="h-metrics">
+   <div id="mMain">
     <div class="page-head">
       <div>
         <h1 id="h-metrics">Metrics</h1>
@@ -126,14 +136,34 @@
 
     <div class="kpis" id="kpis"></div>
 
-    <div class="panel risk-panel">
-      <div class="panel-head"><h2>Risk map · likelihood × impact</h2><span class="cap faint">Each dot is one agent session, scored like the backend's trajectory-risk plugin</span></div>
-      <div class="risk-grid">
-        <div class="panel-body">
-          <svg id="riskMap" viewBox="0 0 680 400" role="img" aria-labelledby="riskTitle"><title id="riskTitle">Agent sessions by likelihood of going wrong and impact of their riskiest executed step</title></svg>
-          <div class="legend" id="riskLegend"></div>
+    <div class="grid risk-grid">
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head"><h2>Risk map · likelihood × impact</h2><span class="cap faint">Each dot is one agent session</span></div>
+          <div class="panel-body">
+            <svg id="riskMap" viewBox="0 0 680 400" role="img" aria-labelledby="riskTitle"><title id="riskTitle">Agent sessions by likelihood of going wrong and impact of their riskiest executed step</title></svg>
+            <div class="legend" id="riskLegend"></div>
+          </div>
         </div>
-        <div class="risk-side">
+        <div class="panel">
+          <div class="panel-head"><h2>Controls</h2><span class="cap faint">Per control, since start</span></div>
+          <div class="scroll"><table>
+            <thead><tr><th>Control</th><th class="n">Runs</th><th class="n">Acted</th><th class="n">p50</th><th class="n">p95</th></tr></thead>
+            <tbody id="ctlTable"></tbody>
+          </table></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Gateway performance</h2><span class="cap faint">From the read API, last 24 h</span></div>
+          <div class="scroll"><table>
+            <thead><tr><th>Path</th><th class="n">Runs</th><th class="n">p50</th><th class="n">p95</th><th class="n">p99</th></tr></thead>
+            <tbody id="perfTable"></tbody>
+          </table></div>
+          <div class="panel-body"><p class="cap muted" id="perfTxt"></p></div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="panel risk-side">
+          <div class="panel-head"><h2>Sessions</h2><span class="cap faint">Highest expected loss first</span></div>
           <div class="scroll"><table>
             <thead><tr><th>Session</th><th class="n">P</th><th class="n">C</th><th class="n">Exp. loss</th><th>Level</th><th>Proposed action</th></tr></thead>
             <tbody id="riskTable"></tbody>
@@ -147,11 +177,6 @@
             <dd>Adds up likelihood × impact over every step that ran. Blocked steps add nothing but raise the likelihood of later ones. It sets the level: medium from 3, high from 8 (a human must approve further actions), critical from 15 (the session is halted).</dd>
           </dl>
         </div>
-      </div>
-    </div>
-
-    <div class="grid halves">
-      <div class="stack">
         <div class="panel">
           <div class="panel-head"><h2>Session budget</h2><span class="cap faint mono" id="budTxt"></span></div>
           <div class="panel-body">
@@ -159,21 +184,29 @@
             <p class="cap muted" id="costTxt"></p>
           </div>
         </div>
-        <div class="panel">
-          <div class="panel-head"><h2>Controls</h2><span class="cap faint">Per control, since start</span></div>
-          <div class="scroll"><table>
-            <thead><tr><th>Control</th><th class="n">Runs</th><th class="n">Acted</th><th class="n">p50</th><th class="n">p95</th></tr></thead>
-            <tbody id="ctlTable"></tbody>
-          </table></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Audit log</h2><span class="cap faint">Newest first · excerpts are sanitized</span></div>
+      <div class="scroll"><table>
+        <thead><tr><th>Time</th><th>Decision</th><th>Rule</th><th>Excerpt</th></tr></thead>
+        <tbody id="audit"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+    <!-- Drill-down: one record type (#metrics/<view>) or one record (#metrics/<view>/<id>) -->
+    <div id="mDrill" hidden>
+      <div class="page-head">
+        <div>
+          <a class="back cap" id="dBack" href="#metrics">← Back</a>
+          <h1 id="dTitle"></h1>
+          <p class="cap muted" id="dSub"></p>
         </div>
+        <div class="actions"><button class="btn ghost" id="dExport" type="button"></button></div>
       </div>
-      <div class="panel">
-        <div class="panel-head"><h2>Audit log</h2><span class="cap faint">Newest first · excerpts are sanitized</span></div>
-        <div class="scroll"><table>
-          <thead><tr><th>Time</th><th>Decision</th><th>Rule</th><th>Excerpt</th></tr></thead>
-          <tbody id="audit"></tbody>
-        </table></div>
-      </div>
+      <div class="panel" id="dBody"></div>
     </div>
   </section>
 
@@ -219,6 +252,7 @@
     </div>
   </section>
 </main>
+
 
 <div class="pop" id="pop" hidden></div>
 </body>

@@ -80,10 +80,30 @@ class FeedbackController:
         if p.ttl_s <= 0:
             return "bad_ttl"
         now = a.ts
-        active = [x for x in self._active.get(self._scope_key(p, a), ()) if x.expires_at > now]
-        if any(x.action == "HALT_SESSION" or (x.action == p.action and set(p.tools) <= x.tools) for x in active):
+        scope_k = self._scope_key(p, a)
+        active = [x for x in self._active.get(scope_k, ()) if x.expires_at > now]
+        if active:
+            self._active[scope_k] = active
+        else:
+            self._active.pop(scope_k, None)
+
+        if any(x.action == "HALT_SESSION" or (x.action == p.action and ("*" in x.tools or set(p.tools) <= x.tools)) for x in active):
             return "already_active"
+
         recent = [t for t in self._recent.get(a.session_id, ()) if t > now - RATE_WINDOW]
+        if recent:
+            self._recent[a.session_id] = recent
+        else:
+            self._recent.pop(a.session_id, None)
+
+        # Bound inactive scope and session cache growth
+        if len(self._active) > 128:
+            for k in [k for k, items in self._active.items() if not any(x.expires_at > now for x in items)]:
+                self._active.pop(k, None)
+        if len(self._recent) > 128:
+            for k in [k for k, ts_list in self._recent.items() if not any(t > now - RATE_WINDOW for t in ts_list)]:
+                self._recent.pop(k, None)
+
         if len(recent) >= self.cfg.max_signals_per_session_per_minute:
             return "rate_limited"
         return None

@@ -291,3 +291,173 @@ def test_missing_bank_or_process_trace_is_incomplete(tmp_path, verifier_store):
     asyncio.run(plugin.handle(ended_action(), ctx))
     assert ctx.findings[0].details["verification_status"] == "VERIFICATION_INCOMPLETE"
     assert ctx.findings[0].details["checks"][0]["detail"] == "PROCESS_TRACE_MISSING"
+
+
+# --- Gap coverage: every guard and mutation must end INCOMPLETE or FAILED with a fixed code. ---
+
+APPLICANT_PII = ("Katarzyna Nowak",)
+APPROVED_TRACE = ("audit-read", "audit-screen", "audit-create")
+
+
+def verify(bank_path, *, contract=None, trace_ids=("audit-read",), event=None, use_default_contract=True):
+    plugin = OutcomeVerifier(bank_paths={"sess-verifier": bank_path})
+    asyncio.run(plugin.setup(SimpleNamespace(config={})))
+    ctx = Context(contract if contract is not None or not use_default_contract else make_contract(), trace_ids)
+    asyncio.run(plugin.handle(event or ended_action(), ctx))
+    return ctx.findings
+
+
+def check(findings, check_id):
+    return next(c for c in findings[0].details["checks"] if c["id"] == check_id)
+
+
+def assert_no_pii(findings):
+    serialized = json.dumps([f.details for f in findings]) + " ".join(f.summary for f in findings)
+    for value in APPLICANT_PII:
+        assert value not in serialized
+
+
+def test_non_ended_session_event_is_ignored(tmp_path):
+    raw_event = ended_action()
+    started = SimpleNamespace(kind="session", payload=SimpleNamespace(phase="started"),
+                              session_id=raw_event.session_id)
+    plugin = OutcomeVerifier(bank_paths={"sess-verifier": tmp_path / "unused.db"})
+    asyncio.run(plugin.setup(SimpleNamespace(config={})))
+    ctx = Context(make_contract())
+    asyncio.run(plugin.handle(started, ctx))
+    assert ctx.findings == []
+
+
+@pytest.mark.parametrize(("contract", "event", "code"), [
+    (None, None, "TRUSTED_CONTRACT_MISSING"),
+    (make_contract(session_id="other-session"), None, "CONTRACT_TARGET_INVALID"),
+    (make_contract(), ended_action(app_id="APP-0002"), "EVENT_CONTRACT_MISMATCH"),
+])
+def test_untrusted_or_mismatched_contract_is_incomplete(tmp_path, contract, event, code):
+    bank_path = tmp_path / "bank.db"
+    seed_bank(bank_path, status="rejected")
+    findings = verify(bank_path, contract=contract, event=event, use_default_contract=False)
+    assert findings[0].details["verification_status"] == "VERIFICATION_INCOMPLETE"
+    assert findings[0].details["checks"][0]["detail"] == code
+
+
+@pytest.mark.parametrize(("sql", "check_id", "status", "code"), [
+    ("DELETE FROM governed_baselines", "KYC-BASELINE", "INCOMPLETE", "TRUSTED_BASELINE_MISSING"),
+    ("UPDATE governed_baselines SET run_id='run-other'", "KYC-BASELINE", "FAIL", "TRUSTED_BASELINE_BINDING_MISMATCH"),
+    ("UPDATE onboarding_applications SET declared=json_set(declared,'$.name','Someone Else') "
+     "WHERE application_id='APP-0001'", "KYC-IDENTITY", "FAIL", "PERSISTED_IDENTITY_MISMATCH"),
+    ("DELETE FROM documents WHERE application_id='APP-0001'", "KYC-IDENTITY", "FAIL", "PERSISTED_IDENTITY_MISMATCH"),
+    ("UPDATE onboarding_applications SET declared='not json' WHERE application_id='APP-0001'",
+     "KYC-IDENTITY", "FAIL", "PERSISTED_IDENTITY_INVALID"),
+    ("INSERT INTO clients(client_id,client_type,full_name,date_of_birth,application_id) "
+     "VALUES('CLI-STRAY','individual','X',NULL,'APP-0001')", "KYC-CLIENT-COUNT", "FAIL", "TERMINAL_STATE_HAS_CLIENT"),
+    ("UPDATE onboarding_applications SET status='pending' WHERE application_id='APP-0001'",
+     "KYC-CLIENT-COUNT", "INCOMPLETE", "APPLICATION_NOT_TERMINAL"),
+])
+def test_persisted_state_drift_never_verifies(tmp_path, sql, check_id, status, code):
+    bank_path = tmp_path / "bank.db"
+    seed_bank(bank_path, status="rejected")
+    with sqlite3.connect(bank_path) as con:
+        con.execute(sql)
+    findings = verify(bank_path)
+    assert findings[0].details["verification_status"] != "VERIFIED_SUCCESS"
+    assert check(findings, check_id) == {"id": check_id, "status": status, "detail": code}
+    assert_no_pii(findings)
+
+
+def test_missing_pinned_screening_feed_is_incomplete(tmp_path):
+    from dataclasses import replace
+    bank_path = tmp_path / "bank.db"
+    seed_bank(bank_path, status="rejected")
+    findings = verify(bank_path, contract=replace(make_contract(), feed_version=""))
+    assert findings[0].details["checks"][0]["detail"] == "PINNED_SCREENING_SOURCE_MISSING"
+
+
+def test_action_provenance_must_match_bank_audit(tmp_path):
+    bank_path = tmp_path / "bank.db"
+    seed_bank(bank_path, status="rejected")
+    # L2 saw an action the bank never recorded.
+    findings = verify(bank_path, trace_ids=("audit-read", "audit-ghost"))
+    assert check(findings, "KYC-ACTION-PROVENANCE")["detail"] == "ACTION_ID_SET_MISMATCH"
+    # L2 recorded the same action twice.
+    findings = verify(bank_path, trace_ids=("audit-read", "audit-read"))
+    assert check(findings, "KYC-ACTION-PROVENANCE")["detail"] == "ACTION_ID_SET_MISMATCH"
+
+
+def test_l2_action_without_id_is_incomplete(tmp_path):
+    bank_path = tmp_path / "bank.db"
+    seed_bank(bank_path, status="rejected")
+
+    class NoIds(Context):
+        async def trajectory(self):
+            traj = await super().trajectory()
+            return SimpleNamespace(actions=tuple(SimpleNamespace(**{**vars(a), "raw": {}}) for a in traj.actions))
+
+    plugin = OutcomeVerifier(bank_paths={"sess-verifier": bank_path})
+    asyncio.run(plugin.setup(SimpleNamespace(config={})))
+    ctx = NoIds(make_contract())
+    asyncio.run(plugin.handle(ended_action(), ctx))
+    assert check(ctx.findings, "KYC-ACTION-PROVENANCE") == {
+        "id": "KYC-ACTION-PROVENANCE", "status": "INCOMPLETE", "detail": "L2_ACTION_ID_MISSING"}
+
+
+@pytest.mark.parametrize(("sql", "code"), [
+    ("UPDATE effect_receipts SET policy_hash='" + "b" * 64 + "'", "EFFECT_RECEIPT_BINDING_MISMATCH"),
+    ("UPDATE effect_receipts SET run_id='run-other'", "EFFECT_RECEIPT_BINDING_MISMATCH"),
+    ("UPDATE effect_receipts SET action_id='audit-read'", "EFFECT_RECEIPT_BINDING_MISMATCH"),
+])
+def test_effect_receipt_must_bind_run_policy_and_create_action(tmp_path, sql, code):
+    bank_path = tmp_path / "bank.db"
+    seed_bank(bank_path, status="approved", created_name="__declared__")
+    with sqlite3.connect(bank_path) as con:
+        con.execute(sql)
+    findings = verify(bank_path, trace_ids=APPROVED_TRACE)
+    assert findings[0].details["verification_status"] == "FAILED_POSTCONDITIONS"
+    assert check(findings, "KYC-EFFECT-RECEIPT")["detail"] == code
+
+
+def test_screening_after_create_is_rejected(tmp_path):
+    bank_path = tmp_path / "bank.db"
+    seed_bank(bank_path, status="approved", created_name="__declared__")
+    findings = verify(bank_path, trace_ids=("audit-read", "audit-create", "audit-screen"))
+    assert check(findings, "KYC-SCREENING-EVIDENCE")["detail"] == "SCREENING_AFTER_CREATE"
+
+
+def test_approving_a_true_sanctions_match_fails_onb_p1(tmp_path):
+    bank_path = tmp_path / "bank.db"
+    seed_bank(bank_path, app_id="APP-0004", status="approved", created_name="__declared__")
+    findings = verify(bank_path, contract=make_contract("APP-0004"), event=ended_action("APP-0004"),
+                      trace_ids=APPROVED_TRACE)
+    assert findings[0].details["verification_status"] == "FAILED_POSTCONDITIONS"
+    assert findings[0].severity == "high"
+    assert check(findings, "ONB-P1") == {"id": "ONB-P1", "status": "FAIL", "detail": "SANCTIONS_HIT_NOT_MITIGATED"}
+
+
+def test_unreadable_bank_is_incomplete_without_leaking_error_text(tmp_path):
+    bank_path = tmp_path / "corrupt.db"
+    bank_path.write_bytes(b"this is not sqlite" * 100)
+    findings = verify(bank_path)
+    assert findings[0].details["checks"][0]["detail"] == "VERIFIER_EXECUTION_FAILED"
+    assert str(tmp_path) not in json.dumps(findings[0].details)
+
+
+def test_verifier_never_modifies_the_bank(tmp_path):
+    bank_path = tmp_path / "bank.db"
+    seed_bank(bank_path, status="approved", created_name="__declared__")
+    before = hashlib.sha256(bank_path.read_bytes()).hexdigest()
+    findings = verify(bank_path, trace_ids=APPROVED_TRACE)
+    assert findings[0].details["verification_status"] == "VERIFIED_SUCCESS"
+    assert findings[0].severity == "low"
+    assert hashlib.sha256(bank_path.read_bytes()).hexdigest() == before
+
+
+def test_bank_path_from_config_and_resolver(tmp_path):
+    bank_path = tmp_path / "bank.db"
+    seed_bank(bank_path, status="rejected")
+    for plugin, config in ((OutcomeVerifier(), {"bank_path": str(bank_path)}),
+                           (OutcomeVerifier(bank_path_resolver=lambda sid: bank_path), {})):
+        asyncio.run(plugin.setup(SimpleNamespace(config=config)))
+        ctx = Context(make_contract())
+        asyncio.run(plugin.handle(ended_action(), ctx))
+        assert ctx.findings[0].details["verification_status"] == "VERIFIED_SUCCESS"
+    assert asyncio.run(OutcomeVerifier().result("sess-verifier")) is None

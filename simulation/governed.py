@@ -26,8 +26,9 @@ POLICY_PATH = Path(__file__).with_name("policy.json")
 class GovernedRuntime:
     """Composition root; only this trusted runtime issues authority and identity."""
 
-    def __init__(self, ctx, app_id, *, policy_path=POLICY_PATH, policy_config=None, contract_id=None):
-        self._configure(ctx, app_id, policy_path, policy_config, contract_id)
+    def __init__(self, ctx, app_id, *, policy_path=POLICY_PATH, policy_config=None, contract_id=None,
+                 policy_revision=None):
+        self._configure(ctx, app_id, policy_path, policy_config, contract_id, policy_revision)
         self.runner = asyncio.Runner()
         try:
             self.runner.run(self._start())
@@ -37,19 +38,24 @@ class GovernedRuntime:
             self.runner.close()
             raise
 
-    def _configure(self, ctx, app_id, policy_path, policy_config, contract_id):
+    def _configure(self, ctx, app_id, policy_path, policy_config, contract_id, policy_revision=None):
         self.ctx = ctx
         self.app_id = app_id
         self.config = json.loads(Path(policy_path).read_text()) if policy_config is None else json.loads(json.dumps(policy_config))
+        self.policy_revision = policy_revision
+        # Layer 1 plugins use managed config; Layer 3 remains on its existing trusted path.
+        self.consumer_config = (json.loads(POLICY_PATH.read_text())["consumer"]
+                                if "intercept" in self.config else self.config["consumer"])
         self.operator_contract_id = contract_id
         self.closed = False
         self.decisions = []
 
     @classmethod
-    async def create(cls, ctx, app_id, *, policy_path=POLICY_PATH, policy_config=None, contract_id=None):
+    async def create(cls, ctx, app_id, *, policy_path=POLICY_PATH, policy_config=None, contract_id=None,
+                     policy_revision=None):
         """Async composition for the HTTP/OpenCode execution adapter."""
         runtime = cls.__new__(cls)
-        runtime._configure(ctx, app_id, policy_path, policy_config, contract_id)
+        runtime._configure(ctx, app_id, policy_path, policy_config, contract_id, policy_revision)
         runtime.runner = None
         try:
             await runtime._start()
@@ -65,7 +71,6 @@ class GovernedRuntime:
         from consume_plane.adapters.persistence import PersistenceEventSource, PersistenceTrajectoryReader, PersistenceFindingSink
         from consume_plane.plugins.outcome_verifier import OutcomeVerifier
         from consume_plane.plugins.trajectory_risk import TrajectoryRisk
-        from consume_plane.plugins.gateway_violations import GatewayViolations
         import registry
 
         self.audit_path = Path(self.ctx.db).with_name(f"{self.ctx.session_id}.evidence.db")
@@ -90,7 +95,8 @@ class GovernedRuntime:
         policy = Policy(core)
         # Pin the full central configuration, including controls and consumer thresholds.
         import hashlib
-        policy.version = hashlib.sha256(json.dumps(self.config, sort_keys=True, allow_nan=False).encode()).hexdigest()
+        policy.version = self.policy_revision or hashlib.sha256(
+            json.dumps(self.config, sort_keys=True, allow_nan=False).encode()).hexdigest()
         self.contract = TaskContract(
             contract_id=core["runs"][self.ctx.session_id]["contract_id"],
             run_id=f"run_{self.ctx.session_id}", session_id=self.ctx.session_id,
@@ -102,7 +108,10 @@ class GovernedRuntime:
         )
         credential = object()
         self._feedback_credential = credential
-        self.gateway = GovernedGateway(policy, Pipeline(self.config["auditors"]), self.persistence,
+        plugin_settings = {key: value for key, value in self.config.get("intercept", {}).items()
+                           if key in {"pattern_match", "velocity_guard"} and value is not None}
+        self.gateway = GovernedGateway(policy, Pipeline(self.config["auditors"], plugin_config=plugin_settings,
+                                                       contract=self.contract, policy_level=self.config.get("name", "standard")), self.persistence,
                                        registry_module=registry, feedback_credential=credential,
                                        controls=self.config.get("controls") or {})
         self.source = PersistenceEventSource(self.persistence)
@@ -112,11 +121,11 @@ class GovernedRuntime:
         cfg = ConsumePlaneConfig(
             source=SourceConfig(poll_timeout_s=0.01), partitions=1,
             ledger_path=str(self.audit_path.with_suffix(".ledger.db")), retry_backoff_s=0.01,
-            feedback=FeedbackConfig(**self.config["consumer"]["feedback"]),
-            plugins={"trajectory-risk": PluginEntry(name="trajectory-risk", config=self.config["consumer"]["trajectory_risk"])},
+            feedback=FeedbackConfig(**self.consumer_config["feedback"]),
+            plugins={"trajectory-risk": PluginEntry(name="trajectory-risk", config=self.consumer_config["trajectory_risk"])},
         )
         self.manager = await build_manager(cfg, source=self.source, reader=self.reader, sinks=[self.sink],
-                                           channel=InProcessFeedbackChannel(self.gateway, credential), extra_plugins=[TrajectoryRisk, GatewayViolations])
+                                           channel=InProcessFeedbackChannel(self.gateway, credential), extra_plugins=[TrajectoryRisk])
         self.verifier = OutcomeVerifier(bank_paths={self.ctx.session_id: Path(self.ctx.db)}, result_store=self.store)
         await self.verifier.setup(SetupContext(self.verifier.name, {}, self.manager.registry.plugins[0].log))
         self.manager.registry.plugins.append(LoadedPlugin(self.verifier, self.verifier.name, self.verifier.version,

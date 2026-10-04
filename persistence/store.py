@@ -352,7 +352,7 @@ class EventStore:
                 except OSError:
                     pass
 
-            consumers = [r[0] for r in conn.execute("SELECT name FROM consumers")]
+            consumers = [r[0] for r in conn.execute("SELECT name FROM consumers WHERE status != 'RETIRED'")]
             pending = conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0]
             inserted = 0
             for row in rows:
@@ -422,7 +422,22 @@ class EventStore:
                 ORDER BY e.rowid, o.consumer_name LIMIT 1""", [*names, now, now]).fetchone()
             if row is None:
                 return None
-            event = sanitize_event(ActionEventEnvelope.from_json(row["payload_json"]))
+            try:
+                event = sanitize_event(ActionEventEnvelope.from_json(row["payload_json"]))
+            except Exception as e:
+                # Record in dead letter queue before deleting from outbox.
+                # Both operations occur within the same immediate transaction:
+                # if DLQ insertion fails, the exception propagates, the transaction
+                # rolls back, and the outbox row is preserved for investigation and recovery.
+                self._insert_dead_letter(DeadLetterEnvelope(
+                    event={"event_id": row["event_id"], "corrupted_payload": True, "error": str(e)},
+                    consumer_name=row["consumer_name"],
+                    error_message="CONSUMER_DELIVERY_FAILED",
+                    retry_count=row["attempts"],
+                ))
+                conn.execute("DELETE FROM outbox WHERE event_id = ? AND consumer_name = ?",
+                             (row["event_id"], row["consumer_name"]))
+                return None
             if row["attempts"] > max_retries:
                 self._insert_dead_letter(DeadLetterEnvelope(event, row["consumer_name"],
                     "CONSUMER_DELIVERY_FAILED", retry_count=max(0, row["attempts"] - 1)))
@@ -947,6 +962,12 @@ class EventStore:
         conn = self._get_connection()
         with conn:
             conn.execute("BEGIN IMMEDIATE")
+            conn.execute("""DELETE FROM consumer_completions WHERE event_id IN
+                (SELECT event_id FROM events WHERE ts < ? AND NOT EXISTS
+                    (SELECT 1 FROM outbox WHERE outbox.event_id = events.event_id))""", (before,))
+            conn.execute("""DELETE FROM audit_run_indices WHERE event_id IN
+                (SELECT event_id FROM events WHERE ts < ? AND NOT EXISTS
+                    (SELECT 1 FROM outbox WHERE outbox.event_id = events.event_id))""", (before,))
             deleted = conn.execute("""DELETE FROM events WHERE ts < ? AND NOT EXISTS
                 (SELECT 1 FROM outbox WHERE outbox.event_id = events.event_id)""", (before,)).rowcount
             conn.execute("DELETE FROM alerts WHERE ts < ?", (before,))

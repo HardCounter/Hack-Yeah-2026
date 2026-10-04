@@ -1,0 +1,37 @@
+Sentinel Interlock (SI) by HardCounter
+
+Most AI safety tools are filters. They read what a model says and hope to catch the bad part. Sentinel Interlock works like the safety mechanism on industrial machinery: nothing moves until the check passes. Every tool call, API request or file modification which an AI agent attempts is intercepted and scored against a configurable policy. It is then allowed, escalated to a human, or hard-stopped. The interlock runs outside the model, so prompt injection and jailbreaks can't argue their way past it. Every decision is logged with its reason, giving operators a full audit trail. The name is deliberate: SI is Polish for AI. We're building the safety catch the AI itself can't remove.
+
+
+
+PROBLEM
+AI has moved from answering questions to taking actions. Agents now send emails, run code, move money and edit production data on their own. Yet the safeguards around them were built for chatbots. They check what a model says, not what it does, and they live inside the same prompt an attacker can manipulate. One injected instruction in a webpage or document can turn a helpful agent into one that leaks data or deletes records. By the time anyone reads the logs, the damage is done. Organizations want to deploy AI agents, but today they have no reliable way to stop a bad action before it happens. That's where the Sentinel Interlock comes in.
+
+
+
+THE SOLUTION
+Sentinel Interlock is a control layer that sits between an AI agent and the systems it can touch. It is intended for companies and teams that want to put AI agents to work on real tasks without handing them unchecked power. Every action the agent attempts is caught before it runs and checked against a policy the team writes in a simple config. Safe actions pass instantly, risky ones go to a human for approval, and forbidden ones are hard-stopped. Because the check runs outside the model, a manipulated prompt can't switch it off.
+
+Benefits: teams can deploy AI agents with confidence instead of fear. Incidents are prevented rather than cleaned up afterwards. Each decision comes with a clear audit trail for security and compliance. It works with existing agents, with no retraining or model changes.
+
+
+
+
+
+What's done so far and our goal
+
+Sentinel Interlock was started from scratch at HackYeah 2026. No code or design existed before the event. Our goal is to deliver a working AI Control Layer within 24 hours. It consists of:
+
+- Interception gateway that sits in front of the agent and captures every prompt and tool call before it executes.
+- Hybrid guardrail engine. Fast regex and signature checks catch PII, leaked secrets and known exploits. A local semantic model detects prompt injection and goal drift. No data leaves your infrastructure.
+- Centralized live policy. Rules change instantly across all agents, with no restart.
+- Budget caps on tokens, execution time and tool calls, so a runaway agent can't burn resources.
+- Persistent audit logs that record every decision and its reason.
+- Live security dashboard showing allowed, escalated and blocked actions in real time.
+
+
+
+Table number A7
+HardCounter
+
+

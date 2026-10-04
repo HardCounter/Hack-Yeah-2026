@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, FastAPI, Path, Query, Request
+from fastapi import APIRouter, FastAPI, Path as FastApiPath, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -43,7 +43,7 @@ SEVERITIES = list(Severity.__args__)
 BUCKET_SECONDS = {"1m": 60, "5m": 300, "1h": 3600, "1d": 86400}
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
 
-Id = Annotated[str, Path(pattern=ID_PATTERN)]
+Id = Annotated[str, FastApiPath(pattern=ID_PATTERN)]
 OptId = Annotated[str | None, Query(pattern=ID_PATTERN)]
 Csv = Annotated[str | None, Query(description="comma-separated values")]
 Limit = Annotated[int, Query(ge=1, le=1000)]
@@ -58,7 +58,7 @@ class ApiError(Exception):
         "invalid_cursor": "cursor is invalid or outdated",
         "invalid_filter": "unknown filter value",
         "not_found": "resource not found",
-        "method_not_allowed": "only GET is supported",
+        "method_not_allowed": "method not allowed",
         "evidence_expired": "evidence for this run has expired",
         "export_quota_exceeded": "export exceeds the configured quota",
         "store_unavailable": "evidence store is unavailable",
@@ -269,6 +269,13 @@ async def security_metrics(agent_id: OptId = None, session_id: OptId = None,
     return ex.security_overview(lo, hi, top)
 
 
+@router.get("/metrics/performance")
+async def performance_metrics(agent_id: OptId = None, session_id: OptId = None,
+                              since: Since = None, until: Until = None):
+    lo, hi = window(since, until, timedelta(hours=24))
+    return ex.performance_overview(lo, hi)
+
+
 @router.get("/metrics/timeseries")
 async def timeseries(metric: Metric, bucket: Bucket = "5m", agent_id: OptId = None, session_id: OptId = None,
                      since: Since = None, until: Until = None):
@@ -334,21 +341,24 @@ EVIDENCE_GLOB = "*.evidence.db"  # GovernedRuntime writes <runs-dir>/<session_id
 
 
 def create_app(cors_origins: frozenset[str] = frozenset(), docs: bool = True,
-               evidence_dir: Path | None = None) -> FastAPI:
-    """Build the app. It has no authentication: the CLI binds loopback unless --allow-remote is given.
+               evidence_dir: Path | None = None, *, config_service=None, config_admin_token=None) -> FastAPI:
+    """Build dashboard reads and authenticated config management (evidence remains read-only).
 
     ``evidence_dir`` holds the per-session evidence stores the handlers will read once implemented.
     """
-    app = FastAPI(title="Persistence read API (stub)", version="0.1.0",
-                  description="Read-only dashboard API, docs/rest.md. Serves example data.",
+    app = FastAPI(title="Dashboard reads and configuration management", version="0.1.0",
+                  description="Evidence reads serve example data; configuration management is file-backed. See docs/rest.md.",
                   docs_url="/api/v1/docs" if docs else None, redoc_url=None,
                   openapi_url="/api/v1/openapi.json" if docs else None)
     app.state.evidence_dir = evidence_dir
     app.include_router(router)
+    from configuration.api import install_config_api, management_put
+    install_config_api(app, config_service=config_service, admin_token=config_admin_token)
 
     @app.middleware("http")
     async def read_only(request: Request, call_next):
-        if request.method not in ("GET", "HEAD"):
+        if request.method not in ("GET", "HEAD") and not (
+                request.method == "PUT" and management_put(request.url.path)):
             return error_response(405, "method_not_allowed")
         response = await call_next(request)
         response.headers.setdefault("Cache-Control", "no-store")
@@ -356,7 +366,8 @@ def create_app(cors_origins: frozenset[str] = frozenset(), docs: bool = True,
 
     # Registered after read_only so it runs outside it and answers CORS preflight (OPTIONS).
     if cors_origins:
-        app.add_middleware(CORSMiddleware, allow_origins=sorted(cors_origins), allow_methods=["GET"])
+        app.add_middleware(CORSMiddleware, allow_origins=sorted(cors_origins), allow_methods=["GET", "PUT"],
+                           allow_headers=["Authorization", "Content-Type"], expose_headers=["ETag"])
 
     @app.exception_handler(ApiError)
     async def api_error(_: Request, exc: ApiError):

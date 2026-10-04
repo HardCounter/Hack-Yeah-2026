@@ -12,37 +12,83 @@ CLASSIFIED = {
     # Operator-selected classes. The expressions live in code, not in the policy file.
     "pesel": re.compile(r"\b\d{11}\b"),
     "iban": re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"),
-    "aws_access_key": re.compile(r"\bAKIA[A-Z2-7]{16}\b"),
-    "private_key": re.compile(r"-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----", re.DOTALL),
+    "aws_access_key": re.compile(r"\b(AKIA|ASIA)[A-Z2-7]{16}\b"),
+    "private_key": re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.DOTALL),
     "api_key": re.compile(r"\bpgw_live_[A-Za-z0-9]+\b"),
 }
+DOMAIN = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")
+HOST_TOKEN = re.compile(r"(?i)(?<![a-z0-9-])(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}")
+
+
+def _hosts(value):
+    """Hostnames named in a string: URL hosts, email domains and bare domain tokens."""
+    found = set()
+    for token in re.split(r"[\s\"'<>()\[\],;]+", value):
+        if "://" in token:
+            try:
+                token = urlsplit(token).hostname or ""
+            except ValueError:
+                continue
+        token = token.rpartition("@")[2]
+        try:  # internationalized names are compared in their punycode form
+            token = token.encode("idna").decode("ascii")
+        except UnicodeError:
+            pass
+        found.update(match.lower().rstrip(".") for match in HOST_TOKEN.findall(token))
+    return found
+
+
+def _blocklisted(host, domains):
+    labels = host.split(".")
+    return any(".".join(labels[i:]) in domains for i in range(len(labels) - 1))
 
 
 def _contains_literal(value, pattern):
-    folded_value, folded_pattern = value.casefold(), pattern.casefold()
-    if len(folded_value) != len(value):
-        return pattern in value
-    return folded_pattern in folded_value
+    return pattern.casefold() in value.casefold()
 
 
-def _redact_literal(value, pattern):
-    folded_value, folded_pattern = value.casefold(), pattern.casefold()
-    if len(folded_value) != len(value) or len(folded_pattern) != len(pattern):
-        if pattern not in value:
-            return value, False
-        return value.replace(pattern, "[REDACTED]"), True
-    if folded_pattern not in folded_value:
-        return value, False
-    parts, start = [], 0
+def _find_casefold_spans(value: str, pattern: str) -> list[tuple[int, int]]:
+    folded_pattern = pattern.casefold()
+    if not folded_pattern:
+        return []
+    char_map: list[int] = []
+    folded_chars: list[str] = []
+    for orig_idx, char in enumerate(value):
+        folded_char = char.casefold()
+        for _ in folded_char:
+            char_map.append(orig_idx)
+        folded_chars.append(folded_char)
+    folded_value = "".join(folded_chars)
+    spans: list[tuple[int, int]] = []
+    start = 0
+    pattern_len = len(folded_pattern)
     while True:
-        found = folded_value.find(folded_pattern, start)
-        if found < 0:
-            parts.append(value[start:])
+        idx = folded_value.find(folded_pattern, start)
+        if idx == -1:
             break
-        parts.append(value[start:found])
+        orig_start = char_map[idx]
+        orig_end = char_map[idx + pattern_len - 1] + 1
+        if spans and orig_start < spans[-1][1]:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], orig_end))
+        else:
+            spans.append((orig_start, orig_end))
+        start = idx + pattern_len
+    return spans
+
+
+def _redact_literal(value: str, pattern: str) -> tuple[str, bool]:
+    spans = _find_casefold_spans(value, pattern)
+    if not spans:
+        return value, False
+    parts = []
+    last_end = 0
+    for start, end in spans:
+        parts.append(value[last_end:start])
         parts.append("[REDACTED]")
-        start = found + len(folded_pattern)
+        last_end = end
+    parts.append(value[last_end:])
     return "".join(parts), True
+
 
 
 def validate_specs(specs):
@@ -72,6 +118,12 @@ def validate_specs(specs):
                 raise ValueError("invalid classified scanner")
             if not isinstance(c["classes"], list) or not c["classes"] or any(x not in CLASSIFIED for x in c["classes"]):
                 raise ValueError("unknown privacy or secret class")
+        elif spec["type"] == "domain_blocklist":
+            if set(c) != {"domains", "action"} or c["action"] not in ("BLOCK", "REQUIRE_APPROVAL", "ALERT"):
+                raise ValueError("invalid domain blocklist")
+            if (not isinstance(c["domains"], list) or len(c["domains"]) > 512
+                    or any(not isinstance(d, str) or not DOMAIN.fullmatch(d) for d in c["domains"])):
+                raise ValueError("blocklist entries must be lowercase hostnames")
         elif spec["type"] == "webhook":
             if set(c) != {"endpoint", "timeout_ms", "on_failure"}:
                 raise ValueError("invalid webhook")
@@ -103,15 +155,63 @@ def webhook(config, action):
 
 
 class Pipeline:
-    def __init__(self, specs):
+    def __init__(self, specs, *, plugin_config=None, contract=None, policy_level="standard"):
         validate_specs(specs)
         self.specs = copy.deepcopy(specs)
+        from intercept.plugins import load_plugins
+        self.plugin_config = copy.deepcopy(plugin_config or {})
+        self.plugins = load_plugins(self.plugin_config)
+        self.contract = contract
+        self.policy_level = policy_level
 
-    async def evaluate(self, action):
+    def for_prompts(self):
+        return Pipeline([s for s in self.specs if s["type"] != "tool_allowlist"],
+                        plugin_config=self.plugin_config, contract=self.contract, policy_level=self.policy_level)
+
+    async def evaluate_output(self, action):
+        return await self.evaluate(action, phase="output")
+
+    async def evaluate_prompt(self, action, *, phase="input"):
+        return await self.evaluate(action, phase=phase, action_type="llm_call")
+
+    async def evaluate(self, action, *, phase="input", action_type="tool_call"):
         checked = copy.deepcopy(action)
         evidence = []
         blocked = approval = False
         changed = False
+        from intercept.plugins import AuditContext, AuditDecision
+        contract = self.contract.to_dict() if self.contract is not None else {}
+        for plugin in self.plugins:
+            start = time.monotonic()
+            ctx = AuditContext(
+                trace_id=contract.get("run_id") or checked["session_id"],
+                session_id=checked["session_id"], agent_id=contract.get("agent_id", "unbound_policy"),
+                action_type=action_type, action_name=checked["tool"], payload=copy.deepcopy(checked["arguments"]),
+                current_policy_level=self.policy_level, task_contract=copy.deepcopy(contract),
+                policy_version=contract.get("policy_version", "unbound_policy"),
+                action_id=checked["call_id"], phase=phase,
+            )
+            try:
+                result = plugin.evaluate(ctx)
+                if (not isinstance(result, AuditDecision)
+                        or result.decision not in {"ALLOW", "BLOCK", "REQUIRE_APPROVAL", "ALERT"}
+                        or result.modified_payload is not None
+                        or (result.violation_code is not None and (
+                            not isinstance(result.violation_code, str)
+                            or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", result.violation_code)))
+                        or any(key not in {"pattern_index", "calls_in_window"} or type(value) is not int
+                               or not 0 <= value <= 10001 for key, value in result.evidence.items())):
+                    raise ValueError("invalid plugin decision")
+            except Exception:
+                result = AuditDecision("BLOCK", violation_code="INTERCEPT_PLUGIN_FAILED")
+            row = {"auditor": plugin.name, "decision": result.decision,
+                   "code": result.violation_code or "PASS",
+                   "latency_ms": round((time.monotonic() - start) * 1000, 3)}
+            if "pattern_index" in result.evidence:
+                row["rule_id"] = f"regex.pattern.{result.evidence['pattern_index']}"
+            evidence.append(row)
+            blocked |= result.decision == "BLOCK"
+            approval |= result.decision == "REQUIRE_APPROVAL"
         for spec in self.specs:
             start = time.monotonic()
             config = spec["config"]
@@ -162,6 +262,22 @@ class Pipeline:
                         changed |= decision == "REDACT"
                 except ValueError:
                     decision, code = "BLOCK", "SIGNATURE_IN_KEY"
+            elif spec["type"] == "domain_blocklist":
+                domains = frozenset(config["domains"])
+
+                def strings(value):
+                    if isinstance(value, str):
+                        yield value
+                    elif isinstance(value, list):
+                        for v in value:
+                            yield from strings(v)
+                    elif isinstance(value, dict):
+                        for k, v in value.items():
+                            yield from strings(k)
+                            yield from strings(v)
+
+                if any(_blocklisted(host, domains) for text in strings(checked["arguments"]) for host in _hosts(text)):
+                    decision, code = config["action"], "DOMAIN_BLOCKLISTED"
             elif blocked:
                 # Semantic/external work never needs to run after a hard deny.
                 code = "SKIPPED_HARD_DENY"

@@ -26,6 +26,7 @@ from tracing import get_logger
 from intercept.governed.baseline import (
     Baseline, ensure_governed_schema, load_baseline, norm_name, persist_baseline, screening_source_version,
 )
+from intercept.governed.reason_families import classify
 from intercept.governed.registry import InProcessFeedbackChannel, RegistryAdapter, RegistryCallCancelled
 
 IDENTITY_HINTS = frozenset({
@@ -250,7 +251,7 @@ class GovernedGateway:
                 return "RESOURCE_OUT_OF_SCOPE"
         if tool == "extract_fields":
             doc_id = args.get("doc_id")
-            if doc_id not in baseline.documents:
+            if not isinstance(doc_id, str) or doc_id not in baseline.documents:
                 return "DOCUMENT_OUT_OF_SCOPE"
             if con is not None:
                 linked = con.execute("SELECT application_id FROM documents WHERE doc_id=?", (doc_id,)).fetchone()
@@ -258,10 +259,17 @@ class GovernedGateway:
                     return "DOCUMENT_OUT_OF_SCOPE"
         if tool == "check_registry":
             expected = baseline.declared.get("reg_number")
-            if not expected or args.get("reg_number") != expected:
+            reg_num = args.get("reg_number")
+            if not expected or not isinstance(reg_num, str) or reg_num != expected:
                 return "REGISTRY_OUT_OF_SCOPE"
         if tool == "screen_sanctions":
-            key = (norm_name(args.get("name")), args.get("dob") or None)
+            name = args.get("name")
+            if not isinstance(name, str):
+                return "SCREEN_SUBJECT_OUT_OF_SCOPE"
+            dob = args.get("dob")
+            if dob is not None and not isinstance(dob, str):
+                return "SCREEN_SUBJECT_OUT_OF_SCOPE"
+            key = (norm_name(name), dob or None)
             if key not in baseline.subjects:
                 return "SCREEN_SUBJECT_OUT_OF_SCOPE"
             expected_country = baseline.declared.get("nationality")
@@ -285,8 +293,6 @@ class GovernedGateway:
                 supplied = fields.get(key)
                 if supplied is not None and supplied != baseline.declared.get(key):
                     return "APPROVED_IDENTITY_MISMATCH"
-        if tool in WRITES and args.get("app_id") != baseline.app_id:
-            return "RESOURCE_OUT_OF_SCOPE"
         return None
 
     def _bind_create_fields(self, state: _Run, args: dict[str, Any]) -> None:
@@ -400,6 +406,7 @@ class GovernedGateway:
         allowed = decision.decision in ("ALLOW", "ALERT", "REDACT")
         trace.log("intercept", "action.decided", session=proposal.session_id, action=proposal.action_id,
                   tool=proposal.tool, decision=decision.decision, reason=decision.reason_code,
+                  family=decision.reason_family,
                   tool_error=(allowed and isinstance(result, Mapping) and "error" in result) or None,
                   overhead_ms=round(decision.interception_overhead_ms, 2))
         return decision, result
@@ -522,7 +529,8 @@ class GovernedGateway:
                 if not reason:
                     reason = policy_result["code"]
                 decision = self._make_decision(proposal.action_id, decision_name, reason, auditor_rows, None, started, state)
-                await self._persist_action(state, proposal, decision_name, reason, changed_args, fault_injected)
+                await self._persist_action(state, proposal, decision_name, reason, changed_args, fault_injected,
+                                           auditor_rows=auditor_rows)
                 state.calls.add(proposal.tool)
                 return decision, {"error": reason or decision_name}
 
@@ -606,7 +614,8 @@ class GovernedGateway:
 
             # Inspect results before delivery. Any result block withholds content
             # and does not count as progress toward a later write.
-            inspected, out_rows, out_verdict, out_changed = await self.pipeline.evaluate({
+            output_evaluator = getattr(self.pipeline, "evaluate_output", self.pipeline.evaluate)
+            inspected, out_rows, out_verdict, out_changed = await output_evaluator({
                 **action, "arguments": {"tool_result": result},
             })
             auditor_rows = tuple(auditor_rows) + tuple({**row, "phase": "output"} for row in out_rows)
@@ -661,14 +670,21 @@ class GovernedGateway:
                     return None
                 value = value.get(key)
             return value
-        paths = (("app_id",), ("doc_id",), ("reg_number",), ("name",), ("dob",),
-                 ("fields", "name"), ("fields", "dob"), ("fields", "reg_number"))
+        paths = (
+            ("app_id",), ("doc_id",), ("reg_number",), ("name",), ("dob",),
+            ("fields", "name"), ("fields", "dob"), ("fields", "reg_number"),
+            ("fields", "national_id"), ("fields", "passport_no"),
+            ("fields", "address"), ("fields", "nationality"),
+        )
         return any(at(original, p) != at(modified, p) for p in paths)
 
     async def _check_create_state(self, state: _Run) -> str | None:
         def check():
-            with sqlite3.connect(state.database, timeout=5) as con:
+            con = sqlite3.connect(state.database, timeout=5)
+            try:
                 return self._create_prerequisite_reason(state, con)
+            finally:
+                con.close()
         return await asyncio.to_thread(check)
 
     def _record_effect(self, con: sqlite3.Connection, state: _Run, proposal: ActionProposal,
@@ -693,21 +709,31 @@ class GovernedGateway:
 
     @staticmethod
     def _receipt_id(database: Path, source_id: str) -> str | None:
-        with sqlite3.connect(database, timeout=5) as con:
+        con = sqlite3.connect(database, timeout=5)
+        try:
             row = con.execute("SELECT receipt_id FROM effect_receipts WHERE source_event_id=?", (source_id,)).fetchone()
             return row[0] if row else None
+        finally:
+            con.close()
 
     @staticmethod
     def _receipt_for_action(database: Path, run_id: str, action_id: str):
-        with sqlite3.connect(database, timeout=5) as con:
+        con = sqlite3.connect(database, timeout=5)
+        try:
             return con.execute("SELECT command_digest,client_id,account_id FROM effect_receipts WHERE run_id=? AND action_id=?",
                                (run_id, action_id)).fetchone()
+        finally:
+            con.close()
 
     @staticmethod
     def _ack_effect(database: Path, source_id: str) -> None:
-        with sqlite3.connect(database, timeout=5) as con:
-            con.execute("UPDATE business_audit_outbox SET acknowledged_at=? WHERE source_event_id=?",
-                        (generate_utc_iso_timestamp(), source_id))
+        con = sqlite3.connect(database, timeout=5)
+        try:
+            with con:
+                con.execute("UPDATE business_audit_outbox SET acknowledged_at=? WHERE source_event_id=?",
+                            (generate_utc_iso_timestamp(), source_id))
+        finally:
+            con.close()
 
     async def recover_effects(self, session_id: str) -> int:
         """Import already committed banking notices without re-running the tool."""
@@ -722,7 +748,9 @@ class GovernedGateway:
         clean_args = self._safe_parameters(state, name, args)
         if name == "screen_sanctions":
             key = (norm_name(args.get("name")), args.get("dob") or None)
-            trusted = state.baseline.subjects[key]
+            trusted = state.baseline.subjects.get(key)
+            if trusted is None:
+                trusted = {"name": args.get("name") or "", "dob": args.get("dob")}
             # The protected bank audit needs the exact assessed identity for
             # deterministic postcondition recomputation; L1 receives only app_id.
             clean_args["name"] = trusted["name"]
@@ -757,7 +785,9 @@ class GovernedGateway:
                           proposal: ActionProposal, args: dict[str, Any], result: dict[str, Any],
                           audit_ts: str) -> None:
         key = (norm_name(args.get("name")), args.get("dob") or None)
-        trusted = state.baseline.subjects[key]
+        trusted = state.baseline.subjects.get(key)
+        if trusted is None:
+            trusted = {"name": args.get("name") or "", "dob": args.get("dob")}
         subject_hash = hashlib.sha256((str(trusted["name"]).strip().casefold() + "|" + str(trusted.get("dob"))).encode()).hexdigest()
         source_version = state.baseline.screening_source_version
         hits = result.get("hits", []) if isinstance(result, dict) else []
@@ -790,6 +820,7 @@ class GovernedGateway:
                        started: float, state: _Run, *, backend_ms: float = 0.0) -> GatewayDecision:
         return GatewayDecision(
             action_id=action_id, decision=decision, reason_code=reason,
+            reason_family=None if decision == "ALLOW" else classify(reason),
             policy_version=state.contract.policy_version,
             auditor_decisions=tuple(self._safe_auditor_row(r) for r in auditor_rows),
             modified_arguments=modified,
@@ -799,10 +830,10 @@ class GovernedGateway:
     @staticmethod
     def _safe_auditor_row(row: Mapping[str, Any]) -> dict[str, Any]:
         safe = {k: row[k] for k in ("auditor", "decision", "latency_ms", "phase") if k in row}
-        if "code" in row:
-            safe["rule_id"] = row["code"]
-        elif "rule_id" in row:
+        if "rule_id" in row:
             safe["rule_id"] = row["rule_id"]
+        elif "code" in row:
+            safe["rule_id"] = row["code"]
         return safe
 
     def _safe_parameters(self, state: _Run, tool: str, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -812,7 +843,9 @@ class GovernedGateway:
         if isinstance(args.get("doc_id"), str) and args["doc_id"] in state.baseline.documents:
             out["doc_id"] = args["doc_id"]
         if tool == "screen_sanctions":
-            subject = (norm_name(args.get("name")), args.get("dob") or None)
+            dob = args.get("dob")
+            dob_val = dob if isinstance(dob, str) and dob else None
+            subject = (norm_name(args.get("name")), dob_val)
             if subject in state.baseline.subjects:
                 out["app_id"] = state.baseline.app_id
         return out
@@ -862,7 +895,7 @@ class GovernedGateway:
 
     def _deny_without_policy(self, state: _Run, proposal: ActionProposal, reason: str) -> GatewayDecision:
         return GatewayDecision(action_id=proposal.action_id, decision="BLOCK", reason_code=reason,
-                               policy_version=state.contract.policy_version)
+                               reason_family=classify(reason), policy_version=state.contract.policy_version)
 
     async def finish(self, session_id: str) -> None:
         state = self._runs.get(session_id)

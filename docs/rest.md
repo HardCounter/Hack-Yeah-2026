@@ -1,8 +1,11 @@
-# Read API (REST) for dashboards
+# Dashboard REST API and configuration management
 
-**Status (2026-10-04): stub implemented, store queries not.** `persistence/http_api/` serves every
-endpoint below, with this validation, error envelope and pagination, but each handler returns
+**Status (2026-10-04): evidence-read stub implemented, store queries not.** `persistence/http_api/` serves the
+evidence-read endpoints below, with this validation, error envelope and pagination, but those handlers return
 fixed example data from `persistence/http_api/examples.py`. Tests: `tests/test_http_api_stub.py`.
+**Configuration management is implemented, not a stub:** the shared `configuration/` router
+provides authenticated updates and backend selection, backed by durable JSON state. Tests:
+`tests/test_configuration_api.py`, `tests/test_configuration_intercept.py`, `tests/test_web.py`.
 This document is the contract the implementation and the dashboard build against. Where the persistence layer cannot yet supply a
 field, [section 8](#8-required-persistence-changes) lists the change. Until that change lands, the
 field is returned as `null`.
@@ -27,7 +30,9 @@ Layer 1 interception ──► Layer 2 persistence (SQLite, WAL) ◄── Layer
 The read API is the **read side of Layer 2**. It runs as its own process, opens the evidence store
 **read-only** (`file:<path>?mode=ro`, so WAL readers do not block the writer), and never imports the
 write path (`PersistenceEngine`, `GovernedPersistence.append`, consumer registration). It cannot
-change evidence, policy, approvals or budgets. The write API in [persistence.md](persistence.md) is
+change evidence or approvals. The separate configuration-management router changes policy for
+**new sessions only**; it never writes evidence SQL or mutates existing Task Contracts.
+The write API in [persistence.md](persistence.md) is
 still not exposed over HTTP.
 
 Module: `persistence/http_api/`, built on **FastAPI** with `async def` handlers, served by
@@ -40,6 +45,7 @@ licensed, uvicorn is BSD). `httpx2` is a dev dependency, used by the test client
 | `app.py` | `create_app(cors_origins, evidence_dir)`: routes, error handlers, read-only and CORS middleware, pagination |
 | `examples.py` | Example payloads for every model in §5. Delete this file when the handlers call `ReadQueries`. |
 | `__main__.py` | CLI: binds `127.0.0.1` by default and refuses a non-loopback bind without `--allow-remote` |
+| `configuration/` (repository root) | Typed management models, shared router, and cross-process `ConfigService`; also mounted by `web/main.py` |
 
 ```sh
 # started automatically next to the gateway by the live pipeline
@@ -47,7 +53,7 @@ scripts/run_live_pipeline.sh APP-0001 [--api-port 8790] [--cors-origin http://lo
 # on its own, for dashboard development against the stub
 scripts/run_rest_api.sh --cors-origin http://localhost:5173
 # directly
-uv run python -m persistence.http_api --evidence-dir <bank-runs dir> --port 8790
+uv run python -m persistence.http_api --evidence-dir <bank-runs dir> --config-dir <operator-config-dir> --port 8790
 ```
 
 **One evidence store per session.** The governed runtime writes
@@ -69,9 +75,9 @@ decisions from the gateway's SSE stream and history from this API.
 
 | Topic | Rule |
 |---|---|
-| Base path | `/api/v1`. Methods are `GET` only (plus `HEAD`). Any other method returns `405`. The one exception is a CORS preflight (`OPTIONS`) from an allowed origin, which the CORS middleware answers. It carries no data. |
+| Base path | `/api/v1`. Evidence routes remain `GET` only (plus `HEAD`). Two management exceptions permit `PUT /configs/{name}` and `PUT /config-selection`. Other writes return `405`. Allowed-origin CORS preflight (`OPTIONS`) carries no data. |
 | Format | `application/json; charset=utf-8`. Exports use `application/x-ndjson`. |
-| Auth | **None.** Every endpoint is open to whoever can reach the port. Access control comes from the bind address: the default is `127.0.0.1`, and anything else requires `--allow-remote`. An `Authorization` header is ignored. See §7. |
+| Auth | Evidence/config reads remain unauthenticated. Management PUTs require `Authorization: Bearer <CONFIG_ADMIN_TOKEN>`; absent server credential disables writes (`401`). Default bind is loopback; `--allow-remote` is not authorization. See §7. |
 | Binding | Default `127.0.0.1`. Binding elsewhere requires `--allow-remote`. This port is never reachable from the agent's tool path. |
 | CORS | Allowed only for origins listed in `--cors-origin`. No wildcard. |
 | Timestamps | ISO 8601 UTC with `Z`, for example `2026-10-03T15:42:10.500Z`. Query parameters accept any ISO 8601 with a timezone. |
@@ -115,6 +121,25 @@ Every error uses the same body:
 | 413 | `export_quota_exceeded` | The export exceeds `max_export_rows` or `max_export_bytes` from `PersistenceSettings` |
 | 503 | `store_unavailable` | The database is missing, locked past the busy timeout, or has the wrong schema version |
 
+Configuration-specific errors (same envelope; fixed messages, no submitted values or exception text):
+
+| HTTP | `code` | Fixed `message` | When |
+|---|---|---|---|
+| 400 | `bad_request` | `malformed configuration request` | Malformed JSON, duplicate keys, non-finite JSON constants, invalid name |
+| 401 | `unauthorized` | `management authentication required` | Missing/invalid bearer credential or management disabled; includes `WWW-Authenticate: Bearer` |
+| 404 | `config_not_found` | `configuration not found` | Unknown config name; PUT never creates configs |
+| 405 | `method_not_allowed` | `method not allowed` | Unsupported management method |
+| 409 | `config_revision_conflict` | `configuration revision changed` | Requested selection revision differs from saved revision |
+| 413 | `config_too_large` | `configuration request exceeds size limit` | Request body exceeds 64,000 bytes |
+| 415 | `unsupported_media_type` | `application/json required` | Missing/non-JSON Content-Type |
+| 422 | `invalid_config` | `invalid configuration` | Invalid model, unknown fields, invalid constraints, path/body name mismatch |
+| 503 | `config_unavailable` | `configuration storage unavailable` | Missing/corrupt defaults, corrupt persisted state, lock timeout (5 s), or storage failure |
+
+Management errors have `details: {}` or `details: {"fields": ["budget.tokens"]}`.
+Only bounded, sanitized model paths are returned. Authentication precedes body processing.
+The current frontend's browser-local “Make active” action does not call the selection endpoint;
+frontend integration must use these authenticated PUTs (preferably through its trusted proxy).
+
 `message` is a fixed string per code. Exception text is never returned.
 
 ## 3. Endpoint summary
@@ -138,6 +163,11 @@ Every error uses the same body:
 | 15 | `GET /api/v1/sessions/{session_id}/verification` | `Verification` |
 | 16 | `GET /api/v1/system/stats` | `StoreStats` |
 | 17 | `GET /api/v1/export/sessions/{session_id}` | NDJSON audit export |
+| 18 | `GET /api/v1/configs` | `ConfigSummary[]` (real backend state) |
+| 19 | `GET /api/v1/configs/{name}` | `PolicyConfig`; quoted revision in `ETag` |
+| 20 | `PUT /api/v1/configs/{name}` | `ConfigUpdateResult` |
+| 21 | `PUT /api/v1/config-selection` | `ConfigSelectionResult` |
+| 22 | `GET /api/v1/metrics/performance` | `PerformanceOverview` |
 
 Priority for the hackathon build: **P0** is 1, 2, 4, 6, 7, 10 and 12. **P1** is the rest. Endpoint 17
 covers the "exportable audit logs" deliverable, so build it as soon as P0 works.
@@ -153,6 +183,7 @@ Liveness only. It returns no counts and no IDs.
 ```
 
 `status` is `ok`, or `degraded` when the store cannot be opened. In that case the response is `503`.
+`read_only` describes the **evidence** interface; it does not disable the authenticated config router.
 
 ### 4.2 `GET /sessions`
 
@@ -344,6 +375,94 @@ Lines are written in this order:
 and holds one read snapshot. It enforces `PersistenceSettings.max_export_rows` and
 `max_export_bytes` and fails with `413` before it sends anything. Run-scoped exports with
 principal checks and retention holds remain on `AuditReader.export_jsonl`.
+
+### 4.18 Configuration reads and `PUT /configs/{name}`
+
+Names are case-sensitive: `lenient`, `standard`, `strict`. Other syntactically valid names
+return `404`; invalid names return `400`. The three built-in defaults are all editable through
+the backend; untracked draft files in `config/presets/` are not exposed.
+
+`GET /configs` returns `ConfigSummary[]`; `GET /configs/{name}` returns the complete saved
+`PolicyConfig`. Its `ETag` is the quoted `sha256:<64 lowercase hex digits>` revision. Reads
+return `404`/`503` for missing configs/unavailable storage.
+
+`PUT /configs/{name}` takes a complete `PolicyConfig` (§5.15), **not a partial patch**.
+Its body `name` must equal the path name. The endpoint only replaces existing configs and
+requires management authentication. Successful response: **200**, JSON `ConfigUpdateResult`:
+
+```json
+{
+  "name": "standard",
+  "revision": "sha256:<64 lowercase hex digits>",
+  "updated_at": "2026-10-04T15:00:00.000Z",
+  "selected": true,
+  "active_revision": "sha256:<previously-selected-hash>",
+  "requires_selection": true
+}
+```
+
+Saving does **not** activate the new revision. Repeating identical normalized content preserves
+its revision and `updated_at`. Errors: **400, 401, 404, 405, 413, 415, 422, 503** (§2.2).
+
+### 4.19 `PUT /config-selection`
+
+Authenticated RPC-style replacement of the backend selection. Request: `ConfigSelectionRequest`:
+
+```json
+{ "name": "standard", "revision": "sha256:<64 lowercase hex digits>" }
+```
+
+`revision` is mandatory: obtain it from the config list, the quoted GET ETag, or an update result.
+The backend checks it against the saved config **inside the same locked transaction** as selection.
+Successful response: **200**, JSON `ConfigSelectionResult`:
+
+```json
+{
+  "name": "standard",
+  "revision": "sha256:<64 lowercase hex digits>",
+  "selected_at": "2026-10-04T15:01:00.000Z",
+  "effective_for": "new_sessions"
+}
+```
+
+Selecting the same name/revision is idempotent and preserves `selected_at`. Existing sessions
+keep their pinned config, spent budgets, approval state and Task Contract. The next trusted
+session binding loads the selected snapshot; no server restart is required. Errors:
+**400, 401, 404, 405, 409, 413, 415, 422, 503** (§2.2). No empty success responses or `204`.
+
+### 4.20 `GET /metrics/performance`
+
+Performance telemetry of the control layer: what the gateway adds to each action, split by the
+hybrid defence's two paths.
+
+| Query | Default | Meaning |
+|---|---|---|
+| `since`, `until` | last 24 h | Window |
+| `agent_id`, `session_id` | – | Filter |
+
+```json
+{
+  "since": "...", "until": "...",
+  "actions_evaluated": 404,
+  "interception_overhead_ms": {"p50": 1.1, "p95": 228.0, "p99": 252.0},
+  "by_method": {
+    "deterministic": {"runs": 404, "skipped": 0, "p50": 0.9, "p95": 2.4, "p99": 6.1},
+    "semantic": {"runs": 148, "skipped": 24, "p50": 152.0, "p95": 234.0, "p99": 255.0}
+  },
+  "backend_latency_ms": {"p50": 41.0, "p95": 640.0, "p99": 910.0},
+  "overhead_share": 0.22
+}
+```
+
+- `actions_evaluated` counts gateway-evaluated actions, as in `SecurityOverview` rates.
+- `interception_overhead_ms` is the whole gateway time per action, semantic check included.
+  `SecurityOverview.interception_overhead_ms` stays as it is.
+- `by_method` sums `auditor_decisions[].latency_ms` per action by the auditor's `Method`.
+  `runs` is the number of actions the path ran on. `semantic.skipped` counts actions where the
+  semantic check would have run but a deterministic control had already denied.
+- `backend_latency_ms` is `Usage.latency_ms`: the model or tool call itself.
+- `overhead_share` is total interception overhead divided by total overhead plus backend latency,
+  `0..1`, or `null` when the window has no executed action.
 
 ## 5. Models
 
@@ -776,6 +895,112 @@ not a domain view.
 The `contract` block is the stored `TaskContract` **without `objective`**. `run` is `null` for
 sessions without a run binding.
 
+### 5.15 `PolicyConfig`
+
+The complete JSON shapes are the three files in `config/presets/`. All listed fields are required;
+unknown keys are rejected at every model boundary. `trajectory_risk` currently accepts only `{}`.
+Model definitions and the generated OpenAPI schema are in `configuration/models.py`.
+
+| Field | Type and constraints |
+|---|---|
+| `name` | string, `[A-Za-z0-9][A-Za-z0-9_-]{0,39}`; must match path |
+| `description` | string, at most 512 characters |
+| `allowed_tools` | 1–100 unique registered tool names |
+| `admin_tools` | 0–100 unique registered tool names |
+| `require_approval` | 0–100 unique names, subset of `allowed_tools ∪ admin_tools` |
+| `budget.tokens` | integer, 1–1,000,000 |
+| `budget.tool_calls` | integer, 1–1,000 |
+| `budget.cost_usd` | finite number 0–1,000 or `null` (no financial cap) |
+| `allowed_models` | 1–100 unique operator-approved local model IDs; `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`. IDs are syntax-validated, not provider-discovered; slash-separated OpenCode provider IDs are not accepted by the local prompt gateway. |
+| `max_output_tokens` | integer, 1–8,192, matching the local prompt gateway |
+| `feed_version` | bounded telemetry-safe identifier |
+| `controls.email_recipients` | at most 100 email-shaped strings, each at most 254 characters |
+| `controls.egress_hosts`, `controls.model_source_hosts` | at most 100 hostnames each, at most 253 characters; no schemes, ports or paths |
+| `controls.allowed_model_suffixes` | at most 20 suffixes of the form `.safetensors`, at most 40 characters |
+| `auditors` | 0–32 entries: `id`, `type`, `config`; unique telemetry-safe IDs |
+| `intercept.trajectory_risk` | empty reserved object; stored-only |
+| `intercept.velocity_guard.enabled` | optional boolean, default `true`; controls the Layer 1 velocity gate |
+| `intercept.velocity_guard.window_s` | finite number, greater than 0 and at most 3,600; monotonic rolling window |
+| `intercept.velocity_guard.max_calls` | integer, 1–10,000; exceeding this limit requires approval before dispatch |
+| `intercept.pattern_match` | optional object or `null`; absent/null disables regex matching for old snapshots |
+| `intercept.pattern_match.enabled` | optional boolean, default `true` |
+| `intercept.pattern_match.patterns` | at most 64 RE2 regexes, each 1–256 characters; invalid/unsupported patterns return `422 invalid_config` |
+| `intercept.pattern_match.fields` | unique, nonempty subset of `tool`, `arguments`; default both; matches argument keys and nested string values |
+| `intercept.pattern_match.action` | optional, must be `BLOCK`; default `BLOCK` |
+| `intercept.feedback.enabled` | boolean; stored-only |
+| `intercept.feedback.allow_agent_scope` | must be `false`; stored-only |
+| `intercept.feedback.max_ttl_s` | integer, 1–86,400; stored-only |
+| `intercept.feedback.max_signals_per_session_per_minute` | integer, 1–1,000; stored-only |
+| `intercept.feedback.allowed_actions` | stored-only map; older configs may retain `velocity-guard`, but it no longer uses async feedback |
+| `intercept.semantic_guard.block_threshold`, `approve_threshold`, `alert_threshold` | finite numbers, `0 ≤ alert ≤ approve ≤ block ≤ 1`; stored-only risk-score thresholds, not adherence percentages |
+| `intercept.semantic_guard.on_error` | must be `BLOCK`; stored-only |
+
+Auditor types are a discriminated union:
+- `pattern_scanner`: `config: {patterns: string[], action}`. At most 256 literal patterns,
+  each 1–256 characters. They are not executable regular expressions.
+- `classified_scanner`: `config: {classes: string[], action}`. 1–5 classes drawn from
+  `pesel`, `iban`, `aws_access_key`, `private_key`, `api_key`.
+- `tool_allowlist`: `config: {allowed_tools: string[]}`; at most 100 registered tool names.
+
+Scanner `action` is `BLOCK`, `REDACT`, `REQUIRE_APPROVAL` or `ALERT`.
+Adjustment actions are `ALERT`, `REQUIRE_APPROVAL_FOR`, `BLOCK_TOOLS`, `STRICT_MODE`, `HALT_SESSION`.
+Arbitrary webhook endpoints, filesystem paths, handlers, executable plugin imports and credential
+fields are not accepted. Booleans are not numbers. JSON duplicate keys and non-finite constants
+are rejected before model validation.
+
+**Enforcement boundary:** the selected config supplies tools/admin tools, approvals, auditors,
+egress controls, model allowlist, output cap, feed identity and per-session budgets to interception.
+Model controls/token accounting apply where calls actually traverse `PromptGateway`; this does not
+claim that every OpenCode provider request is intercepted or that financial pricing is implemented.
+`intercept.pattern_match` and `intercept.velocity_guard` now configure actual pre-dispatch
+Layer 1 plugins. Pattern matches hard-block the current call; velocity holds an over-limit
+proposal without dispatch. Plugin errors fail closed. [Plugin details](intercept-plugins.md)
+document bounds, RE2 syntax, phase handling and evidence. `trajectory_risk`, `feedback` and
+`semantic_guard` remain stored-only here; the consume plane keeps its separate trusted config.
+Existing snapshot revisions are preserved when optional fields are absent; activating new
+patterns requires explicitly saving/selecting them, not reseeding defaults or mutating live runs.
+
+### 5.16 Configuration results
+
+`ConfigSummary`: `{name: string, preset: true, description: string, revision: string}`.
+
+`ConfigUpdateResult`:
+- `name`, `revision`: saved config identity and SHA-256 of canonical validated JSON.
+- `updated_at`: UTC timestamp of the last content change.
+- `selected`: whether this config's **name** is selected, even if its saved revision differs.
+- `active_revision`: the currently selected revision globally, regardless of the saved config name.
+- `requires_selection`: `true` unless this name/revision is already selected.
+
+`ConfigSelectionRequest`: `{name: string, revision: string}`; both fields required, extras rejected.
+`ConfigSelectionResult`: `{name: string, revision: string, selected_at: UTC timestamp,
+effective_for: "new_sessions"}`. All result fields are always present and non-null.
+
+### 5.17 ConfigService lifecycle and deployment
+
+The backend object `configuration.service.ConfigService` is shared by both API applications and
+the interception service through a common `CONFIG_DIR` (default `var/config` under the repository).
+`--config-dir` overrides that directory for the standalone REST/gateway CLIs. They must point
+to the same operator-owned directory, outside the agent workspace. The web session backend passes
+this directory to its gateway subprocess. Explicit gateway `--policy` remains a legacy override
+and bypasses the managed selection; `simulation.opencode_runner --policy` forwards that override
+for reproducible scripted fixtures. Without the override, even the non-interactive runner uses
+the managed selection (standard's approval requirement can prevent automatic client creation).
+
+On first startup/access, defaults are seeded from `config/presets/{lenient,standard,strict}.json`
+and `standard` is selected. Existing state is never reseeded on restart. The authoritative
+`CONFIG_DIR/state.json` contains the three editable configs, selected name/revision/full snapshot,
+timestamps and the last 1,000 sanitized update/selection metadata records. Repository preset files
+are templates, not overwritten by PUT. Old loose custom files are not imported or selectable.
+
+This single JSON transaction file avoids partial commits between config content and selection.
+An initialization marker distinguishes first startup from deleted state; the lock and marker
+files contain no policy payloads.
+Linux `flock` serializes access across API workers/gateway processes; unique temporary files,
+file fsync, atomic replacement and directory fsync provide durable commits on a local filesystem.
+Missing/corrupt existing state fails closed; it is not silently reset to defaults. Selection
+contains its own immutable snapshot, so editing the selected config does not activate edits.
+New Task Contracts pin the selected revision's hash; existing contracts remain unchanged.
+
 ## 6. Mapping from storage
 
 ### 6.1 Detection sources
@@ -821,10 +1046,14 @@ the current readers do.
 
 ## 7. Security notes
 
-- **Read-only by construction:** the connection uses `mode=ro`, the API has no write SQL, and the
-  router accepts `GET` only. Whoever can reach the port can read evidence, but cannot change
-  evidence, policy, approvals or budgets.
-- **No authentication:** the API trusts its network position. It binds loopback by default, so on
+- **Evidence remains read-only:** evidence connections use `mode=ro` and evidence routes have no
+  write SQL. Configuration writes use a separate backend store, not the evidence write path.
+- **Management authentication:** the two PUTs require an operator-managed `CONFIG_ADMIN_TOKEN`.
+  Without it they fail closed with `401`. This is separate from gateway/agent tokens and must be
+  supplied securely to the REST/web server, not embedded in preset files, frontend assets or logs.
+  Gateway/OpenCode subprocess environments exclude it. Use a trusted frontend backend/proxy to
+  attach it, or authenticated operator requests; CORS and loopback binding are not authorization.
+- **Unauthenticated reads:** the read side trusts its network position. It binds loopback by default, so on
   a shared machine any local process can read the sanitized evidence, and that includes an agent
   that can run shell commands. In the governed pipeline the agent only gets gateway-backed tools,
   so it has no direct way to call this port. The API runs in a separate process that does not get
@@ -857,19 +1086,23 @@ None of these changes alters Event Envelope v2.1 or the decision semantics.
 
 ## 9. Out of scope for v1
 
-- Any write: approvals, policy mode, retention pruning and consumer admin stay on their existing
+- Evidence writes, approvals, live-session policy mutation, retention pruning and consumer admin stay on their existing
   trusted paths. See [application-documentation.md §5.4](application-documentation.md#54-gateway-dashboard-api-contract-for-judge-ui)
   and [persistence.md](persistence.md).
 - Push delivery. Dashboards poll this API, and live gateway decisions come from the gateway's
   `/api/v1/events/stream` SSE. A future `/api/v1/stream` could push detections, but it would be
   volatile and never a substitute for the durable lists.
-- Authentication and per-principal read scoping. v1 relies on the loopback bind. `AuditReader`
+- Per-principal read scoping. Reads rely on the loopback bind; config PUTs require management authentication. `AuditReader`
   and `ReadScope` remain the API for principal-scoped run export.
 - Content bodies (§7), and the consume plane's in-process metric gauges. Those are exposed by the
   consume-plane runtime (`/consumer/metrics`, [consumer-plane.md §9.2](consumer-plane.md#92-metrics))
   and are not persisted.
 
 ## 10. Documentation changes made with this file
+
+- **Config management:** shared `configuration/` models/router/service mounted in the dashboard REST
+  and web servers; two authenticated PUTs, three real config reads, durable backend selection, and
+  session-binding integration into interception. Config state is separate from evidence SQLite.
 
 - **New:** `docs/rest.md` (this file).
 - **New code:** the `persistence/http_api/` stub (FastAPI and uvicorn) and `tests/test_http_api_stub.py`.

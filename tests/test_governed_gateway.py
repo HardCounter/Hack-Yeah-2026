@@ -168,3 +168,56 @@ def test_feedback_cancel_after_durable_marker_keeps_restriction_active(session, 
     assert decision.decision == "BLOCK"
     assert decision.reason_code == "INTERVENTION_BLOCKED_TOOL"
     assert result == {"error": "INTERVENTION_BLOCKED_TOOL"}
+
+
+def test_unhashable_and_invalid_tool_arguments_fail_closed_without_crashing(session):
+    s = session
+    # extract_fields with unhashable list doc_id
+    decision, result = s.runtime.runner.run(s.runtime.gateway.execute(
+        proposal(s, "unhashable-doc", "extract_fields", {"doc_id": ["DOC-0001"]})))
+    assert decision.decision == "BLOCK"
+    assert decision.reason_code == "DOCUMENT_OUT_OF_SCOPE"
+    assert result == {"error": "DOCUMENT_OUT_OF_SCOPE"}
+
+    # screen_sanctions with unhashable/non-string args
+    decision, result = s.runtime.runner.run(s.runtime.gateway.execute(
+        proposal(s, "invalid-screen-name", "screen_sanctions", {"name": ["Invalid"], "dob": "1990-01-01"})))
+    assert decision.decision == "BLOCK"
+    assert decision.reason_code == "SCREEN_SUBJECT_OUT_OF_SCOPE"
+    assert result == {"error": "SCREEN_SUBJECT_OUT_OF_SCOPE"}
+
+    decision, result = s.runtime.runner.run(s.runtime.gateway.execute(
+        proposal(s, "invalid-screen-dob", "screen_sanctions", {"name": "Valid Name", "dob": {"not": "string"}})))
+    assert decision.decision == "BLOCK"
+    assert decision.reason_code == "SCREEN_SUBJECT_OUT_OF_SCOPE"
+    assert result == {"error": "SCREEN_SUBJECT_OUT_OF_SCOPE"}
+
+
+def test_approved_identity_changed_detects_all_identity_fields(session):
+    gateway = session.runtime.gateway
+    original = {"fields": {"name": "Alice", "dob": "1990-01-01", "national_id": "12345"}}
+    # Mutating national_id must be detected as identity change
+    modified = {"fields": {"name": "Alice", "dob": "1990-01-01", "national_id": "[REDACTED]"}}
+    assert gateway._approved_identity_changed(original, modified) is True
+
+def test_blocklisted_domain_is_denied_and_classified_at_decision_time(session):
+    s = session
+    # intranet.bank.example passes the fetch_url egress allowlist; the blocklist still wins.
+    s.runtime.gateway.pipeline = __import__("intercept.policy.auditors", fromlist=["Pipeline"]).Pipeline([
+        {"id": "domain-blocklist", "type": "domain_blocklist",
+         "config": {"domains": ["bank.example"], "action": "BLOCK"}}
+    ])
+    decision, result = s.runtime.runner.run(s.runtime.gateway.execute(proposal(
+        s, "fetch-blocked", "fetch_url", {"url": "https://intranet.bank.example/kyc-policy.txt"})))
+    assert (decision.decision, decision.reason_code, decision.reason_family) == ("BLOCK", "DOMAIN_BLOCKLISTED", "EGRESS")
+    assert "error" in result
+
+
+def test_scope_deny_is_classified_and_allow_has_no_family(session):
+    s = session
+    decision, _ = s.runtime.runner.run(s.runtime.gateway.execute(
+        proposal(s, "read-own", "read_application", {"app_id": s.app_id})))
+    assert decision.decision == "ALLOW" and decision.reason_family is None
+    decision, _ = s.runtime.runner.run(s.runtime.gateway.execute(
+        proposal(s, "read-other", "read_application", {"app_id": "APP-0002"})))
+    assert (decision.decision, decision.reason_family) == ("BLOCK", "SCOPE")

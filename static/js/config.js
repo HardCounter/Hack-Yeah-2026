@@ -1,14 +1,22 @@
+<<<<<<< HEAD
 /* Config: list presets and saved configs from the server, edit one, make it active or save it. */
 (() => {
   const form = $('#cfgForm'), f = form.elements;
   const PRESETS = ['lenient', 'standard', 'strict'];
   const NEW = 'New config';
-  const THRESHOLDS = ['block_threshold', 'approve_threshold', 'alert_threshold'];  // highest first
+  const THRESHOLDS = ['block_threshold', 'approve_threshold', 'alert_threshold'];
   const AUDITORS = {
     signature: { id: 'signature-scanner', type: 'pattern_scanner', config: { patterns: [], action: 'BLOCK' } },
     privacy: { id: 'privacy-scanner', type: 'classified_scanner', config: { classes: ['pesel', 'iban'], action: 'REQUIRE_APPROVAL' } },
     secret: { id: 'secret-scanner', type: 'classified_scanner', config: { classes: ['aws_access_key', 'private_key', 'api_key'], action: 'REQUIRE_APPROVAL' } },
   };
+  // Models offered in the two dropdowns. Placeholder list: it will come from the config later.
+  // A model already allowed by the loaded config is always shown, even when it is not listed here.
+  const MODEL_CATALOG = {
+    agent: ['openai/gpt-4.1-mini', 'openai/gpt-4.1', 'openai/gpt-5-mini', 'anthropic/claude-sonnet-5-5', 'llama3.2'],
+    judge: ['openai/gpt-4.1-mini', 'openai/gpt-4o-mini', 'anthropic/claude-haiku-4-5', 'llama-guard3'],
+  };
+  const MODEL_LISTS = { agent: 'cfgAgentModels', judge: 'cfgJudgeModels' };
   const auditor = (c, key) => c.auditors.find(a => a.id === AUDITORS[key].id) || structuredClone(AUDITORS[key]);
 
   let TOOLS = [];      // every tool the gateway knows; the lenient preset allows all of them
@@ -32,15 +40,13 @@
     const v = Number(f[o.dataset.for].value);
     o.textContent = THRESHOLDS.includes(o.dataset.for) ? Math.round(v * 100) + '%' : fmtNum(v);
   });
-  // Keep block >= approval >= alert: moving one slider pushes the others out of its way.
+  // Block is the ceiling for the two lower tiers. Approval and alert do not move each other.
   function orderThresholds(moved) {
-    const i = THRESHOLDS.indexOf(moved);
-    if (i < 0) return;
+    if (!THRESHOLDS.includes(moved)) return;
     const v = +f[moved].value;
-    THRESHOLDS.forEach((n, j) => {
-      if (j < i && +f[n].value < v) f[n].value = v;
-      if (j > i && +f[n].value > v) f[n].value = v;
-    });
+    if (moved === 'block_threshold') {
+      for (const n of ['approve_threshold', 'alert_threshold']) if (+f[n].value > v) f[n].value = v;
+    } else if (+f.block_threshold.value < v) f.block_threshold.value = v;
   }
   form.addEventListener('input', e => { orderThresholds(e.target.name); showOutputs(); if (!['name', 'description'].includes(e.target.name)) markDirty(); });
   form.addEventListener('change', e => { if (e.target.type === 'checkbox') markDirty(); });
@@ -57,6 +63,29 @@
       const tr = el('tr'); tr.append(el('td', 'mono cap', t), a, b); tb.append(tr);
     }
   }
+
+  const allowedModels = kind => $$(`#${MODEL_LISTS[kind]} input:checked`).map(x => x.value);
+  function showModelSummary(kind) {
+    const on = allowedModels(kind), all = $$(`#${MODEL_LISTS[kind]} input`).length;
+    $(`#${MODEL_LISTS[kind]}Sum`).textContent = `${on.length} of ${all} allowed`;
+  }
+  function renderModels(kind, allowed) {
+    const ul = $(`#${MODEL_LISTS[kind]} ul`); ul.textContent = '';
+    for (const m of [...new Set([...MODEL_CATALOG[kind], ...allowed])]) {
+      const box = el('input'); box.type = 'checkbox'; box.name = kind + '_model'; box.value = m; box.checked = allowed.includes(m);
+      const state = el('span', '', box.checked ? 'allowed' : 'not allowed');
+      box.addEventListener('change', () => { state.textContent = box.checked ? 'allowed' : 'not allowed'; showModelSummary(kind); });
+      const lab = el('label'); lab.append(box, m, state);
+      const li = el('li'); li.append(lab); ul.append(li);
+    }
+    showModelSummary(kind);
+  }
+  // Close an open model dropdown on Escape or a click outside it.
+  document.addEventListener('click', e => $$('details.multi[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; }));
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    $$('details.multi[open]').forEach(d => { d.open = false; d.querySelector('summary').focus(); });
+  });
 
   function fill(name, c) {
     loaded = structuredClone(c); editing = name; dirty = false;
@@ -77,6 +106,8 @@
     f.secret_action.value = auditor(c, 'secret').config.action;
     f.name.value = PRESETS.includes(name) || name === NEW ? '' : name;
     f.description.value = c.description || '';
+    renderModels('agent', c.allowed_models || []);
+    renderModels('judge', g.allowed_models || []);
     renderTools(c); showOutputs(); showState();
     $$('#cfgList button').forEach(b => b.setAttribute('aria-pressed', b.value === name));
   }
@@ -89,8 +120,10 @@
     c.require_approval = checked('approve');
     c.budget = { ...c.budget, tokens: +f.tokens.value, tool_calls: +f.tool_calls.value, cost_usd: f.cost_usd.value === '' ? null : +f.cost_usd.value };
     c.max_output_tokens = +f.max_output_tokens.value;
+    c.allowed_models = allowedModels('agent');
     c.semantic_guard = { on_error: 'BLOCK', ...c.semantic_guard, block_threshold: +f.block_threshold.value,
-      approve_threshold: +f.approve_threshold.value, alert_threshold: +f.alert_threshold.value };
+      approve_threshold: +f.approve_threshold.value, alert_threshold: +f.alert_threshold.value,
+      allowed_models: allowedModels('judge') };
     const set = (key, conf) => {
       const a = auditor(c, key); a.config = { ...a.config, ...conf };
       c.auditors = c.auditors.filter(x => x.id !== a.id).concat(a);
@@ -191,3 +224,201 @@
     } catch (e) { $('#cfgList').replaceChildren(el('li', 'empty', 'Could not load configs: ' + e.message)); }
   });
 })();
+=======
+/* Config: list presets and saved configs from the server, edit one, make it active or save it. */
+(() => {
+  const form = $('#cfgForm'), f = form.elements;
+  const PRESETS = ['lenient', 'standard', 'strict'];
+  const NEW = 'New config';
+  const THRESHOLDS = ['block_threshold', 'approve_threshold', 'alert_threshold'];  // highest first
+  const AUDITORS = {
+    signature: { id: 'signature-scanner', type: 'pattern_scanner', config: { patterns: [], action: 'BLOCK' } },
+    privacy: { id: 'privacy-scanner', type: 'classified_scanner', config: { classes: ['pesel', 'iban'], action: 'REQUIRE_APPROVAL' } },
+    secret: { id: 'secret-scanner', type: 'classified_scanner', config: { classes: ['aws_access_key', 'private_key', 'api_key'], action: 'REQUIRE_APPROVAL' } },
+  };
+  const auditor = (c, key) => c.auditors.find(a => a.id === AUDITORS[key].id) || structuredClone(AUDITORS[key]);
+
+  let TOOLS = [];      // every tool the gateway knows; the lenient preset allows all of them
+  let loaded = null;   // config as loaded from the server; fields the form does not show are kept
+  let editing = null;  // its name
+  let dirty = false;
+
+  const say = (text, bad) => { const m = $('#cfgMsg'); m.textContent = text; m.className = 'cap ' + (bad ? 'v-block' : 'v-allow'); };
+
+  function showState() {
+    const s = $('#cfgState');
+    const active = editing === App.configName && !dirty;
+    s.textContent = dirty ? 'Unsaved changes' : active ? 'Active' : PRESETS.includes(editing) ? 'Preset' : editing === NEW ? 'Not saved' : 'Saved';
+    s.className = 'badge ' + (dirty ? 'warn' : active ? 'allow' : 'neutral');
+    $('#cfgActivate').disabled = active;
+    $('#cfgActivate').textContent = dirty ? 'Apply changes' : 'Make active';
+  }
+  const markDirty = () => { dirty = true; showState(); };
+
+  const showOutputs = () => form.querySelectorAll('output[data-for]').forEach(o => {
+    const v = Number(f[o.dataset.for].value);
+    o.textContent = THRESHOLDS.includes(o.dataset.for) ? Math.round(v * 100) + '%' : fmtNum(v);
+  });
+  // Keep block >= approval >= alert: moving one slider pushes the others out of its way.
+  function orderThresholds(moved) {
+    const i = THRESHOLDS.indexOf(moved);
+    if (i < 0) return;
+    const v = +f[moved].value;
+    THRESHOLDS.forEach((n, j) => {
+      if (j < i && +f[n].value < v) f[n].value = v;
+      if (j > i && +f[n].value > v) f[n].value = v;
+    });
+  }
+  form.addEventListener('input', e => { orderThresholds(e.target.name); showOutputs(); if (!['name', 'description'].includes(e.target.name)) markDirty(); });
+  form.addEventListener('change', e => { if (e.target.type === 'checkbox') markDirty(); });
+
+  function renderTools(c) {
+    const tb = $('#cfgTools'); tb.textContent = '';
+    for (const t of TOOLS) {
+      const allow = el('input'); allow.type = 'checkbox'; allow.name = 'allow'; allow.value = t; allow.checked = c.allowed_tools.includes(t);
+      const appr = el('input'); appr.type = 'checkbox'; appr.name = 'approve'; appr.value = t; appr.checked = c.require_approval.includes(t);
+      allow.setAttribute('aria-label', `Allow ${t}`); appr.setAttribute('aria-label', `${t} needs approval`);
+      const sync = () => { appr.disabled = !allow.checked; if (!allow.checked) appr.checked = false; };
+      allow.addEventListener('change', sync); sync();
+      const a = el('td'), b = el('td'); a.append(allow); b.append(appr);
+      const tr = el('tr'); tr.append(el('td', 'mono cap', t), a, b); tb.append(tr);
+    }
+  }
+
+  function fill(name, c) {
+    loaded = structuredClone(c); editing = name; dirty = false;
+    $('#cfgEditing').textContent = label(name);
+    $('#cfgDesc').textContent = c.description || 'No description.';
+    f.tokens.value = c.budget.tokens;
+    f.tool_calls.value = c.budget.tool_calls;
+    f.max_output_tokens.value = c.max_output_tokens;
+    f.cost_usd.value = c.budget.cost_usd ?? '';
+    const g = c.intercept?.semantic_guard || c.semantic_guard || {};
+    f.block_threshold.value = g.block_threshold ?? 0.9;
+    f.approve_threshold.value = g.approve_threshold ?? f.block_threshold.value - 0.15;
+    f.alert_threshold.value = g.alert_threshold ?? f.approve_threshold.value - 0.15;
+    const sig = auditor(c, 'signature');
+    f.patterns.value = sig.config.patterns.join('\n');
+    f.patterns_action.value = sig.config.action;
+    f.privacy_action.value = auditor(c, 'privacy').config.action;
+    f.secret_action.value = auditor(c, 'secret').config.action;
+    f.name.value = PRESETS.includes(name) || name === NEW ? '' : name;
+    f.description.value = c.description || '';
+    renderTools(c); showOutputs(); showState();
+    $$('#cfgList button').forEach(b => b.setAttribute('aria-pressed', b.value === name));
+  }
+
+  function collect() {
+    const c = structuredClone(loaded);
+    const checked = n => $$(`#cfgTools input[name=${n}]:checked`).map(x => x.value);
+    c.description = f.description.value.trim() || c.description;
+    c.allowed_tools = checked('allow');
+    c.require_approval = checked('approve');
+    c.budget = { ...c.budget, tokens: +f.tokens.value, tool_calls: +f.tool_calls.value, cost_usd: f.cost_usd.value === '' ? null : +f.cost_usd.value };
+    c.max_output_tokens = +f.max_output_tokens.value;
+    const g = c.intercept ? (c.intercept.semantic_guard || {}) : (c.semantic_guard || {});
+    const updatedGuard = { on_error: 'BLOCK', ...g, block_threshold: +f.block_threshold.value,
+      approve_threshold: +f.approve_threshold.value, alert_threshold: +f.alert_threshold.value };
+    if (c.intercept) c.intercept.semantic_guard = updatedGuard;
+    else c.semantic_guard = updatedGuard;
+    const set = (key, conf) => {
+      const a = auditor(c, key); a.config = { ...a.config, ...conf };
+      c.auditors = c.auditors.filter(x => x.id !== a.id).concat(a);
+    };
+    set('signature', { patterns: f.patterns.value.split('\n').map(s => s.trim()).filter(Boolean), action: f.patterns_action.value });
+    set('privacy', { action: f.privacy_action.value });
+    set('secret', { action: f.secret_action.value });
+    for (const a of c.auditors) if (a.type === 'tool_allowlist') a.config.allowed_tools = c.allowed_tools;
+    return c;
+  }
+
+  async function load(name) {
+    if (dirty && !confirmDiscard()) return false;
+    try { fill(name, await App.api('/' + encodeURIComponent(name))); say(''); return true; }
+    catch (e) { say(`Could not load ${name}: ${e.message}`, true); return false; }
+  }
+  // Inline confirmation instead of a blocking dialog: the first click warns, the second discards.
+  let warned = false;
+  function confirmDiscard() {
+    if (warned) { warned = false; return true; }
+    warned = true; say('Unsaved changes. Click again to discard them.', true);
+    setTimeout(() => warned = false, 4000);
+    return false;
+  }
+
+  async function refreshList() {
+    const items = await App.api('');
+    const ul = $('#cfgList'); ul.textContent = '';
+    const group = (title, list) => {
+      if (!list.length) return;
+      ul.append(el('li', 'picker-group', title));
+      for (const it of list) {
+        const li = el('li'), b = el('button'); b.type = 'button'; b.value = it.name;
+        b.append(el('span', 'mono', label(it.name)));
+        if (it.name === App.configName) b.append(badge('ACTIVE'));
+        b.setAttribute('aria-pressed', it.name === editing);
+        b.onclick = () => load(it.name);
+        li.append(b); ul.append(li);
+      }
+    };
+    group('Presets', items.filter(i => i.preset));
+    const li = el('li'), add = el('button', 'picker-add', '+ New config'); add.type = 'button';
+    add.setAttribute('aria-pressed', editing === NEW);
+    add.onclick = newConfig;
+    li.append(add); ul.append(li);
+    group('Saved', items.filter(i => !i.preset));
+  }
+
+  // A new config starts from the standard preset's values, with no name yet.
+  async function newConfig() {
+    if (dirty && !confirmDiscard()) return;
+    try { fill(NEW, { ...await App.api('/standard'), description: '' }); say('Adjust the settings, then name and save it below.'); f.name.focus(); }
+    catch (e) { say('Could not start a new config: ' + e.message, true); }
+  }
+
+  $('#cfgActivate').onclick = async () => {
+    const c = collect();
+    const name = dirty ? `${editing} (edited)` : editing;
+    App.setActive(name, c);
+    loaded = c; dirty = false;
+    say(`"${label(name)}" is now active in this browser.`);
+    showState(); refreshList();
+  };
+
+  $('#cfgDownload').onclick = () => {
+    const c = collect(), name = f.name.value.trim() || editing;
+    const a = el('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ ...c, name }, null, 2) + '\n'], { type: 'application/json' }));
+    a.download = name + '.json'; a.click(); URL.revokeObjectURL(a.href);
+  };
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const name = f.name.value.trim();
+    if (!f.name.checkValidity() || !name) { say('Enter a name: letters, digits, - and _.', true); f.name.focus(); return; }
+    if (PRESETS.includes(name.toLowerCase())) { say('Presets are read-only. Choose another name.', true); f.name.focus(); return; }
+    const c = { ...collect(), name };
+    try {
+      await App.api('/' + encodeURIComponent(name), {
+        method: 'PUT', body: JSON.stringify(c),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      fill(name, c);
+      await refreshList();
+      say(`Saved as "${name}" on the server.`);
+    } catch (err) { say('Not saved: ' + err.message, true); }
+  });
+
+  $('#cfgReload').onclick = () => refreshList().catch(e => say('Could not list configs: ' + e.message, true));
+  App.on('config', () => { showState(); refreshList().catch(() => {}); });
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    try {
+      TOOLS = (await App.api('/lenient')).allowed_tools;
+      await refreshList();
+      let start = 'standard';
+      try { start = localStorage.getItem('activeConfig') || start; } catch {}
+      if (!await load(start)) await load('standard');
+    } catch (e) { $('#cfgList').replaceChildren(el('li', 'empty', 'Could not load configs: ' + e.message)); }
+  });
+})();
+>>>>>>> 9db597f (config: add new intercept layer config shape)

@@ -40,58 +40,58 @@ def client(tmp_path, monkeypatch):
 
 
 def new_session(client):
-    response = client.post("/api/v1/sessions")
+    response = client.post("/opencode-wrapper/api/sessions")
     assert response.status_code == 201
     return response.json()["session_id"]
 
 
 def test_session_keeps_state_across_messages_and_returns_evidence(client):
     sid = new_session(client)
-    first = client.post(f"/api/v1/sessions/{sid}/messages", json={"prompt": "hi"}).json()
-    second = client.post(f"/api/v1/sessions/{sid}/messages", json={"prompt": "again"}).json()
+    first = client.post(f"/opencode-wrapper/api/sessions/{sid}/messages", json={"prompt": "hi"}).json()
+    second = client.post(f"/opencode-wrapper/api/sessions/{sid}/messages", json={"prompt": "again"}).json()
     assert first["ok"] and first["reply"] == "you said HI (message 1)"
     assert second["reply"] == "you said AGAIN (message 2)" and len(second["events"]) == 2
-    polled = client.get(f"/api/v1/sessions/{sid}/events").json()
+    polled = client.get(f"/opencode-wrapper/api/sessions/{sid}/events").json()
     assert len(polled["events"]) == 2 and polled["busy"] is False
     assert polled["findings"][0]["rule_id"] == "gateway.hard_deny"
 
 
 def test_closing_a_session_stops_its_processes(client):
     sid = new_session(client)
-    assert client.delete(f"/api/v1/sessions/{sid}").status_code == 204
+    assert client.delete(f"/opencode-wrapper/api/sessions/{sid}").status_code == 204
     assert client.backend.stopped == [sid]
-    assert client.post(f"/api/v1/sessions/{sid}/messages", json={"prompt": "hi"}).status_code == 404
-    assert client.delete(f"/api/v1/sessions/{sid}").status_code == 204  # closing twice is harmless
+    assert client.post(f"/opencode-wrapper/api/sessions/{sid}/messages", json={"prompt": "hi"}).status_code == 404
+    assert client.delete(f"/opencode-wrapper/api/sessions/{sid}").status_code == 204  # closing twice is harmless
 
 
 def test_oldest_idle_session_makes_room_for_a_new_one(client):
     first, second = new_session(client), new_session(client)
-    client.post(f"/api/v1/sessions/{first}/messages", json={"prompt": "keep me fresh"})
+    client.post(f"/opencode-wrapper/api/sessions/{first}/messages", json={"prompt": "keep me fresh"})
     third = new_session(client)
     assert client.backend.stopped == [second]
-    assert client.get(f"/api/v1/sessions/{first}/events").status_code == 200
-    assert client.get(f"/api/v1/sessions/{third}/events").status_code == 200
+    assert client.get(f"/opencode-wrapper/api/sessions/{first}/events").status_code == 200
+    assert client.get(f"/opencode-wrapper/api/sessions/{third}/events").status_code == 200
 
 
 def test_invalid_input_and_unknown_sessions_are_rejected(client):
     sid = new_session(client)
-    assert client.post(f"/api/v1/sessions/{sid}/messages", json={}).status_code == 422
-    assert client.post(f"/api/v1/sessions/{sid}/messages", json={"prompt": ""}).status_code == 422
-    assert client.post(f"/api/v1/sessions/{sid}/messages", json={"prompt": "x" * 4001}).status_code == 422
-    assert client.get("/api/v1/sessions/ses_" + "0" * 32 + "/events").status_code == 404
-    assert client.get("/api/v1/sessions/..%2F..%2Fetc/events").status_code == 404
+    assert client.post(f"/opencode-wrapper/api/sessions/{sid}/messages", json={}).status_code == 422
+    assert client.post(f"/opencode-wrapper/api/sessions/{sid}/messages", json={"prompt": ""}).status_code == 422
+    assert client.post(f"/opencode-wrapper/api/sessions/{sid}/messages", json={"prompt": "x" * 4001}).status_code == 422
+    assert client.get("/opencode-wrapper/api/sessions/ses_" + "0" * 32 + "/events").status_code == 404
+    assert client.get("/opencode-wrapper/api/sessions/..%2F..%2Fetc/events").status_code == 404
 
 
 def test_daily_cap_blocks_further_messages(client):
     sid = new_session(client)
     for _ in range(4):
-        assert client.post(f"/api/v1/sessions/{sid}/messages", json={"prompt": "hi"}).status_code == 200
-    assert client.post(f"/api/v1/sessions/{sid}/messages", json={"prompt": "hi"}).status_code == 429
+        assert client.post(f"/opencode-wrapper/api/sessions/{sid}/messages", json={"prompt": "hi"}).status_code == 200
+    assert client.post(f"/opencode-wrapper/api/sessions/{sid}/messages", json={"prompt": "hi"}).status_code == 429
 
 
 def test_failed_start_is_reported_and_leaves_no_session(client):
     client.backend.fail_start = True
-    assert client.post("/api/v1/sessions").status_code == 503
+    assert client.post("/opencode-wrapper/api/sessions").status_code == 503
     assert sessions.manager().sessions == {}
 
 
@@ -106,4 +106,4 @@ def test_shutdown_stops_every_session(tmp_path, monkeypatch):
 
 def test_info_reports_model_and_scope(client, monkeypatch):
     monkeypatch.setenv("OPENCODE_MODEL", "openai/test-model")
-    assert client.get("/api/v1/info").json() == {"model": "openai/test-model", "application": "APP-0001"}
+    assert client.get("/opencode-wrapper/api/info").json() == {"model": "openai/test-model", "application": "APP-0001"}

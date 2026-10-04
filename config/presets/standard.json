@@ -88,10 +88,39 @@
         ],
         "action": "REQUIRE_APPROVAL"
       }
+    },
+    {
+      "id": "domain-blocklist",
+      "type": "domain_blocklist",
+      "config": {
+        "domains": [
+          "pastebin.com",
+          "transfer.sh",
+          "ngrok.io",
+          "webhook.site",
+          "requestbin.net"
+        ],
+        "action": "BLOCK"
+      }
     }
   ],
-  "consumer": {
+  "intercept": {
     "trajectory_risk": {},
+    "velocity_guard": {
+      "enabled": true,
+      "window_s": 10,
+      "max_calls": 6
+    },
+    "pattern_match": {
+      "enabled": true,
+      "patterns": [
+        "(?i)ignore\\s+previous\\s+instructions",
+        "(?i)system\\s+override",
+        "(?i)your\\s+previous\\s+task\\s+is\\s+cancelled"
+      ],
+      "fields": ["tool", "arguments"],
+      "action": "BLOCK"
+    },
     "feedback": {
       "enabled": true,
       "allow_agent_scope": false,
@@ -104,12 +133,12 @@
           "HALT_SESSION"
         ]
       }
+    },
+    "semantic_guard": {
+      "block_threshold": 0.9,
+      "approve_threshold": 0.75,
+      "alert_threshold": 0.6,
+      "on_error": "BLOCK"
     }
-  },
-  "semantic_guard": {
-    "block_threshold": 0.9,
-    "approve_threshold": 0.75,
-    "alert_threshold": 0.6,
-    "on_error": "BLOCK"
   }
 }

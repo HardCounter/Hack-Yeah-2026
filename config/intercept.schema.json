@@ -6,6 +6,28 @@
   "required": ["schema_version", "runs", "auditors"],
   "properties": {
     "schema_version": {"const": 1},
+    "intercept": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "pattern_match": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean", "default": true},
+            "patterns": {"type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+            "fields": {"type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": {"enum": ["tool", "arguments"]}},
+            "action": {"const": "BLOCK"}
+          }
+        },
+        "velocity_guard": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean", "default": true},
+            "window_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 3600},
+            "max_calls": {"type": "integer", "minimum": 1, "maximum": 10000}
+          }
+        }
+      }
+    },
     "contracts": {"$ref": "#/properties/runs"},
     "runs": {
       "type": "object",
@@ -29,7 +51,7 @@
         "required": ["id", "type", "config"],
         "properties": {
           "id": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"},
-          "type": {"enum": ["tool_allowlist", "pattern_scanner", "webhook"]},
+          "type": {"enum": ["tool_allowlist", "pattern_scanner", "domain_blocklist", "webhook"]},
           "config": {"type": "object"}
         },
         "allOf": [
@@ -44,6 +66,15 @@
              "properties": {
                "patterns": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}},
                "action": {"enum": ["BLOCK", "REDACT", "ALERT"]}
+             }
+           }}}},
+          {"if": {"properties": {"type": {"const": "domain_blocklist"}}},
+           "then": {"properties": {"config": {
+             "type": "object", "additionalProperties": false, "required": ["domains", "action"],
+             "properties": {
+               "domains": {"type": "array", "maxItems": 512,
+                           "items": {"type": "string", "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$"}},
+               "action": {"enum": ["BLOCK", "REQUIRE_APPROVAL", "ALERT"]}
              }
            }}}},
           {"if": {"properties": {"type": {"const": "webhook"}}},

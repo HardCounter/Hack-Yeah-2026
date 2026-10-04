@@ -85,3 +85,10 @@ def test_agent_scope_when_enabled():
     ctrl, channel = controller(allow_agent_scope=True)
     assert submit(ctrl, AdjustmentProposal(action="STRICT_MODE", scope="agent")).accepted
     assert channel.signals[0].target_scope == {"agent_id": "onboarding-agent"}
+
+
+def test_wildcard_tool_subsumes_specific_tools():
+    ctrl, channel = controller()
+    assert submit(ctrl, AdjustmentProposal(action="BLOCK_TOOLS", tools=("*",), ttl_s=10), seq=1).accepted
+    assert submit(ctrl, AdjustmentProposal(action="BLOCK_TOOLS", tools=("specific_tool",), ttl_s=10), seq=2).reason == "already_active"
+

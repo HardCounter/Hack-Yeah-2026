@@ -5,7 +5,7 @@
 Starts two processes on a fresh synthetic bank:
   * `intercept.service.local`: Layer 1 gateway. Binding a session (/intercept-run) composes the
     governed runtime: Layer 2 evidence store `bank-runs/<session_id>.evidence.db` and the Layer 3
-    consume plane (trajectory-risk, gateway-violations, outcome verifier, feedback to Layer 1).
+    consume plane (trajectory-risk, outcome verifier, feedback to Layer 1).
   * `persistence.http_api`: the read-only REST API for dashboards (docs/rest.md) over `bank-runs/`.
 Every step is traced to a file (CONTROL_LOG=file). An isolated OpenCode project exposes only
 gateway-backed tools. Gateway connection details go to the private var/intercept.env read by
@@ -147,11 +147,13 @@ def main(argv=None) -> int:
 
     env = {**os.environ, "INTERCEPT_TOKEN": token, "INTERCEPT_ADMIN_TOKEN": admin,
            "CONTROL_LOG": "file", "CONTROL_LOG_FILE": str(trace_log)}
+    # Management credentials belong to the REST API only, never the gateway/agent process.
+    gateway_env = {k: v for k, v in env.items() if k != "CONFIG_ADMIN_TOKEN"}
     gateway_out = open(run_dir / "gateway.log", "w", encoding="utf-8")
     gateway = subprocess.Popen(
         [sys.executable, "-m", "intercept.service.local", "--bank-db", str(bank), "--application",
          args.application, "--contract-id", contract_id, "--runs-dir", str(bank_runs), "--port", str(args.port)],
-        cwd=REPO, env=env, stdout=gateway_out, stderr=subprocess.STDOUT, start_new_session=True)
+        cwd=REPO, env=gateway_env, stdout=gateway_out, stderr=subprocess.STDOUT, start_new_session=True)
     api, api_out = None, None
     status = 1
     try:

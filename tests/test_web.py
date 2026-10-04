@@ -26,6 +26,10 @@ def test_presets_are_listed_and_valid(monkeypatch, tmp_path):
     for name in names:
         preset = client.get(f"/api/v1/configs/{name}").json()
         Pipeline(preset["auditors"])  # the gateway accepts every preset
+        assert preset["intercept"]["velocity_guard"]["window_s"] > 0
+        assert preset["intercept"]["velocity_guard"]["max_calls"] > 0
+        guard = preset["intercept"]["semantic_guard"]
+        assert guard["block_threshold"] >= guard["approve_threshold"] >= guard["alert_threshold"]
 
 
 def test_save_round_trip_and_rejections(monkeypatch, tmp_path):
@@ -41,7 +45,8 @@ def test_save_round_trip_and_rejections(monkeypatch, tmp_path):
     assert client.put("/api/v1/configs/..%2Fevil", json=config).status_code >= 400  # never reaches the save code
     assert client.put("/api/v1/configs/Bad Name", json=config).status_code == 422
     assert client.put("/api/v1/configs/Strict", json=config).status_code == 409  # preset names in any case
-    unordered = {**config, "semantic_guard": {**config["semantic_guard"], "approve_threshold": 0.99}}
+    unordered = {**config, "intercept": {**config["intercept"], "semantic_guard": {
+        **config["intercept"]["semantic_guard"], "approve_threshold": 0.99}}}
     assert client.put("/api/v1/configs/bad", json=unordered).status_code == 422  # approve above block
     bad = {**config, "require_approval": ["delete_everything"]}
     assert client.put("/api/v1/configs/bad", json=bad).status_code == 422
@@ -49,6 +54,38 @@ def test_save_round_trip_and_rejections(monkeypatch, tmp_path):
     assert client.put("/api/v1/configs/bad", json=bad).status_code == 422
     assert client.put("/api/v1/configs/My-Policy2", json=config).status_code == 200  # uppercase allowed
     assert sorted(p.name for p in tmp_path.iterdir()) == ["My-Policy2.json", "my-policy.json"]
+
+
+def test_opencode_wrapper_page_is_served_under_its_own_path():
+    response = client.get("/opencode-wrapper/")
+    assert response.status_code == 200
+    assert "opencode-wrapper" in response.text
+    assert client.get("/opencode-wrapper", follow_redirects=False).status_code in (301, 307, 308)
+
+
+def test_save_round_trip_and_rejections(monkeypatch, tmp_path):
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("CONFIG_ADMIN_TOKEN", "synthetic-management-token")
+    headers = {"Authorization": "Bearer synthetic-management-token"}
+    config = client.get("/api/v1/configs/strict").json()
+    config["budget"]["tokens"] = 1234
+
+    assert client.put("/api/v1/configs/strict", json=config).status_code == 401
+    result = client.put("/api/v1/configs/strict", json=config, headers=headers)
+    assert result.status_code == 200
+    assert client.get("/api/v1/configs/strict").json()["budget"]["tokens"] == 1234
+    assert client.put("/api/v1/configs/my-policy", json=config, headers=headers).status_code == 404
+    assert client.put("/api/v1/configs/..%2Fevil", json=config, headers=headers).status_code >= 400
+    assert client.put("/api/v1/configs/Bad Name", json=config, headers=headers).status_code == 400
+    assert client.put("/api/v1/configs/Strict", json=config, headers=headers).status_code == 404
+    unordered = {**config, "intercept": {**config["intercept"], "semantic_guard": {
+        **config["intercept"]["semantic_guard"], "approve_threshold": 0.99}}}
+    assert client.put("/api/v1/configs/strict", json=unordered, headers=headers).status_code == 422
+    bad = {**config, "require_approval": ["delete_everything"]}
+    assert client.put("/api/v1/configs/strict", json=bad, headers=headers).status_code == 422
+    bad = {**config, "auditors": [{"id": "x", "type": "webhook", "config": {}}]}
+    assert client.put("/api/v1/configs/strict", json=bad, headers=headers).status_code == 422
+    assert (tmp_path / "state.json").is_file()
 
 
 def test_opencode_wrapper_page_is_served_under_its_own_path():

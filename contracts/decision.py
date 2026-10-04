@@ -11,6 +11,7 @@ class GatewayDecision:
     action_id: str
     decision: str
     reason_code: str | None
+    reason_family: str | None = None  # set for non-ALLOW decisions (intercept.governed.reason_families)
     policy_version: str
     auditor_decisions: tuple[Mapping[str, Any], ...] = ()
     modified_arguments: Mapping[str, Any] | None = None

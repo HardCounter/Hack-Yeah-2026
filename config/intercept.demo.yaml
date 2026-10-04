@@ -10,6 +10,16 @@ contracts:
     argument_equals:
       read_application: {app_id: APP-0001}
       request_more_docs: {app_id: APP-0001}
+intercept:
+  pattern_match:
+    enabled: true
+    patterns: ['(?i)ignore\s+previous\s+instructions', '(?i)system\s+override']
+    fields: [tool, arguments]
+    action: BLOCK
+  velocity_guard:
+    enabled: true
+    window_s: 10
+    max_calls: 8
 auditors:
   - id: tool-scope
     type: tool_allowlist
@@ -24,6 +34,11 @@ auditors:
     type: pattern_scanner
     config:
       patterns: ["IGNORE THE TASK"]
+      action: BLOCK
+  - id: domain-blocklist        # any argument or tool result naming these hosts (or subdomains)
+    type: domain_blocklist
+    config:
+      domains: [pastebin.com, webhook.site]
       action: BLOCK
 # Optional local auditor: enable only when its server is running.
 #  - id: contextual-review

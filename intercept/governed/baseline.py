@@ -34,7 +34,10 @@ class Baseline:
 def norm_name(name: Any) -> str:
     if not isinstance(name, str):
         return ""
-    from rules import norm
+    try:
+        from rules import norm
+    except ImportError:
+        from data.rules import norm
     return norm(name)
 
 

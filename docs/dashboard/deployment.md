@@ -118,11 +118,11 @@ Measured on the instance with `gpt-4.1-mini`: about 1-3 s to start a session, th
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/v1/info` | Model and assigned application |
-| `POST /api/v1/sessions` | Start a session. Returns `201` and a `session_id` once it is ready |
-| `POST /api/v1/sessions/{id}/messages` | Send `{"prompt": "..."}`. Returns the agent's `reply`, plus all `events` and `findings` so far |
-| `GET /api/v1/sessions/{id}/events` | Sanitized events (each with the gateway's `reason_code`) and findings; polled while the agent works |
-| `DELETE /api/v1/sessions/{id}` | Stop the session's processes |
+| `GET /opencode-wrapper/api/info` | Model and assigned application |
+| `POST /opencode-wrapper/api/sessions` | Start a session. Returns `201` and a `session_id` once it is ready |
+| `POST /opencode-wrapper/api/sessions/{id}/messages` | Send `{"prompt": "..."}`. Returns the agent's `reply`, plus all `events` and `findings` so far |
+| `GET /opencode-wrapper/api/sessions/{id}/events` | Sanitized events (each with the gateway's `reason_code`) and findings; polled while the agent works |
+| `DELETE /opencode-wrapper/api/sessions/{id}` | Stop the session's processes |
 
 - Limits: `MAX_SESSIONS` (6) live sessions, where the least recently used idle one makes room for a new
   one; sessions idle for `SESSION_IDLE_S` (900 s) are closed; `RUN_TIMEOUT_S` (120 s) per message;
@@ -131,6 +131,28 @@ Measured on the instance with `gpt-4.1-mini`: about 1-3 s to start a session, th
 - Not available: raw tool arguments and results (events are sanitized by design). Messages are passed
   to the agent but not stored by the web layer.
 - Tests (`tests/test_web_sessions.py`) use a fake backend, so they need no OpenCode and no API key.
+
+### Read API for dashboards (deployed as a stub)
+
+The read API from [docs/rest.md](../rest.md) runs as its own Compose service, `api`
+(`python -m persistence.http_api`), on the same image and data volume as the app. It gets no `.env`,
+so it holds no credentials. It is reachable only through Caddy:
+
+| Path on the public URL | Served by |
+|---|---|
+| `/api/v1/configs`, `/api/v1/configs/*` | `app` (config presets and saved configs) |
+| every other `/api/v1/*` path | `api` (the read API; interactive docs at `/api/v1/docs`) |
+| `/opencode-wrapper/api/*` | `app` (the wrapper's session API) |
+| everything else | `app` (static pages) |
+
+- **Stub:** apart from `system/stats.evidence_stores`, every endpoint returns fixed example data until
+  the store queries are implemented.
+- **Evidence folder:** every wrapper session writes its evidence store to one shared folder,
+  `/data/pipeline-runs/bank-runs/<session_id>.evidence.db`, which is the read API's `--evidence-dir`.
+- **No authentication:** the API is public and read-only, like the rest of the site.
+- **Local development without Caddy:** `scripts/run_rest_api.sh` serves the same API on port 8790.
+- A changed `Caddyfile` is applied by the deploy workflow with `caddy reload`; an invalid file fails
+  the deploy and Caddy keeps serving the previous config.
 
 ### Guard vs agent
 

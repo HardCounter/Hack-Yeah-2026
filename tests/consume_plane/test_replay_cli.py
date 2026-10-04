@@ -9,19 +9,19 @@ REPO = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
-def test_replay_runs_velocity_guard_and_exports_findings(tmp_path):
+def test_replay_runs_consumer_fixture_and_exports_findings(tmp_path):
     config = tmp_path / "consume_plane.yaml"
     config.write_text(textwrap.dedent(f"""
         consume_plane:
           source: {{poll_timeout_s: 0.01}}
-          plugin_dirs: ["{(REPO / 'plugins').as_posix()}"]
+          plugin_dirs: ["{(FIXTURES / 'plugins').as_posix()}"]
           ledger_path: "var/ledger.db"
           sinks:
             - {{type: jsonl, path: "runs/{{run_id}}/findings.jsonl"}}
           feedback:
-            allowed_actions: {{velocity-guard: [REQUIRE_APPROVAL_FOR]}}
+            allowed_actions: {{velocity-observer: [REQUIRE_APPROVAL_FOR]}}
         plugins:
-          velocity-guard:
+          velocity-observer:
             config: {{window_s: 10, max_calls: 8}}
     """))
     proc = subprocess.run(
@@ -32,7 +32,7 @@ def test_replay_runs_velocity_guard_and_exports_findings(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     summary = json.loads(proc.stdout)
-    assert summary["plugins"] == ["velocity-guard@1.0.0"]
+    assert summary["plugins"] == ["velocity-observer@1.0.0"]
     assert summary["events_acked"] == 12 and summary["plugin_dead_letters"] == []
     # calls 9 and 10 exceed the limit; the second proposal merges into the first
     assert [f["outcome"] for f in summary["feedback"]] == ["accepted", "already_active"]

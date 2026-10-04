@@ -12,7 +12,7 @@ consume_plane:
   max_attempts: 3
   retry_backoff_s: 0.5
   on_plugin_load_error: fail    # fail | skip
-  plugin_dirs: ["plugins"]
+  plugin_dirs: []               # plugins/ is now Layer 1; consumers use explicit handlers below
   ledger_path: "var/consume_plane_ledger.db"
 
   sinks:
@@ -24,12 +24,9 @@ consume_plane:
     max_ttl_s: 3600
     max_signals_per_session_per_minute: 6
     allowed_actions:            # default: a plugin may propose nothing
-      velocity-guard: [REQUIRE_APPROVAL_FOR]
       trajectory-risk: [REQUIRE_APPROVAL_FOR, HALT_SESSION]
 
 plugins:
-  velocity-guard:               # drop-in file plugins/velocity_guard.py; only its config lives here
-    config: {window_s: 10, max_calls: 8}
   trajectory-risk:              # built-in; expected loss = sum P(failure) x consequence (docs/trajectory-risk-model.md)
     handler: "consume_plane.plugins.trajectory_risk:TrajectoryRisk"
     config:                     # any key from DEFAULTS in the plugin can be overridden here
