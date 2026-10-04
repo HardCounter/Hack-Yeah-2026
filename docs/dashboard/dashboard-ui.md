@@ -137,4 +137,6 @@ reads actual state and reports failed `ONB-P2`. (Earlier AML concept `TXM-03` is
    Reserve the panel in the layout either way.
 2. **Hosting**: deployed URL (VPS or tunnel to our laptop) vs our laptop on venue Wi-Fi. Venue networks often
    isolate clients; **test at the venue early**. Last resort: judges use our laptop.
-3. **API contract**: implemented to match the proposed endpoints in [application-documentation.md](application-documentation.md#54-gateway-dashboard-api-contract-for-judge-ui) (`/api/v1/inspect`, `/api/v1/events/stream`, `/api/v1/policy`, `/api/v1/policy/mode`, `/api/v1/approvals/{approval_id}/decide`, `/api/v1/suite/status`, `/api/v1/scenario/replay`).
+3. **API contract**: implemented to match the proposed endpoints in [application-documentation.md](application-documentation.md#54-gateway-dashboard-api-contract-for-judge-ui) (`/api/v1/inspect`, `/api/v1/events/stream`, `/api/v1/policy`, `/api/v1/policy/mode`, `/api/v1/approvals/{approval_id}/decide`, `/api/v1/suite/status`, `/api/v1/scenario/replay`). Session lists, trajectories, single
+   actions, detection events, usage/budget metrics, security posture and audit export come from the
+   read-only persistence API in [rest.md](../rest.md).

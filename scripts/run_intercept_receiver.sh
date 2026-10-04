@@ -29,6 +29,14 @@ if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
     exit 1
 fi
 
+if [[ -f "$ENV_FILE" ]]; then
+    owner=$(sed -n 's/^INTERCEPT_PORT=//p' "$ENV_FILE")
+    if [[ -n "$owner" ]] && (exec 3<>"/dev/tcp/127.0.0.1/$owner") 2>/dev/null; then
+        echo "error: another pipeline/receiver is running on port $owner ($ENV_FILE); stop it first" >&2
+        exit 1
+    fi
+fi
+
 # Fresh token per receiver run, shared with the OpenCode launcher through a private file.
 mkdir -p var "$DEMO_DIR"
 TOKEN=$(uv run --quiet python -c 'import secrets; print(secrets.token_hex(24))')

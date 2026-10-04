@@ -152,3 +152,55 @@ def test_intercepted_launcher_rejects_missing_workspace(tmp_path):
                             capture_output=True, text=True)
     assert result.returncode == 2
     assert "--workspace requires a directory" in result.stderr
+def test_live_pipeline_env_file_is_never_taken_from_another_run(tmp_path, monkeypatch):
+    import socket
+    from simulation import live_pipeline as lp
+    env_file = tmp_path / "intercept.env"
+    monkeypatch.setattr(lp, "ENV_FILE", env_file)
+    assert lp._env_owner_port() is None
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        env_file.write_text(f"INTERCEPT_TOKEN=theirs\nINTERCEPT_PORT={port}\n")
+        result = subprocess.run([sys_executable(), "-c", (
+            "import sys; from pathlib import Path; from simulation import live_pipeline as lp; "
+            f"lp.ENV_FILE = Path({str(env_file)!r}); sys.exit(lp.main(['--model', 'p/m', '--port', '0']))")],
+            cwd=ROOT, capture_output=True, text=True)
+    assert result.returncode == 2 and "another pipeline" in result.stderr
+    lp._release_env_file("mine")                 # someone else's file: kept
+    assert env_file.exists()
+    env_file.write_text("INTERCEPT_TOKEN=mine\nINTERCEPT_PORT=1\n")
+    lp._release_env_file("mine")                 # ours: removed
+    assert not env_file.exists()
+
+
+def test_live_pipeline_refuses_a_busy_rest_api_port(tmp_path):
+    import socket
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        # Private env file: a pipeline running on this machine must not change the outcome.
+        result = subprocess.run([sys_executable(), "-c", (
+            "import sys; from pathlib import Path; from simulation import live_pipeline as lp; "
+            f"lp.ENV_FILE = Path({str(tmp_path / 'intercept.env')!r}); "
+            f"sys.exit(lp.main(['--model', 'p/m', '--port', '0', '--api-port', '{port}']))")],
+            cwd=ROOT, capture_output=True, text=True)
+    assert result.returncode == 2 and "REST API port" in result.stderr
+
+
+def test_rest_api_wrapper_forwards_arguments(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "uv-call.txt"
+    stub = bin_dir / "uv"
+    stub.write_text('#!/bin/bash\nprintf "arg=<%s>\\n" "$@" > "$PIPELINE_TEST_LOG"\n', encoding="utf-8")
+    stub.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin", "PIPELINE_TEST_LOG": str(log)}
+    result = subprocess.run(["bash", str(ROOT / "scripts/run_rest_api.sh"), "--port", "9"],
+                            cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        "arg=<run>", "arg=<--locked>", "arg=<python>", "arg=<-m>", "arg=<persistence.http_api>",
+        "arg=<--port>", "arg=<9>"]

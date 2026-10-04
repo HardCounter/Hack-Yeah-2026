@@ -579,6 +579,11 @@ class ConsumerModule(Protocol):
 
 To power the judge-facing audit ledger UI defined in `docs/dashboard-ui.md`, the Gateway exposes the following lightweight HTTP/SSE endpoints:
 
+> These are the **Layer 1 (gateway)** endpoints: live decisions and controls. History
+> (trajectories, single actions, detection events, usage and budget metrics, interventions,
+> verification results, audit export) comes from the separate read-only persistence API
+> specified in [rest.md](rest.md). Both use the `/api/v1` prefix and do not share a path.
+
 | Endpoint | Method | Purpose | Payload / Response |
 |---|---|---|---|
 | `/api/v1/inspect` | `POST` | **Sandbox Attack Console**: Uses the same enforcement path; identity/contract/policy are resolved server-side. | Req: prompt or tool proposal plus session reference (no self-selected authority). Res: sanitized verdict/pipeline/output, action ID and bound policy version. |

@@ -87,7 +87,8 @@ class Gateway:
                     if hmac.compare_digest(headers.get("authorization", ""), "Bearer " + self.token):
                         hooks = hello.get("hooks") if isinstance(hello.get("hooks"), list) else []
                         get_logger().log("intercept", "adapter.connected", adapter=str(hello.get("adapter")),
-                                         hooks=",".join(str(h) for h in hooks), prompts=str(hello.get("prompts")))
+                                         hooks=",".join(str(h) for h in hooks), prompts=str(hello.get("prompts")),
+                                         directory=str(hello.get("directory")))
                         status, result = 200, {"ok": True}
                     else:
                         get_logger().log("intercept", "adapter.failed", status=str(hello.get("status")),
