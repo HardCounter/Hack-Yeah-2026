@@ -21,7 +21,6 @@ cd "$(dirname "$0")/.."
 ENV_FILE=$PWD/var/intercept.env
 
 [[ -f "$ENV_FILE" ]] || { echo "error: $ENV_FILE not found; start scripts/run_live_pipeline.sh or scripts/run_intercept_receiver.sh first" >&2; exit 1; }
-command -v opencode >/dev/null 2>&1 || { echo "error: opencode is not on PATH" >&2; exit 1; }
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 
@@ -50,6 +49,9 @@ done
 
 [[ -d "$WORKSPACE" ]] || { echo "error: workspace directory does not exist: $WORKSPACE" >&2; exit 2; }
 WORKSPACE=$(cd -- "$WORKSPACE" && pwd -P)
+
+# Checked after the arguments, so a usage error is reported even on a machine without OpenCode.
+command -v opencode >/dev/null 2>&1 || { echo "error: opencode is not on PATH" >&2; exit 1; }
 
 if ! (exec 3<>"/dev/tcp/127.0.0.1/$INTERCEPT_PORT") 2>/dev/null; then
     echo "error: nothing listens on 127.0.0.1:$INTERCEPT_PORT; start terminal 1 first" >&2
