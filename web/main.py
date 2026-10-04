@@ -1,4 +1,4 @@
-"""Web app: health check, policy files and the static frontend."""
+"""Web app: health check, config files and the static frontend."""
 import json
 import os
 import re
@@ -12,47 +12,55 @@ from intercept.auditors import Pipeline
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "static"
-PRESETS = ROOT / "policies"  # committed lenient / standard / strict
+PRESETS = ROOT / "config" / "presets"  # committed lenient / standard / strict
 NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
-MAX_POLICY_BYTES = 64_000
+MAX_CONFIG_BYTES = 64_000
 
 app = FastAPI(title="AI Control Layer", docs_url=None, redoc_url=None, openapi_url=None)
 
 
+@app.middleware("http")
+async def revalidate(request: Request, call_next):
+    # Browsers may revalidate (cheap 304 via ETag) but never serve a stale frontend after a deploy.
+    response = await call_next(request)
+    response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
 def custom_dir() -> Path:
-    # On the server this points at the data volume, so saved policies survive a deploy.
-    return Path(os.environ.get("POLICY_DIR", ROOT / "var" / "policies"))
+    # On the server this points at the data volume, so saved configs survive a deploy.
+    return Path(os.environ.get("CONFIG_DIR", ROOT / "var" / "config"))
 
 
-def policy_files() -> dict[str, tuple[Path, bool]]:
+def config_files() -> dict[str, tuple[Path, bool]]:
     files = {p.stem: (p, False) for p in custom_dir().glob("*.json")}
     files.update({p.stem: (p, True) for p in PRESETS.glob("*.json")})  # presets win a name clash
     return files
 
 
-def validate(policy: dict, tools: set[str]) -> None:
+def validate(config: dict, tools: set[str]) -> None:
     """Shape checks for the fields the editor changes; auditors use the gateway's own validation."""
     def need(ok, msg):
         if not ok:
             raise HTTPException(422, msg)
 
     is_int = lambda v, lo, hi: type(v) is int and lo <= v <= hi
-    need(isinstance(policy, dict), "policy must be an object")
-    allowed = policy.get("allowed_tools")
+    need(isinstance(config, dict), "config must be an object")
+    allowed = config.get("allowed_tools")
     need(isinstance(allowed, list) and set(allowed) <= tools, "allowed_tools must be known tools")
-    need(isinstance(policy.get("require_approval"), list) and set(policy["require_approval"]) <= set(allowed),
+    need(isinstance(config.get("require_approval"), list) and set(config["require_approval"]) <= set(allowed),
          "require_approval must be a subset of allowed_tools")
-    budget = policy.get("budget")
+    budget = config.get("budget")
     need(isinstance(budget, dict) and is_int(budget.get("tokens"), 1, 1_000_000)
          and is_int(budget.get("tool_calls"), 1, 1000), "budget.tokens and budget.tool_calls must be positive integers")
     cost = budget.get("cost_usd")
     need(cost is None or (type(cost) in (int, float) and 0 <= cost <= 1000), "budget.cost_usd must be empty or 0-1000")
-    need(is_int(policy.get("max_output_tokens"), 1, 32_768), "max_output_tokens must be 1-32768")
-    guard = policy.get("semantic_guard")
+    need(is_int(config.get("max_output_tokens"), 1, 32_768), "max_output_tokens must be 1-32768")
+    guard = config.get("semantic_guard")
     need(isinstance(guard, dict) and type(guard.get("block_threshold")) in (int, float)
          and 0 < guard["block_threshold"] <= 1, "semantic_guard.block_threshold must be in (0, 1]")
     try:
-        Pipeline(policy.get("auditors"))
+        Pipeline(config.get("auditors"))
     except (ValueError, TypeError) as e:
         raise HTTPException(422, f"auditors: {e}")
 
@@ -62,25 +70,25 @@ def healthz():
     return {"status": "ok", "commit": os.environ.get("GIT_SHA", "dev")}
 
 
-@app.get("/api/v1/policies")
-def list_policies():
+@app.get("/api/v1/configs")
+def list_configs():
     out = []
-    for name, (path, preset) in sorted(policy_files().items(), key=lambda kv: (not kv[1][1], kv[0])):
+    for name, (path, preset) in sorted(config_files().items(), key=lambda kv: (not kv[1][1], kv[0])):
         out.append({"name": name, "preset": preset,
                     "description": json.loads(path.read_text(encoding="utf-8")).get("description", "")})
     return out
 
 
-@app.get("/api/v1/policies/{name}")
-def get_policy(name: str):
-    entry = policy_files().get(name)
+@app.get("/api/v1/configs/{name}")
+def get_config(name: str):
+    entry = config_files().get(name)
     if not entry:
-        raise HTTPException(404, "no such policy")
+        raise HTTPException(404, "no such config")
     return json.loads(entry[0].read_text(encoding="utf-8"))
 
 
-@app.put("/api/v1/policies/{name}")
-async def save_policy(name: str, request: Request, authorization: str = Header("")):
+@app.put("/api/v1/configs/{name}")
+async def save_config(name: str, request: Request, authorization: str = Header("")):
     token = os.environ.get("ADMIN_TOKEN", "")
     if not token:
         raise HTTPException(503, "saving is disabled: ADMIN_TOKEN is not set")
@@ -91,19 +99,19 @@ async def save_policy(name: str, request: Request, authorization: str = Header("
     if (PRESETS / f"{name}.json").exists():
         raise HTTPException(409, "presets are read-only; save under another name")
     body = await request.body()
-    if len(body) > MAX_POLICY_BYTES:
-        raise HTTPException(413, "policy too large")
+    if len(body) > MAX_CONFIG_BYTES:
+        raise HTTPException(413, "config too large")
     try:
-        policy = json.loads(body)
+        config = json.loads(body)
     except ValueError:
         raise HTTPException(422, "body is not JSON")
     tools = set(json.loads((PRESETS / "lenient.json").read_text(encoding="utf-8"))["allowed_tools"])
-    validate(policy, tools)
-    policy["name"] = name
+    validate(config, tools)
+    config["name"] = name
     folder = custom_dir()
     folder.mkdir(parents=True, exist_ok=True)
     tmp = folder / f".{name}.tmp"
-    tmp.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     tmp.replace(folder / f"{name}.json")  # atomic, so a reader never sees half a file
     return {"status": "saved", "name": name}
 

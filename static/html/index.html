@@ -4,171 +4,296 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI Control Layer</title>
-<!-- Dashboard, rebuilt from docs/dashboard/mockup.html (dashboard-ui.md + visuals.md). Every figure is random sample data.
-     Structure follows the "Goals by time" table: one guided path, four steps, one click to a verdict. -->
-<link rel="stylesheet" href="/css/dashboard.css">
-<script src="/js/dashboard.js" defer></script>
+<link rel="stylesheet" href="/css/app.css">
+<!-- Load order matters: app.js owns shared state; each tab script registers with it. -->
+<script src="/js/app.js" defer></script>
+<script src="/js/prompt.js" defer></script>
+<script src="/js/config.js" defer></script>
+<script src="/js/metrics.js" defer></script>
+<script src="/js/riskmap.js" defer></script>
+<script src="/js/tests.js" defer></script>
 </head>
 <body>
 
-<header class="letterhead">
+<header class="appbar">
   <div class="wrap lh">
-    <div class="wordmark"><span class="seal" aria-hidden="true">◆</span>AI Control Layer</div>
-    <div class="lh-right cap">
-      <span id="statusLine" class="muted"></span>
-      <a class="btn ghost btn-sm" href="/policy.html">Policy</a>
-      <span><span class="dot" aria-hidden="true"></span>Live</span>
+    <a class="wordmark" href="#prompt"><span class="seal" aria-hidden="true">◆</span>AI Control Layer</a>
+    <div class="appbar-meta">
+      <span class="env" title="Synthetic bank data. No real customer data is processed.">Demo</span>
+      <span>Active config <b class="activeName">…</b></span>
+      <span id="gateway"><span class="dot" aria-hidden="true"></span>Checking gateway…</span>
+      <span>Build <code id="build">…</code></span>
     </div>
   </div>
-  <nav class="wrap path" aria-label="Demo steps">
-    <a href="#break"><span class="n">1</span><span class="t">Try to break it</span><span class="s">One click sends a real attack</span></a>
-    <a href="#agent"><span class="n">2</span><span class="t">Catch a lying agent</span><span class="s">It said done. We checked.</span></a>
-    <a href="#own"><span class="n">3</span><span class="t">Write your own</span><span class="s">Same controls, your words</span></a>
-    <a href="#proof"><span class="n">4</span><span class="t">See the proof</span><span class="s">Tests, audit log, budget</span></a>
+  <nav class="wrap tabs" aria-label="Sections">
+    <a href="#prompt"><span class="n">1</span><span class="t">Prompt it</span><span class="d">Send a prompt through the controls</span></a>
+    <a href="#config"><span class="n">2</span><span class="t">Config</span><span class="d">Choose and edit the control settings</span></a>
+    <a href="#metrics"><span class="n">3</span><span class="t">Metrics</span><span class="d">Decisions, cost, latency and audit log</span></a>
+    <a href="#tests"><span class="n">4</span><span class="t">Tests</span><span class="d">Self-test suite and agent checks</span></a>
   </nav>
 </header>
 
 <main class="wrap">
 
-  <!-- Step 1: attack console -->
-  <section id="v-break" data-view>
-    <h1 class="title">Pick an attack. Watch it get stopped.</h1>
-    <p class="lead">Every prompt passes our controls before any model sees it.</p>
-    <div class="stage">
+  <!-- PROMPT IT -->
+  <section id="v-prompt" data-view aria-labelledby="h-prompt">
+    <div class="page-head">
       <div>
-        <ul class="choices" id="presets"></ul>
-        <p class="cap muted note">Want to try your own words? <a href="#own">Write your own prompt</a>.</p>
+        <h1 id="h-prompt">Prompt it</h1>
+        <p>Every prompt runs through each control before any model sees it. The result shows what each control decided and what was forwarded.</p>
+      </div>
+      <div class="actions cap muted">Checked against config&nbsp;<a href="#config"><b class="activeName">…</b></a></div>
+    </div>
+
+    <div class="grid split">
+      <div class="stack">
+        <div class="panel composer">
+          <div class="panel-head"><h2><label for="prompt">Prompt</label></h2><span class="cap faint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to send</span></div>
+          <textarea id="prompt" maxlength="4000" placeholder="Type or paste a prompt, or pick a sample below."></textarea>
+          <div class="composer-bar">
+            <span class="mono cap muted"><span id="chars">0</span> / 4000 chars · ~<span id="estTok">0</span> tokens</span>
+            <span class="actions">
+              <button class="btn ghost sm" id="clear" type="button">Clear</button>
+              <button class="btn" id="send" type="button">Send prompt</button>
+            </span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>Insert a known attack pattern</h2></div>
+          <div class="panel-body"><div class="snips" id="snips"></div></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>Sample prompts</h2><span class="cap faint">Click to load and send</span></div>
+          <ul class="picker" id="samples"></ul>
+        </div>
       </div>
 
-      <div class="result" aria-live="polite" id="panel1">
-        <p class="empty">Choose an attack on the left. The verdict appears here in under a second.</p>
-        <div class="out" hidden>
-          <div class="next">
-            <span class="muted">Blocking bad prompts is half the job.</span>
-            <a class="btn" href="#agent" role="button">Next: catch a lying agent</a>
+      <div class="stack">
+        <div class="panel" aria-live="polite">
+          <div class="panel-head"><h2>Result</h2><span class="cap faint mono" id="reqId"></span></div>
+          <p class="empty" id="resultEmpty">No prompt sent yet. Write one on the left or pick a sample.</p>
+          <div id="result" hidden>
+            <div class="verdict" id="verdict">
+              <div class="word" id="vWord"></div>
+              <p class="reason" id="vReason"></p>
+              <div class="meta" id="vMeta"></div>
+            </div>
+            <div class="risk-line" id="vRisk"></div>
+            <div class="scroll"><table>
+              <thead><tr><th>Control</th><th>Decision</th><th>Detail</th><th class="n">Latency</th></tr></thead>
+              <tbody id="trace"></tbody>
+            </table></div>
+            <div class="panel-head"><h2>Forwarded to the model</h2><span class="cap faint" id="redactions"></span></div>
+            <pre class="saw" id="saw"></pre>
           </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>This session</h2><span class="cap faint">Click a row to load the prompt again</span></div>
+          <div class="scroll"><table>
+            <thead><tr><th>Time</th><th>Verdict</th><th>Rule</th><th>Prompt</th></tr></thead>
+            <tbody id="history"><tr><td colspan="4" class="empty">Nothing sent in this session.</td></tr></tbody>
+          </table></div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Step 2: trajectory / outcome -->
-  <section id="v-agent" data-view hidden>
-    <h1 class="title">The agent said “done”. Was it?</h1>
-    <p class="lead">We replay a full agent run, then an independent check reads what was actually saved.</p>
-    <div class="stage">
+  <!-- CONFIG -->
+  <section id="v-config" data-view hidden aria-labelledby="h-config">
+    <div class="page-head">
       <div>
-        <ul class="choices" id="scenarios"></ul>
-        <button class="btn" id="run">Replay this run</button>
-        <p class="cap muted note"><em>Recorded replay on synthetic data.</em></p>
+        <h1 id="h-config">Config</h1>
+        <p>A config sets what the controls do: budgets, the injection threshold, how personal data and secrets are handled, and which agent tools need approval. Pick one, adjust it, and make it active.</p>
+      </div>
+    </div>
+
+    <div class="grid sidebar">
+      <div class="panel">
+        <div class="panel-head"><h2>Configs</h2><button class="btn ghost sm" id="cfgReload" type="button">Reload</button></div>
+        <ul class="picker" id="cfgList"><li class="empty">Loading…</li></ul>
       </div>
 
-      <div class="result" aria-live="polite">
-        <div id="scenResult" hidden>
-          <span id="stamp2"></span>
-          <p class="why" id="headline"></p>
+      <form class="panel" id="cfgForm" novalidate>
+        <div class="panel-head">
+          <h2>Editing <span class="mono" id="cfgEditing">…</span> <span class="badge neutral" id="cfgState"></span></h2>
+          <span class="actions">
+            <button class="btn ghost sm" id="cfgDownload" type="button">Download JSON</button>
+            <button class="btn sm" id="cfgActivate" type="button">Make active</button>
+          </span>
+        </div>
+        <p class="cap muted section" id="cfgDesc"></p>
+
+        <fieldset class="section">
+          <h3>Budget</h3>
+          <div class="two">
+            <label class="slider"><span>Tokens per session</span><input type="range" name="tokens" min="1000" max="100000" step="1000"><output data-for="tokens"></output></label>
+            <label class="slider"><span>Tool calls per session</span><input type="range" name="tool_calls" min="1" max="100" step="1"><output data-for="tool_calls"></output></label>
+            <label class="slider"><span>Max answer tokens</span><input type="range" name="max_output_tokens" min="128" max="8192" step="128"><output data-for="max_output_tokens"></output></label>
+            <label class="field"><span>Cost limit (USD) <small>empty = no limit</small></span><input type="number" name="cost_usd" min="0" max="1000" step="0.5" placeholder="No limit"></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="section">
+          <h3>Prompt injection</h3>
+          <label class="slider"><span>AI check blocks at score ≥</span><input type="range" name="block_threshold" min="0.5" max="0.99" step="0.01"><output data-for="block_threshold"></output></label>
+          <p class="hint">Lower blocks more. Presets: lenient 0.95, standard 0.90, strict 0.80.</p>
+          <div class="two">
+            <label class="field"><span>Known attack phrases <small>one per line, literal match</small></span><textarea name="patterns" rows="6"></textarea></label>
+            <label class="field"><span>On match</span><select name="patterns_action"><option value="BLOCK">Block</option><option value="REDACT">Redact</option><option value="ALERT">Alert only</option></select></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="section">
+          <h3>Sensitive data</h3>
+          <div class="two">
+            <label class="field"><span>Personal data <small>PESEL, IBAN</small></span><select name="privacy_action"><option value="REDACT">Redact</option><option value="BLOCK">Block</option><option value="ALERT">Alert only</option></select></label>
+            <label class="field"><span>Secrets <small>API keys, private keys</small></span><select name="secret_action"><option value="REDACT">Redact</option><option value="BLOCK">Block</option><option value="ALERT">Alert only</option></select></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="section">
+          <h3>Agent tools</h3>
+          <div class="scroll"><table>
+            <thead><tr><th>Tool</th><th>Allowed</th><th>Needs human approval</th></tr></thead>
+            <tbody id="cfgTools"></tbody>
+          </table></div>
+        </fieldset>
+
+        <fieldset class="section">
+          <h3>Save as a new config</h3>
+          <div class="two">
+            <label class="field"><span>Name <small>lowercase, digits, - and _</small></span><input type="text" name="name" pattern="[a-z0-9][a-z0-9_\-]{0,39}" maxlength="40" placeholder="e.g. strict-eu"></label>
+            <label class="field"><span>Admin token <small>required to save on the server</small></span><input type="password" name="token" autocomplete="off"></label>
+          </div>
+          <label class="field"><span>Description</span><input type="text" name="description" maxlength="200"></label>
+          <div class="actions">
+            <button class="btn" type="submit">Save config</button>
+            <span class="cap" id="cfgMsg" role="status"></span>
+          </div>
+        </fieldset>
+      </form>
+    </div>
+  </section>
+
+  <!-- METRICS -->
+  <section id="v-metrics" data-view hidden aria-labelledby="h-metrics">
+    <div class="page-head">
+      <div>
+        <h1 id="h-metrics">Metrics</h1>
+        <p>What the control layer decided, what it cost and how fast it was. Includes this session's prompts.</p>
+      </div>
+      <div class="actions">
+        <label class="cap muted">Show
+          <select id="mFilter"><option value="">All decisions</option><option>BLOCKED</option><option>REDACTED</option><option>ESCALATED</option><option>ALLOWED</option></select>
+        </label>
+        <button class="btn ghost" id="mExport" type="button">Export audit log (JSONL)</button>
+      </div>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="panel risk-panel">
+      <div class="panel-head"><h2>Risk map · likelihood × impact</h2><span class="cap faint">Each dot is one agent session, scored like the backend's trajectory-risk plugin</span></div>
+      <div class="risk-grid">
+        <div class="panel-body">
+          <svg id="riskMap" viewBox="0 0 680 400" role="img" aria-labelledby="riskTitle"><title id="riskTitle">Agent sessions by likelihood of going wrong and impact of their riskiest executed step</title></svg>
+          <div class="legend" id="riskLegend"></div>
+        </div>
+        <div class="risk-side">
+          <div class="scroll"><table>
+            <thead><tr><th>Session</th><th class="n">P</th><th class="n">C</th><th class="n">Exp. loss</th><th>Level</th><th>Proposed action</th></tr></thead>
+            <tbody id="riskTable"></tbody>
+          </table></div>
+          <dl class="risk-help">
+            <dt>Likelihood · P, 0 to 1</dt>
+            <dd>How likely it is that the session has already gone wrong. Every session starts at 0.02. Each warning sign pushes it up: a blocked or redacted call, a request outside the task, a skipped check such as sanctions screening, a repeated write.</dd>
+            <dt>Impact · C, 1 to 10</dt>
+            <dd>How bad a step is if it was wrong: read 1, external call 4, write 5, create a client 8, run code 9, delete 10. The chart plots each session's worst step that actually ran.</dd>
+            <dt>Expected loss · Σ P × C</dt>
+            <dd>Adds up likelihood × impact over every step that ran. Blocked steps add nothing but raise the likelihood of later ones. It sets the level: medium from 3, high from 8 (a human must approve further actions), critical from 15 (the session is halted).</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid halves">
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head"><h2>Session budget</h2><span class="cap faint mono" id="budTxt"></span></div>
+          <div class="panel-body">
+            <div class="meter" role="meter" aria-label="Session token budget" aria-valuemin="0" id="budMeter"><div class="fill" id="budFill"></div><div class="tick"><span>80%</span></div></div>
+            <p class="cap muted" id="costTxt"></p>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Controls</h2><span class="cap faint">Per control, since start</span></div>
+          <div class="scroll"><table>
+            <thead><tr><th>Control</th><th class="n">Runs</th><th class="n">Acted</th><th class="n">p50</th><th class="n">p95</th></tr></thead>
+            <tbody id="ctlTable"></tbody>
+          </table></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Audit log</h2><span class="cap faint">Newest first · excerpts are sanitized</span></div>
+        <div class="scroll"><table>
+          <thead><tr><th>Time</th><th>Decision</th><th>Rule</th><th>Excerpt</th></tr></thead>
+          <tbody id="audit"></tbody>
+        </table></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TESTS -->
+  <section id="v-tests" data-view hidden aria-labelledby="h-tests">
+    <div class="page-head">
+      <div>
+        <h1 id="h-tests">Tests</h1>
+        <p>Positive cases must be allowed, negative cases must be blocked or redacted. The same suite runs from a fresh clone without an API key.</p>
+      </div>
+      <div class="actions">
+        <span class="cmd"><code>uv run pytest</code><button class="btn ghost sm" id="copyCmd" type="button">Copy</button></span>
+        <button class="btn" id="runSuite" type="button">Run suite</button>
+      </div>
+    </div>
+
+    <div class="kpis" id="tKpis"></div>
+
+    <div class="grid halves">
+      <div class="panel">
+        <div class="panel-head"><h2>Suite by area</h2><span class="cap faint">Each square is one test · hover for details</span></div>
+        <div class="scroll"><table>
+          <thead><tr><th>Area</th><th>What it proves</th><th class="n">Passed</th><th>Cases</th></tr></thead>
+          <tbody id="families"></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Agent outcome checks</h2><span class="cap faint">Recorded replays on synthetic data</span></div>
+        <ul class="picker" id="scenarios"></ul>
+        <div aria-live="polite" id="scenOut" hidden>
+          <div class="verdict" id="sVerdict"><div class="word" id="sWord"></div><p class="reason" id="sReason"></p></div>
           <div class="scroll"><table>
             <thead><tr><th>Field</th><th>Approved</th><th>Actually saved</th><th>Check</th></tr></thead>
-            <tbody id="evBody"></tbody>
+            <tbody id="evidence"></tbody>
           </table></div>
-          <p class="cap muted note-sm" id="explain2"></p>
-          <details class="more">
-            <summary>Step-by-step run</summary>
-            <ol class="timeline" id="timeline"></ol>
-          </details>
-          <div class="next">
-            <span class="muted">Presets are rehearsed. Your words are not.</span>
-            <a class="btn" href="#own" role="button">Next: write your own</a>
-          </div>
+          <div class="panel-head"><h2>Run steps</h2></div>
+          <ol class="timeline" id="timeline"></ol>
         </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Step 3: free-form prompt -->
-  <section id="v-own" data-view hidden>
-    <h1 class="title">Your words. Same controls.</h1>
-    <p class="lead">Nothing here is rehearsed. Write anything, mix in a few known tricks, and see what gets through.</p>
-    <div class="stage">
-      <div class="compose">
-        <label class="caption cap" for="prompt">Your prompt</label>
-        <textarea id="prompt" maxlength="4000" placeholder="Paste anything. Ctrl+Enter sends."></textarea>
-        <div class="row">
-          <span class="mono cap muted"><span id="chars">0</span> / 4000</span>
-          <button class="btn" id="send">Send</button>
-        </div>
-        <p class="caption cap snips-cap">Add a known trick</p>
-        <div class="snips" id="snips"></div>
-        <p class="cap muted note">Checked against the <span class="mono">strict</span> policy. <a href="/policy.html">Change policy</a></p>
-        <h2 class="sub">Your attempts</h2>
-        <ol class="attempts" id="attempts"><li class="empty cap">Nothing sent yet.</li></ol>
-      </div>
-
-      <div class="result" aria-live="polite" id="panel3">
-        <p class="empty">Write a prompt on the left and send it. The verdict appears here.</p>
-        <div class="out" hidden>
-          <div class="next">
-            <span class="muted">Every verdict here is backed by a test.</span>
-            <a class="btn" href="#proof" role="button">Next: see the proof</a>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Step 4: proof -->
-  <section id="v-proof" data-view hidden>
-    <h1 class="title">Don’t take our word for it.</h1>
-    <p class="lead">Ran <span id="ranAgo"></span> on commit <code id="commit"></code>. Run it yourself: <code>uv run pytest tests/suite</code> <em>(planned)</em>.</p>
-
-    <div class="figs">
-      <div class="fig"><span class="big num" id="passFig"></span>tests passed</div>
-      <div class="fig"><span class="big num" id="ovCaught"></span>attacks caught today</div>
-      <div class="fig"><span class="big num" id="fpFig"></span><span id="fpCap"></span></div>
-    </div>
-
-    <div class="proof">
-      <div>
-        <h2>Test suite</h2>
-        <p class="cap muted">Each square is one test. Hover for expected vs actual.</p>
-        <div class="families" id="families"></div>
-        <h2>Session budget</h2>
-        <p class="cap muted"><span class="mono" id="budTxt"></span> tokens used</p>
-        <div class="gauge" role="meter" aria-label="Session token budget" aria-valuemin="0" aria-valuemax="4000" id="gauge">
-          <div class="fill" id="budFill"></div>
-          <div class="tick at-80"><span>80%</span></div>
-          <div class="tick at-100"><span>100%</span></div>
-        </div>
-      </div>
-      <div>
-        <div class="row head-row"><h2>Audit log</h2><button class="btn ghost" id="export">Export audit log</button></div>
-        <p class="cap muted">Every decision, newest first. Excerpts are sanitized.</p>
-        <div class="scroll"><table>
-          <thead><tr><th>Time</th><th>Verdict</th><th>Rule</th><th>Excerpt</th></tr></thead>
-          <tbody id="feed"></tbody>
-        </table></div>
       </div>
     </div>
   </section>
 </main>
 
-<footer><div class="wrap">Design mockup. All figures are random sample data; nothing is live and no model is attached.</div></footer>
+<footer>
+  <div class="wrap">
+    <span>Demo environment. Prompt verdicts, metrics and test results are simulated in the browser; configs are read from and saved to the server.</span>
+    <span>Times in Europe/Warsaw</span>
+  </div>
+</footer>
 
 <div class="pop" id="pop" hidden></div>
-
-<!-- Verdict panel shared by steps 1 and 3 -->
-<template id="verdictTpl">
-  <span class="r-stamp"></span>
-  <p class="why r-why"></p>
-  <p class="caption cap">What each control decided</p>
-  <div class="scroll"><table><tbody class="r-trace"></tbody></table></div>
-  <details class="more">
-    <summary>What the model actually saw</summary>
-    <div class="saw r-saw"></div>
-    <div class="cap muted r-red"></div>
-  </details>
-  <p class="cap r-fixture" hidden></p>
-</template>
-
 </body>
 </html>

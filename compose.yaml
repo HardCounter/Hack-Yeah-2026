@@ -6,7 +6,7 @@ services:
         GIT_SHA: ${GIT_SHA:-dev}
     env_file: .env
     environment:
-      POLICY_DIR: /data/policies   # saved custom policies survive a redeploy
+      CONFIG_DIR: /data/config   # saved custom configs survive a redeploy
     volumes:
       - appdata:/data
     healthcheck:
