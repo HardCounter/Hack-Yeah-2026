@@ -143,7 +143,11 @@ class ConsumerManager:
                          kind=a.kind, status=a.status, plugins=len(pending),
                          outcome="nacked" if retry else "acked", retry=",".join(r.split(":")[0] for r in retry) or None,
                          dead=",".join(dead) or None, attempt=d.attempt if d.attempt > 1 else None)
-        self.metrics.set("consumer_lag_seconds", (self.clock() - a.ts).total_seconds())
+        ts = a.ts if a.ts.tzinfo is not None else a.ts.replace(tzinfo=timezone.utc)
+        now = self.clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        self.metrics.set("consumer_lag_seconds", (now - ts).total_seconds())
 
     async def _run_one(self, p: LoadedPlugin, a: AgentAction) -> tuple[OutputBuffer, str | None, float]:
         ctx = PluginContextImpl(p, a, self.reader)

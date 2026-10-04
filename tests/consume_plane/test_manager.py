@@ -178,3 +178,18 @@ def test_metrics_from_plugins_are_labelled(harness):
     h = harness([action(1), action(2)], [counter])
     asyncio.run(h.run())
     assert h.manager.metrics.get("calls_seen", agent="onboarding-agent", plugin="counter") == 2
+
+
+def test_naive_timestamp_does_not_crash_consumer_lag_metric(harness):
+    from dataclasses import replace
+    @plugin("noop")
+    async def noop(self, a, ctx):
+        pass
+
+    orig = action(1)
+    # Simulate a naive datetime on act.ts
+    act = replace(orig, ts=orig.ts.replace(tzinfo=None))
+    h = harness([act], [noop])
+    asyncio.run(h.run())
+    assert h.source.acked == [act.event_id]
+

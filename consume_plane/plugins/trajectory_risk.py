@@ -116,7 +116,7 @@ class RiskModel:
         if a.kind == "egress":
             return f"egress:{a.payload.host}", self.cfg["consequence"]["egress"]
         tool = a.payload.tool
-        return tool, self.cfg["tool_consequence"].get(tool, self.cfg["consequence"][a.payload.side_effect])
+        return tool, self.cfg["tool_consequence"].get(tool, self.cfg["consequence"].get(a.payload.side_effect, 1.0))
 
     def assess(self, actions: Sequence[AgentAction], contract: TaskContract | None) -> Assessment:
         cfg, out = self.cfg, Assessment()
@@ -173,7 +173,7 @@ class RiskModel:
 
             if contract is not None and not budget_flagged:
                 b, ratio = contract.budget, cfg["budget_pressure_ratio"]
-                if (b.tool_calls and attempts >= ratio * b.tool_calls) or (b.tokens and tokens >= ratio * b.tokens):
+                if (b.tool_calls is not None and attempts >= ratio * b.tool_calls) or (b.tokens is not None and tokens >= ratio * b.tokens):
                     own.append(sig("budget_pressure", a))
                     budget_flagged = True
 
