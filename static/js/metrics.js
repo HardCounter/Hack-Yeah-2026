@@ -63,8 +63,8 @@
       $('#budMeter').setAttribute('aria-valuemax', limit); $('#budMeter').setAttribute('aria-valuenow', used);
       $('#budTxt').textContent = `${fmtNum(used)} / ${fmtNum(limit)} tokens`;
       const cost = cfg.budget.cost_usd;
-      $('#costTxt').textContent = `This browser session under config ${App.configName}. Spend so far $${(used / 1e6 * PRICE_PER_MTOK).toFixed(4)}`
-        + (cost == null ? ', no cost limit.' : ` of a $${cost} limit.`) + ` A request that would cross the limit is blocked before the model is called.`;
+      $('#costTxt').replaceChildren(`This browser session under config ${App.configName}. Spend so far $${(used / 1e6 * PRICE_PER_MTOK).toFixed(4)}`
+        + (cost == null ? ', no cost limit.' : ` of a $${cost} limit.`), el('br'), 'A request that would cross the limit is blocked before the model is called.');
     }
 
     const rows = CONTROLS.map(name => {

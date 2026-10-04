@@ -76,21 +76,46 @@
   }
 
   const pop = $('#pop');
-  const describe = s => `${s.label}\nlikelihood P  ${s.P.toFixed(2)}\nimpact C      ${s.maxC}\nexpected loss ${s.loss.toFixed(2)}\nlevel         ${Risk.level(s.loss)}\naction        ${ACTION[Risk.level(s.loss)]}\n\n${s.steps} steps (actions taken):\n`
-    + s.log.map((st, i) => `${String(i + 1).padStart(2)}. ${st.name.padEnd(22)} impact ${String(st.C).padStart(2)}${st.executed ? '' : '  BLOCKED'}${st.signals.length ? '  ! ' + st.signals.join(', ').replace(/_/g, ' ') : ''}`).join('\n');
-  function point(s) {
-    const lvl = Risk.level(s.loss);
-    const c = node('circle', { cx: x(s.P), cy: y(Math.min(10, s.maxC + jitter[s.id])), r: 5 + Math.min(s.steps, 12) * .5,
-      class: `pt lvl-${lvl}`, tabindex: 0, role: 'img', 'aria-label': describe(s).replace(/\s+/g, ' ') });
+  const describe = s => `${s.label}, likelihood ${s.P.toFixed(2)}, impact ${s.maxC}, expected loss ${s.loss.toFixed(2)}, level ${Risk.level(s.loss)}, ${s.steps} steps`;
+  const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); return c; };
+  // Session card: header with level, key figures, then one table row per step
+  function card(s) {
+    const lvl = Risk.level(s.loss), head = el('div', 'pop-head');
+    head.append(el('strong', null, s.label), badge(lvl));
+    const facts = el('dl', 'pop-facts');
+    for (const [k, v] of [['Likelihood P', s.P.toFixed(2)], ['Impact C', s.maxC], ['Expected loss', s.loss.toFixed(2)], ['Action', ACTION[lvl]]])
+      facts.append(el('dt', null, k), el('dd', 'mono', String(v)));
+    const t = el('table', 'pop-steps'), hr = el('tr');
+    hr.append(...['#', 'Step', 'Impact', 'Status', 'Signals'].map(h => el('th', null, h)));
+    t.append(el('thead'), el('tbody')); t.tHead.append(hr);
+    t.tBodies[0].append(...s.log.map((st, i) => {
+      const tr = el('tr');
+      tr.append(el('td', 'n mono', i + 1), el('td', 'mono', st.name), el('td', 'n mono', st.C),
+        td(null, badge(st.executed ? 'ALLOWED' : 'BLOCKED')),
+        el('td', st.signals.length ? 'v-warn' : 'faint', st.signals.join(', ').replace(/_/g, ' ') || '—'));
+      return tr;
+    }));
+    const cap = el('p', 'cap muted', `${s.steps} steps (actions taken)`);
+    pop.className = `pop lvl-${lvl}`;
+    pop.replaceChildren(head, facts, cap, t);
+  }
+  // Same card for a dot on the map and a row in the session table
+  function hoverCard(target, s) {
     const show = () => {
-      pop.textContent = describe(s); pop.hidden = false;
-      const r = c.getBoundingClientRect();  // runtime coordinates are measured, not design values
+      card(s); pop.hidden = false;
+      const r = target.getBoundingClientRect();  // runtime coordinates are measured, not design values
       pop.style.left = Math.max(0, Math.min(r.left + scrollX, innerWidth - pop.offsetWidth - 8)) + 'px';
       pop.style.top = (r.bottom + scrollY) + 'px';
     };
     const hide = () => pop.hidden = true;
-    c.addEventListener('mouseenter', show); c.addEventListener('focus', show);
-    c.addEventListener('mouseleave', hide); c.addEventListener('blur', hide);
+    target.addEventListener('mouseenter', show); target.addEventListener('focus', show);
+    target.addEventListener('mouseleave', hide); target.addEventListener('blur', hide);
+  }
+  function point(s) {
+    const lvl = Risk.level(s.loss);
+    const c = node('circle', { cx: x(s.P), cy: y(Math.min(10, s.maxC + jitter[s.id])), r: 5 + Math.min(s.steps, 12) * .5,
+      class: `pt lvl-${lvl}`, tabindex: 0, role: 'img', 'aria-label': describe(s) });
+    hoverCard(c, s);
     return c;
   }
 
@@ -101,6 +126,7 @@
       b.append(badge(lvl));
       tr.append(el('td', 'cap', s.label), el('td', 'n mono cap', s.P.toFixed(2)), el('td', 'n mono cap', s.maxC),
         el('td', 'n mono cap', s.loss.toFixed(2)), b, el('td', 'cap muted', ACTION[lvl]));
+      tr.tabIndex = 0; tr.setAttribute('aria-label', describe(s)); hoverCard(tr, s);
       return tr;
     }));
   }

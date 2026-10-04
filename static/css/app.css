@@ -201,7 +201,15 @@ tr.fresh td { animation: fresh 900ms ease-out; }
 .cell.pass { background: var(--allow); border-color: var(--allow); }
 .cell.fail { background: var(--block); border-color: var(--block); }
 .cell.pending { background: var(--paper-3); }
-.pop { position: absolute; z-index: 5; background: var(--paper); border: thin solid var(--ink); padding: 0.375rem 0.625rem; font: .8125rem/1.5 var(--mono); white-space: pre; pointer-events: none; margin-top: 0.375rem; }
+.pop { position: absolute; z-index: 5; background: var(--paper); border: thin solid var(--ink); border-left: 0.3125rem solid var(--lvl, var(--ink)); padding: 0.5rem 0.75rem; font: .8125rem/1.45 var(--sans); pointer-events: none; margin-top: 0.375rem; max-width: min(40rem, calc(100vw - 1rem)); box-shadow: 0 0.25rem 0.75rem rgb(0 0 0 / .12); }
+.pop.lvl-LOW { --lvl: var(--allow); } .pop.lvl-MEDIUM { --lvl: var(--warn); } .pop.lvl-HIGH { --lvl: var(--block); } .pop.lvl-CRITICAL { --lvl: var(--crit); }
+.pop-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; font: 600 .9375rem var(--serif); margin-bottom: 0.375rem; }
+.pop-facts { display: grid; grid-template-columns: auto auto auto auto; gap: 0.125rem 0.75rem; margin: 0 0 0.375rem; }
+.pop-facts dt { color: var(--ink-3); } .pop-facts dd { margin: 0; }
+.pop-steps { border-collapse: collapse; width: 100%; font-size: .75rem; }
+.pop-steps th { text-align: left; font-weight: 600; color: var(--ink-3); border-bottom: thin solid var(--rule); padding: 0.125rem 0.375rem; }
+.pop-steps td { padding: 0.125rem 0.375rem; border-bottom: thin solid var(--paper-3); white-space: nowrap; }
+#riskTable tr { cursor: default; } #riskTable tr:hover, #riskTable tr:focus { background: var(--paper-2); outline: none; }
 .timeline { list-style: none; margin: 0; padding: 0; counter-reset: s; }
 .timeline li { display: grid; grid-template-columns: 1.75rem 1fr auto; gap: 0 0.75rem; padding: 0.5rem 1rem; border-top: thin solid var(--rule); counter-increment: s; }
 .timeline li::before { content: counter(s); font: .8125rem var(--mono); color: var(--ink-3); }
