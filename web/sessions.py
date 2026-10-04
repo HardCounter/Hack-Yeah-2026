@@ -124,7 +124,7 @@ class OpenCodeBackend:
         policy_path = folder / "selected-policy.json"
         policy_path.write_text(json.dumps(snapshot["config"], indent=2) + "\n", encoding="utf-8")
         policy_path.chmod(0o600)
-        prepare_project(project, REPO, APPLICATION, contract, self.model, endpoint, free=True,
+        prepare_project(project, REPO, APPLICATION, contract, self.model, endpoint, free=True, prompts="enforce",
                         policy_config=snapshot["config"])
         env = _child_env(folder / "config", token, admin)
         # Let the gateway read the operator-owned config directory, not a session workspace.

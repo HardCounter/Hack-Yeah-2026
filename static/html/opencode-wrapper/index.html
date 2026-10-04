@@ -128,7 +128,7 @@ function showEvidence(data) {
     const hit = (meta.auditor_decisions || []).find(d => d.decision !== "ALLOW");
     const reason = meta.reason_code && meta.reason_code !== "EXECUTED" ? meta.reason_code : (hit ? hit.rule_id : "");
     const line = el("div", "call");
-    line.append(el("span", "arrow", "→"), el("span", "", details.name || e.action_type),
+    line.append(el("span", "arrow", "→"), el("span", "", details.name || (details.model ? "model " + details.model : e.action_type)),
                 el("span", meta.final_decision || "", meta.final_decision || ""),
                 el("span", "why", [reason, hit ? "(" + hit.auditor + ")" : ""].filter(Boolean).join(" ")));
     append(line);

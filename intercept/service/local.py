@@ -102,6 +102,8 @@ class LocalService:
                 response.update(session_id=bound.session_id, call_id=payload["call_id"], tool=payload["tool"],
                                 tool_result=result, verification="NOT_VERIFIED")
                 return response
+            if path == "/v1/prompts/evaluate":
+                return await self._evaluate_prompt(payload)
             if path == "/v1/session/finish":
                 if payload != {"session_id": self.runtime.contract.session_id}:
                     raise ValueError("finish conflicts with trusted binding")
@@ -112,6 +114,41 @@ class LocalService:
             # This integrated path executes tools inside the trusted gateway.
             # Legacy before/after observation mode remains the separate service.
             raise ValueError("integrated service requires gateway-backed tool execution")
+
+    async def _evaluate_prompt(self, payload):
+        """Judge one OpenCode model request with the runtime's PromptGateway (adapter prompts: "enforce").
+
+        OpenCode calls the provider itself, so the gateway's backend dispatches nothing: the gateway still
+        applies session admission, the model allowlist, the token budget and the input scanners, and
+        records the decision as evidence. A user prompt is judged as part of the next model request, which
+        carries it, so the prompt hook is admitted here without a second budget charge.
+        """
+        if not isinstance(payload, dict) or not isinstance(payload.get("request_id"), str):
+            raise ValueError("invalid prompt request")
+        contract = self.runtime.contract
+        if payload.get("session_id") != contract.session_id:
+            raise ValueError("session hint conflicts with authenticated binding")
+        reply = {"session_id": contract.session_id, "request_id": payload["request_id"],
+                 "policy_version": contract.policy_version}
+        if payload.get("action_type") == "prompt":
+            return {**reply, "decision": "ALLOW"}
+        if payload.get("action_type") != "llm_request":
+            raise ValueError("invalid prompt request")
+        model = payload.get("model")
+        model = model.get("id") if isinstance(model, dict) else None
+        messages = payload.get("messages")
+        tools = payload.get("tools")
+        if not isinstance(messages, list) or not isinstance(tools, list):
+            raise ValueError("invalid prompt request")
+
+        async def admitted(*_):  # the provider call happens in OpenCode once this request is allowed
+            return {"message": {"role": "assistant", "content": ""}}
+
+        decision, _ = await self.runtime.prompt_gateway.execute(model, messages, tools, admitted)
+        await self.runtime.settle()
+        # OpenCode sends its own copy of the request, so a redaction cannot be applied there: fail closed.
+        verdict = "ALLOW" if decision.decision in ("ALLOW", "ALERT") else decision.decision
+        return {**reply, "decision": verdict, "reason_code": decision.reason_code}
 
     async def close(self):
         if self.runtime:

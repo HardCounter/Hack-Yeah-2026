@@ -96,7 +96,7 @@ class Gateway:
                         status, result = 401, {"code": "UNAUTHORIZED"}
                 elif expected_token is None or not hmac.compare_digest(headers.get("authorization", ""), "Bearer " + expected_token):
                     status, result = 401, {"code": "UNAUTHORIZED"}
-                elif method != "POST" or path not in ("/v1/actions/evaluate", "/v1/actions/outcome", "/v1/tools/execute", "/v1/tools/catalog", "/v1/runs/bind", "/v1/session/finish"):
+                elif method != "POST" or path not in ("/v1/actions/evaluate", "/v1/actions/outcome", "/v1/tools/execute", "/v1/tools/catalog", "/v1/runs/bind", "/v1/session/finish", "/v1/prompts/evaluate"):
                     status, result = 404, {"code": "NOT_FOUND"}
                 elif path in ("/v1/tools/execute", "/v1/tools/catalog") and self.executor is None and self.service is None:
                     status, result = 503, {"code": "TOOL_EXECUTION_DISABLED"}

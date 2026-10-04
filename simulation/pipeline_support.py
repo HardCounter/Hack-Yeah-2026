@@ -90,8 +90,12 @@ def _validate_provider_config(path: Path | None) -> dict:
 
 
 def prepare_project(project, repo, appid, contractid, model, endpoint, provider_config=None, free=False,
-                    policy_config=None):
-    """Create an isolated, gateway-only OpenCode project; never copies repository context."""
+                    policy_config=None, prompts="off"):
+    """Create an isolated, gateway-only OpenCode project; never copies repository context.
+
+    prompts="enforce" makes OpenCode ask the gateway before every model request; only use it when the
+    session is bound before the first message (the gateway rejects requests from an unbound session).
+    """
     project, repo = Path(project).resolve(), Path(repo).resolve()
     if project == repo or repo in project.parents or project in repo.parents:
         raise ValueError("OpenCode project must be isolated from the repository")
@@ -115,7 +119,7 @@ def prepare_project(project, repo, appid, contractid, model, endpoint, provider_
         "model": model,
         "share": "disabled",
         "plugins": [{"package": (ROOT / "adapters" / "opencode").as_posix(), "options": {
-            "endpoint": endpoint, "prompts": "off", "registerTools": True,
+            "endpoint": endpoint, "prompts": prompts, "registerTools": True,
             "contractId": contractid,
         }}],
         "agents": {"onboarding-agent": {"mode": "primary", "prompt": prompt, "tools": {}}},

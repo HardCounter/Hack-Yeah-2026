@@ -24,7 +24,8 @@
     "cost_usd": null
   },
   "allowed_models": [
-    "llama3.2"
+    "llama3.2",
+    "gpt-4.1-mini"
   ],
   "max_output_tokens": 512,
   "require_approval": [
