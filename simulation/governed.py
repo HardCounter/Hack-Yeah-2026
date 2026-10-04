@@ -110,6 +110,8 @@ class GovernedRuntime:
         self._feedback_credential = credential
         plugin_settings = {key: value for key, value in self.config.get("intercept", {}).items()
                            if key in {"pattern_match", "velocity_guard"} and value is not None}
+        # Preserve the public preset shape: BudgetGuard receives the existing top-level budget.
+        plugin_settings["budget_guard"] = self.config["budget"]
         self.gateway = GovernedGateway(policy, Pipeline(self.config["auditors"], plugin_config=plugin_settings,
                                                        contract=self.contract, policy_level=self.config.get("name", "standard")), self.persistence,
                                        registry_module=registry, feedback_credential=credential,

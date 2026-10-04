@@ -910,9 +910,9 @@ Model definitions and the generated OpenAPI schema are in `configuration/models.
 | `allowed_tools` | 1–100 unique registered tool names |
 | `admin_tools` | 0–100 unique registered tool names |
 | `require_approval` | 0–100 unique names, subset of `allowed_tools ∪ admin_tools` |
-| `budget.tokens` | integer, 1–1,000,000 |
-| `budget.tool_calls` | integer, 1–1,000 |
-| `budget.cost_usd` | finite number 0–1,000 or `null` (no financial cap) |
+| `budget.tokens` | integer, 1–1,000,000; BudgetGuard reserves serialized input bytes plus the output-token cap, with PromptGateway's persisted-usage check as a hard backstop |
+| `budget.tool_calls` | integer, 1–1,000; BudgetGuard meters admitted dispatches, with the deterministic Task Contract Policy budget as a hard backstop |
+| `budget.cost_usd` | finite number 0–1,000 or `null` (no financial cap). A positive cap fails closed for model calls as `LOCAL_MODEL_COST_BUDGET_UNSUPPORTED`; no trusted model pricing/usage source is currently wired. |
 | `allowed_models` | 1–100 unique operator-approved local model IDs; `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`. IDs are syntax-validated, not provider-discovered; slash-separated OpenCode provider IDs are not accepted by the local prompt gateway. |
 | `max_output_tokens` | integer, 1–8,192, matching the local prompt gateway |
 | `feed_version` | bounded telemetry-safe identifier |
@@ -959,6 +959,9 @@ Layer 1 plugins. Pattern matches hard-block the current call; velocity holds an 
 proposal without dispatch. Plugin errors fail closed. [Plugin details](intercept-plugins.md)
 document bounds, RE2 syntax, phase handling and evidence. `trajectory_risk`, `feedback` and
 `semantic_guard` remain stored-only here; the consume plane keeps its separate trusted config.
+The registered `BudgetGuard` receives the existing top-level `budget` object without changing
+the preset shape; it shares one in-memory session ledger between prompt and tool paths. Existing
+Policy/PromptGateway enforcement remains an independent backstop.
 Existing snapshot revisions are preserved when optional fields are absent; activating new
 patterns requires explicitly saving/selecting them, not reseeding defaults or mutating live runs.
 

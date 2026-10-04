@@ -117,6 +117,9 @@ class PromptGateway:
             "decision": str(row.get("decision", "ALLOW")),
             "rule_id": row.get("rule_id") or (str(row.get("code")) if row.get("code") else None),
             "latency_ms": float(row.get("latency_ms", 0.0)),
+            "evidence": {k: v for k, v in row.get("evidence", {}).items()
+                         if k in {"tokens_used", "tokens_limit", "tool_calls_used", "tool_calls_limit"}
+                         and type(v) is int},
         } for row in rows if row.get("decision") in DECISIONS)
 
     @staticmethod
@@ -279,6 +282,11 @@ class PromptGateway:
                 reason = "MODEL_NOT_AUTHORIZED"
             elif self.contract.budget.cost_usd not in (None, 0, 0.0):
                 reason = "LOCAL_MODEL_COST_BUDGET_UNSUPPORTED"
+                denied = self.pipeline.report_budget_limit({
+                    "session_id": self.contract.session_id, "call_id": action_id,
+                    "tool": "llm_call", "arguments": {},
+                }, "COST_BUDGET_UNSUPPORTED") if callable(getattr(self.pipeline, "report_budget_limit", None)) else None
+                rows = (denied,) if denied else ()
             elif self.contract.budget.tokens is None:
                 reason = "TOKEN_BUDGET_REQUIRED"
             else:
@@ -301,6 +309,11 @@ class PromptGateway:
                     token_limit = self.contract.budget.tokens
                     if used + input_bound + output_bound > token_limit:
                         reason = "TOKEN_BUDGET_EXHAUSTED"
+                        denied = self.pipeline.report_budget_limit({
+                            "session_id": self.contract.session_id, "call_id": action_id,
+                            "tool": "llm_call", "arguments": {},
+                        }, reason) if callable(getattr(self.pipeline, "report_budget_limit", None)) else None
+                        rows = (denied,) if denied else ()
                     else:
                         checked, rows, verdict, changed = await self._evaluate(
                             call_id=action_id,
@@ -311,6 +324,19 @@ class PromptGateway:
                         reason = next((str(r["code"]) for r in rows if r.get("decision") in ("BLOCK", "REQUIRE_APPROVAL", "ALERT")), None)
                         copied_messages = checked["arguments"].get("messages", copied_messages)
                         copied_tools = checked["arguments"].get("tools", copied_tools)
+                        if final not in ("BLOCK", "REQUIRE_APPROVAL"):
+                            budget_row = self.pipeline.reserve_budget(
+                                {"session_id": self.contract.session_id, "call_id": action_id,
+                                 "tool": "llm_call", "arguments": {"messages": copied_messages,
+                                                                        "tools": copied_tools}},
+                                action_type="llm_call", tokens=input_bound + output_bound,
+                                known_tokens=used,
+                            ) if callable(getattr(self.pipeline, "reserve_budget", None)) else None
+                            if budget_row:
+                                rows = tuple(rows) + (budget_row,)
+                                if budget_row["decision"] != "ALLOW":
+                                    final = "BLOCK"
+                                    reason = budget_row["code"]
                         if final in ("BLOCK", "REQUIRE_APPROVAL"):
                             status = self._status_for_decision(final)
                             response = {"error": reason or final}

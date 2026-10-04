@@ -49,6 +49,12 @@ class ClassifiedConfig(Model):
     action: Action
 
 
+class DomainBlocklistConfig(Model):
+    domains: Annotated[list[Annotated[str, Field(min_length=1, max_length=253,
+                                                pattern=r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")]], Field(max_length=512)]
+    action: Literal["BLOCK", "REQUIRE_APPROVAL", "ALERT"]
+
+
 class AllowlistConfig(Model):
     allowed_tools: Annotated[list[Token], Field(max_length=100)]
 
@@ -63,6 +69,12 @@ class ClassifiedAuditor(Model):
     id: Annotated[str, Field(pattern=r"^[a-z0-9_-]{1,64}$")]
     type: Literal["classified_scanner"]
     config: ClassifiedConfig
+
+
+class DomainBlocklistAuditor(Model):
+    id: Annotated[str, Field(pattern=r"^[a-z0-9_-]{1,64}$")]
+    type: Literal["domain_blocklist"]
+    config: DomainBlocklistConfig
 
 
 class AllowlistAuditor(Model):
@@ -147,7 +159,7 @@ class PolicyConfig(Model):
     require_approval: Annotated[list[Token], Field(max_length=100)]
     feed_version: Token
     controls: Controls
-    auditors: Annotated[list[Annotated[PatternAuditor | ClassifiedAuditor | AllowlistAuditor | DomainBlocklistAuditor,
+    auditors: Annotated[list[Annotated[PatternAuditor | ClassifiedAuditor | DomainBlocklistAuditor | AllowlistAuditor,
                                      Field(discriminator="type")]], Field(max_length=32)]
     intercept: InterceptConfig
 

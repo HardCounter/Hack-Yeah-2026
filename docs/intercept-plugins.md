@@ -88,6 +88,27 @@ No upstream code is vendored; retain the dependency's license notices when distr
 - State is in-process, not restart-durable; this is a per-session call-rate gate, not a global
   persisted budget or exactly-once mechanism. Existing budget and receipt controls remain separate.
 
+### BudgetGuard (`budget-guard`, version 1.0.0)
+
+- It receives the existing **top-level** preset `budget` object. The preset schema is unchanged;
+  no budget fields are moved under `intercept` or into a plugin list.
+- One instance is shared by tool and prompt pipelines for one governed runtime/session. It keeps
+  bounded in-memory token and tool-call reservations and exposes the used/limit counters as
+  sanitized numeric auditor evidence. Its state is discarded when that runtime closes.
+- Prompt tokens use the current conservative reservation: serialized input byte count plus
+  `max_output_tokens`. The reservation is committed after input auditors allow and before durable
+  intent/provider dispatch. Failed or ambiguous calls are not refunded. PromptGateway's existing
+  persisted-usage check remains an independent hard backstop.
+- Tool calls are charged once after auditor/policy admission and before any effect dispatch. The
+  existing `Policy.tool_call_budget` remains an independent hard backstop. Calls denied by an
+  earlier scanner or approval gate are not charged by the plugin.
+- Repeated reservation for the same action ID is idempotent; conflicting reuse is blocked.
+  Reservations are capped at 4,096 IDs per session; overflow fails closed.
+- `cost_usd: null` means no configured dollar ceiling. A positive dollar ceiling is not
+  enforceable yet: there is no trusted price table or integrated trusted provider usage. It
+  remains fail-closed for model dispatch with `LOCAL_MODEL_COST_BUDGET_UNSUPPORTED`; the plugin
+  does not invent spend measurements. Zero-cost local inference is permitted.
+
 ## Consume-plane separation and tests
 
 `consume_plane.yaml` no longer discovers `plugins/` or registers VelocityGuard. Layer 3's

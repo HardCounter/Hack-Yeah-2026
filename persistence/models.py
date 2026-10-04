@@ -137,6 +137,7 @@ class AuditorDecision(_JsonMixin):
     latency_ms: float = 0.0
     modifications: Optional[Dict[str, Any]] = None
     rule: Optional[str] = None
+    evidence: Dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -146,6 +147,7 @@ class AuditorDecision(_JsonMixin):
             "latency_ms": self.latency_ms,
             "modifications": self.modifications,
             "rule": self.rule,
+            "evidence": dict(self.evidence),
         }
 
     @classmethod
@@ -157,6 +159,7 @@ class AuditorDecision(_JsonMixin):
             latency_ms=float(data.get("latency_ms", 0.0)),
             modifications=data.get("modifications"),
             rule=data.get("rule"),
+            evidence=dict(data.get("evidence", {})),
         )
 
 

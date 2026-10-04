@@ -13,6 +13,7 @@ from intercept.policy.auditors import Pipeline
 from intercept.service.local import LocalService
 from plugins.pattern_match import PatternMatch
 from plugins.velocity_guard import VelocityGuard
+from plugins.budget_guard import BudgetGuard
 
 
 def context(**kwargs):
@@ -30,7 +31,7 @@ def pattern_plugin(patterns, **config):
 
 
 def test_registration_and_regex_search_on_tool_nested_values_and_keys():
-    assert set(registered_plugins()) == {"pattern_match", "velocity_guard"}
+    assert set(registered_plugins()) == {"pattern_match", "velocity_guard", "budget_guard"}
     plugin = pattern_plugin([r"(?i)ignore\s+previous\s+instructions", r"^delete_", r"forbidden_key"])
     assert plugin.evaluate(context(payload={"messages": [{"text": "IGNORE   previous\ninstructions"}]})).decision == "BLOCK"
     assert plugin.evaluate(context(action_name="delete_client")).evidence == {"pattern_index": 1}
@@ -86,6 +87,41 @@ def test_velocity_concurrency_and_bounded_state():
     for n in range(127):
         assert plugin.evaluate(context(session_id=f"ses_{n}")).decision == "ALLOW"
     assert plugin.evaluate(context(session_id="ses_overflow")).violation_code == "VELOCITY_STATE_LIMIT"
+
+
+def test_budget_guard_uses_top_level_limits_shared_across_tool_and_prompt_pipelines():
+    budget = {"tokens": 100, "tool_calls": 2, "cost_usd": None}
+    tools = Pipeline([], plugin_config={"budget_guard": budget}, contract=None)
+    prompts = tools.for_prompts()
+    assert tools.plugins[0] is prompts.plugins[0]
+    plugin = tools.plugins[0]
+    action = {"session_id": "ses_budget", "call_id": "tool_1", "tool": "read_application", "arguments": {}}
+
+    # Tool-call reservations count once and share the same session ledger.
+    assert tools.reserve_budget(action, tool_calls=1)["decision"] == "ALLOW"
+    assert tools.reserve_budget(action, tool_calls=1)["decision"] == "ALLOW"
+    action["call_id"] = "tool_2"
+    assert tools.reserve_budget(action, tool_calls=1)["decision"] == "ALLOW"
+    action["call_id"] = "tool_3"
+    denied = tools.reserve_budget(action, tool_calls=1)
+    assert denied["code"] == "TOOL_CALL_BUDGET_EXHAUSTED"
+
+    # Prompt reservations debit the same plugin ledger; top-level values were not moved.
+    prompt_action = {"session_id": "ses_budget", "call_id": "prompt_1", "tool": "llm_call", "arguments": {}}
+    assert prompts.reserve_budget(prompt_action, action_type="llm_call", tokens=80)["decision"] == "ALLOW"
+    prompt_action["call_id"] = "prompt_2"
+    denied = prompts.reserve_budget(prompt_action, action_type="llm_call", tokens=21)
+    assert denied["code"] == "TOKEN_BUDGET_EXHAUSTED"
+    assert plugin.sessions["ses_budget"]["tokens_used"] == 80
+    assert plugin.sessions["ses_budget"]["tool_calls_used"] == 2
+
+
+def test_budget_guard_cost_cap_fails_closed_without_claiming_spend():
+    plugin = BudgetGuard()
+    plugin.setup({"tokens": 100, "tool_calls": 10, "cost_usd": 0.01})
+    result = plugin.reserve(context(action_type="llm_call"), tokens=10)
+    assert result.decision == "BLOCK" and result.violation_code == "COST_BUDGET_UNSUPPORTED"
+    assert plugin.sessions["ses_test"]["tokens_used"] == 0
 
 
 def test_disabled_plugins_failure_and_hard_deny_precedence():
@@ -205,6 +241,77 @@ def test_velocity_blocks_second_dispatch_without_counting_output(tmp_path):
             events = await service.runtime.store.get_events_by_session_seq("ses_velocity")
             assert any(row.auditor_name == "velocity-guard" and row.rule == "VELOCITY_EXCEEDED"
                        for row in events[-1].interception_metadata.auditor_decisions)
+        finally:
+            await service.close()
+    asyncio.run(scenario())
+
+
+def test_top_level_tool_budget_is_monitored_before_second_dispatch(tmp_path):
+    from simulation import agent
+    import generate
+    generate.build(tmp_path / "base")
+    configs = ConfigService(tmp_path / "configs")
+    config = configs.get_config("lenient")["config"]
+    config["auditors"] = []
+    config["budget"]["tool_calls"] = 1
+    saved = configs.update("lenient", config)
+    configs.select("lenient", saved["revision"])
+
+    async def scenario():
+        service = LocalService(bank_path=tmp_path / "base" / "bank.db", runs_dir=tmp_path / "runs",
+                               app_id="APP-0001", contract_id="contract_budget_tool", config_service=configs)
+        try:
+            await service.handle_request("/v1/runs/bind", {
+                "session_id": "ses_budget_tool", "contract_id": "contract_budget_tool"})
+            first = {"session_id": "ses_budget_tool", "call_id": "one", "tool": "read_application",
+                     "arguments": {"app_id": "APP-0001"}}
+            assert (await service.handle_request("/v1/tools/execute", first))["decision"] == "ALLOW"
+            second = {**first, "call_id": "two"}
+            denied = await service.handle_request("/v1/tools/execute", second)
+            assert denied["decision"] == "BLOCK" and denied["reason_code"] == "BUDGET_EXHAUSTED"
+            events = await service.runtime.store.get_events_by_session_seq("ses_budget_tool")
+            decisions = events[-1].interception_metadata.auditor_decisions
+            row = next(item for item in decisions if item.auditor_name == "budget-guard")
+            assert row.evidence == {"tokens_used": 0, "tokens_limit": 50000,
+                                    "tool_calls_used": 1, "tool_calls_limit": 1}
+            assert service.runtime.gateway.pipeline.plugins[-1].sessions["ses_budget_tool"]["tool_calls_used"] == 1
+        finally:
+            await service.close()
+    asyncio.run(scenario())
+
+
+def test_top_level_token_budget_reservation_is_monitored_and_blocks_before_model_dispatch(tmp_path):
+    from simulation import agent
+    import generate
+    generate.build(tmp_path / "base")
+    configs = ConfigService(tmp_path / "configs")
+    config = configs.get_config("lenient")["config"]
+    config["auditors"] = []
+    config["budget"]["tokens"] = 1
+    config["max_output_tokens"] = 1
+    saved = configs.update("lenient", config)
+    configs.select("lenient", saved["revision"])
+
+    async def scenario():
+        service = LocalService(bank_path=tmp_path / "base" / "bank.db", runs_dir=tmp_path / "runs",
+                               app_id="APP-0001", contract_id="contract_budget_tokens", config_service=configs)
+        try:
+            await service.handle_request("/v1/runs/bind", {
+                "session_id": "ses_budget_tokens", "contract_id": "contract_budget_tokens"})
+            invoked = []
+            async def backend(*args):
+                invoked.append(args)
+                return {}
+            decision, _ = await service.runtime.prompt_gateway.execute(
+                "llama3.2", [{"role": "user", "content": "hello"}], [], backend)
+            assert decision.decision == "BLOCK" and decision.reason_code == "TOKEN_BUDGET_EXHAUSTED"
+            assert invoked == []
+            events = await service.runtime.store.get_events_by_session_seq("ses_budget_tokens")
+            row = next(item for item in events[-1].interception_metadata.auditor_decisions
+                       if item.auditor_name == "budget-guard")
+            assert row.evidence == {"tokens_used": 0, "tokens_limit": 1,
+                                    "tool_calls_used": 0, "tool_calls_limit": 60}
+            assert service.runtime.prompt_gateway.pipeline.plugins[-1].sessions["ses_budget_tokens"]["tokens_used"] == 0
         finally:
             await service.close()
     asyncio.run(scenario())

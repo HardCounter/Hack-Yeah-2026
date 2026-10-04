@@ -155,18 +155,57 @@ def webhook(config, action):
 
 
 class Pipeline:
-    def __init__(self, specs, *, plugin_config=None, contract=None, policy_level="standard"):
+    def __init__(self, specs, *, plugin_config=None, contract=None, policy_level="standard", plugins=None):
         validate_specs(specs)
         self.specs = copy.deepcopy(specs)
         from intercept.plugins import load_plugins
         self.plugin_config = copy.deepcopy(plugin_config or {})
-        self.plugins = load_plugins(self.plugin_config)
+        self.plugins = list(plugins) if plugins is not None else load_plugins(self.plugin_config)
         self.contract = contract
         self.policy_level = policy_level
 
     def for_prompts(self):
         return Pipeline([s for s in self.specs if s["type"] != "tool_allowlist"],
-                        plugin_config=self.plugin_config, contract=self.contract, policy_level=self.policy_level)
+                        plugin_config=self.plugin_config, contract=self.contract,
+                        policy_level=self.policy_level, plugins=self.plugins)
+
+    def _budget_plugin(self):
+        return next((item for item in self.plugins if item.name == "budget-guard"), None)
+
+    def reserve_budget(self, action, *, action_type="tool_call", tokens=0, tool_calls=0, known_tokens=0):
+        plugin = self._budget_plugin()
+        if plugin is None:
+            return None
+        return self._budget_row(plugin, action, action_type, tokens=tokens,
+                                tool_calls=tool_calls, known_tokens=known_tokens)
+
+    def report_budget_limit(self, action, code):
+        plugin = self._budget_plugin()
+        if plugin is None:
+            return None
+        result = plugin.report_limit(action["session_id"], code)
+        return self._budget_row_from_result(plugin, result)
+
+    def _budget_row(self, plugin, action, action_type, **usage):
+        contract = self.contract.to_dict() if self.contract is not None else {}
+        from intercept.plugins import AuditContext
+        ctx = AuditContext(
+            trace_id=contract.get("run_id") or action["session_id"],
+            session_id=action["session_id"], agent_id=contract.get("agent_id", "unbound_policy"),
+            action_type=action_type, action_name=action["tool"], payload=copy.deepcopy(action["arguments"]),
+            current_policy_level=self.policy_level, task_contract=copy.deepcopy(contract),
+            policy_version=contract.get("policy_version", "unbound_policy"), action_id=action["call_id"],
+        )
+        started = time.monotonic()
+        result = plugin.reserve(ctx, **usage)
+        return self._budget_row_from_result(plugin, result, started)
+
+    @staticmethod
+    def _budget_row_from_result(plugin, result, started=None):
+        return {"auditor": plugin.name, "decision": result.decision,
+                "code": result.violation_code or "BUDGET_RESERVED",
+                "latency_ms": round((time.monotonic() - started) * 1000, 3) if started else 0.0,
+                "evidence": dict(result.evidence)}
 
     async def evaluate_output(self, action):
         return await self.evaluate(action, phase="output")
@@ -199,16 +238,22 @@ class Pipeline:
                         or (result.violation_code is not None and (
                             not isinstance(result.violation_code, str)
                             or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", result.violation_code)))
-                        or any(key not in {"pattern_index", "calls_in_window"} or type(value) is not int
-                               or not 0 <= value <= 10001 for key, value in result.evidence.items())):
+                        or any(key not in {"pattern_index", "calls_in_window", "tokens_used", "tokens_limit",
+                                           "tool_calls_used", "tool_calls_limit"} or type(value) is not int
+                               or not 0 <= value <= (1_000_000 if key.startswith("tokens_") else 10_001)
+                               for key, value in result.evidence.items())):
                     raise ValueError("invalid plugin decision")
             except Exception:
                 result = AuditDecision("BLOCK", violation_code="INTERCEPT_PLUGIN_FAILED")
             row = {"auditor": plugin.name, "decision": result.decision,
                    "code": result.violation_code or "PASS",
                    "latency_ms": round((time.monotonic() - start) * 1000, 3)}
+            if result.evidence:
+                row["evidence"] = dict(result.evidence)
             if "pattern_index" in result.evidence:
                 row["rule_id"] = f"regex.pattern.{result.evidence['pattern_index']}"
+            if result.decision != "ALLOW" and plugin.name == "budget-guard":
+                row["rule_id"] = f"budget.{result.violation_code.lower()}"
             evidence.append(row)
             blocked |= result.decision == "BLOCK"
             approval |= result.decision == "REQUIRE_APPROVAL"

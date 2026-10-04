@@ -34,6 +34,9 @@ def auditor_decisions(rows: Iterable[Mapping[str, Any]]) -> list[AuditorDecision
         out.append(AuditorDecision(
             auditor_name=str(row.get("auditor", "unknown")), verdict=verdict,
             latency_ms=float(row.get("latency_ms", 0.0)), rule=str(rule) if rule else None,
+            evidence={key: value for key, value in row.get("evidence", {}).items()
+                      if key in {"tokens_used", "tokens_limit", "tool_calls_used", "tool_calls_limit"}
+                      and type(value) is int and 0 <= value <= 1_000_000},
         ))
     return out
 

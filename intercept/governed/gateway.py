@@ -489,8 +489,14 @@ class GovernedGateway:
             if hard["decision"] == "BLOCK":
                 self.policy.evaluate(action, "BLOCK", reserve=True)
                 reason = hard["code"]
-                decision = self._make_decision(proposal.action_id, "BLOCK", reason, (), None, started, state)
-                await self._persist_action(state, proposal, "BLOCK", reason, args, fault_injected)
+                rows = ()
+                if reason == "BUDGET_EXHAUSTED":
+                    report_budget_limit = getattr(self.pipeline, "report_budget_limit", None)
+                    row = report_budget_limit(action, reason) if callable(report_budget_limit) else None
+                    rows = (row,) if row else ()
+                decision = self._make_decision(proposal.action_id, "BLOCK", reason, rows, None, started, state)
+                await self._persist_action(state, proposal, "BLOCK", reason, args, fault_injected,
+                                           auditor_rows=rows)
                 state.calls.add(proposal.tool)
                 return decision, {"error": reason}
 
@@ -528,6 +534,11 @@ class GovernedGateway:
                 decision_name = "REQUIRE_APPROVAL" if policy_result["code"] == "APPROVAL_NOT_IMPLEMENTED" else "BLOCK"
                 if not reason:
                     reason = policy_result["code"]
+                if policy_result["code"] == "BUDGET_EXHAUSTED":
+                    report_budget_limit = getattr(self.pipeline, "report_budget_limit", None)
+                    row = report_budget_limit(checked, policy_result["code"]) if callable(report_budget_limit) else None
+                    if row:
+                        auditor_rows = tuple(auditor_rows) + (row,)
                 decision = self._make_decision(proposal.action_id, decision_name, reason, auditor_rows, None, started, state)
                 await self._persist_action(state, proposal, decision_name, reason, changed_args, fault_injected,
                                            auditor_rows=auditor_rows)
@@ -540,6 +551,17 @@ class GovernedGateway:
                 await self._persist_action(state, proposal, "BLOCK", "APPROVED_IDENTITY_REDACTION", changed_args, fault_injected)
                 state.calls.add(proposal.tool)
                 return decision, {"error": "APPROVED_IDENTITY_REDACTION"}
+
+            reserve_budget = getattr(self.pipeline, "reserve_budget", None)
+            budget_row = reserve_budget(checked, action_type="tool_call", tool_calls=1) if callable(reserve_budget) else None
+            if budget_row:
+                auditor_rows = tuple(auditor_rows) + (budget_row,)
+                if budget_row["decision"] != "ALLOW":
+                    reason = budget_row["code"]
+                    decision = self._make_decision(proposal.action_id, "BLOCK", reason, auditor_rows, None, started, state)
+                    await self._persist_action(state, proposal, "BLOCK", reason, changed_args, fault_injected,
+                                               auditor_rows=auditor_rows)
+                    return decision, {"error": reason}
 
             # High-impact calls wait for durable intent before entering SQLite.
             if proposal.side_effect in ("write", "irreversible"):
@@ -834,6 +856,10 @@ class GovernedGateway:
             safe["rule_id"] = row["rule_id"]
         elif "code" in row:
             safe["rule_id"] = row["code"]
+        if "evidence" in row:
+            safe["evidence"] = {k: v for k, v in row["evidence"].items()
+                                 if k in {"tokens_used", "tokens_limit", "tool_calls_used", "tool_calls_limit"}
+                                 and type(v) is int}
         return safe
 
     def _safe_parameters(self, state: _Run, tool: str, args: Mapping[str, Any]) -> dict[str, Any]:

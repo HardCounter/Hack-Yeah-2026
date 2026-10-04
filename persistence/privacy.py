@@ -149,6 +149,10 @@ def sanitize_event(event: ActionEventEnvelope, *, allow_unindexed_run: bool = Fa
         decision["rule"] = token(decision["rule"])
         decision["reason"] = OMITTED if decision["reason"] else ""
         decision["modifications"] = None
+        decision["evidence"] = {
+            key: number(value) for key, value in decision.get("evidence", {}).items()
+            if key in {"tokens_used", "tokens_limit", "tool_calls_used", "tool_calls_limit"}
+        }
         number(decision["latency_ms"])
     meta["sanitized_fields"] = ["parameters", "result", "error", "reason", "modifications"]
     context = data["context"]
