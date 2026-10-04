@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import uuid
 
@@ -120,14 +121,26 @@ class GovernedRuntime:
         await self.source.start()
         self.reader = PersistenceTrajectoryReader(self.persistence)
         self.sink = PersistenceFindingSink(self.persistence)
+        plugins = {"trajectory-risk": PluginEntry(name="trajectory-risk", config=self.consumer_config["trajectory_risk"])}
+        extra_plugins = [TrajectoryRisk]
+        feedback = dict(self.consumer_config["feedback"])
+        # Opt-in semantic judge on a local Ollama model (docs/probabilistic-evaluation.md section 3).
+        # It is sampled, runs in the background and only logs when Ollama is unavailable.
+        if os.environ.get("GOAL_JUDGE") == "1":
+            from consume_plane.plugins.goal_alignment_judge import GoalAlignmentJudge
+            judge_config = {"model": os.environ.get("GOAL_JUDGE_MODEL") or os.environ.get("OLLAMA_MODEL", "llama3.2"),
+                            "sample_rate": float(os.environ.get("GOAL_JUDGE_SAMPLE_RATE", "0.3"))}
+            plugins[GoalAlignmentJudge.name] = PluginEntry(name=GoalAlignmentJudge.name, config=judge_config)
+            extra_plugins.append(GoalAlignmentJudge)
+            feedback["allowed_actions"] = {**feedback.get("allowed_actions", {}),
+                                           GoalAlignmentJudge.name: ["REQUIRE_APPROVAL_FOR"]}
         cfg = ConsumePlaneConfig(
             source=SourceConfig(poll_timeout_s=0.01), partitions=1,
             ledger_path=str(self.audit_path.with_suffix(".ledger.db")), retry_backoff_s=0.01,
-            feedback=FeedbackConfig(**self.consumer_config["feedback"]),
-            plugins={"trajectory-risk": PluginEntry(name="trajectory-risk", config=self.consumer_config["trajectory_risk"])},
+            feedback=FeedbackConfig(**feedback), plugins=plugins,
         )
         self.manager = await build_manager(cfg, source=self.source, reader=self.reader, sinks=[self.sink],
-                                           channel=InProcessFeedbackChannel(self.gateway, credential), extra_plugins=[TrajectoryRisk])
+                                           channel=InProcessFeedbackChannel(self.gateway, credential), extra_plugins=extra_plugins)
         self.verifier = OutcomeVerifier(bank_paths={self.ctx.session_id: Path(self.ctx.db)}, result_store=self.store)
         await self.verifier.setup(SetupContext(self.verifier.name, {}, self.manager.registry.plugins[0].log))
         self.manager.registry.plugins.append(LoadedPlugin(self.verifier, self.verifier.name, self.verifier.version,

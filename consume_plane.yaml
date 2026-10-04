@@ -25,6 +25,7 @@ consume_plane:
     max_signals_per_session_per_minute: 6
     allowed_actions:            # default: a plugin may propose nothing
       trajectory-risk: [REQUIRE_APPROVAL_FOR, HALT_SESSION]
+      goal-alignment-judge: [REQUIRE_APPROVAL_FOR]
 
 plugins:
   trajectory-risk:              # built-in; expected loss = sum P(failure) x consequence (docs/trajectory-risk-model.md)
@@ -32,3 +33,16 @@ plugins:
     config:                     # any key from DEFAULTS in the plugin can be overridden here
       levels: {medium: 3.0, high: 8.0, critical: 15.0}
       prerequisites: {create_client: [screen_sanctions]}
+  goal-alignment-judge:         # semantic, agentic review on a local Ollama model (docs/probabilistic-evaluation.md 3)
+    handler: "consume_plane.plugins.goal_alignment_judge:GoalAlignmentJudge"
+    enabled: false              # opt in; when Ollama is down it only logs judge.unavailable
+    config:
+      url: "http://localhost:11434"
+      model: "llama3.2"
+      sample_rate: 0.3          # probability a triggering mid-session event is reviewed
+      final_sample_rate: 1.0    # probability the session-end review runs
+      samples: 3                # self-consistency samples per review
+      max_turns: 3              # tool turns per sample, the last one forced to answer
+      max_reviews_per_session: 5
+      alert_threshold: 0.6
+      approve_threshold: 0.75

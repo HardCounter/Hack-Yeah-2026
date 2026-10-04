@@ -379,6 +379,34 @@ fail-open: a provider outage must not halt every session, while the inline layer
 | `stub_weights` $w$ | (0.6, 0.5, 0.4, 0.5) | stub only |
 | thresholds | from `intercept.semantic_guard` | §3.5 |
 
+### 3.10 Implementation status (`consume_plane/plugins/goal_alignment_judge.py`)
+
+**Implemented:**
+- the Ollama backend with an availability check (§3.8);
+- the digest (§3.3);
+- the agentic loop with `get_step` and `count_tool`; the final turn is forced to answer through Ollama's JSON-schema `format`;
+- self-consistency, confidence and bands (§3.5);
+- escalation-only reporting and `REQUIRE_APPROVAL_FOR` at the approve band.
+
+**Added beyond the spec, for cost and robustness:**
+- **Sampled reviews.** A triggering event is reviewed with probability `sample_rate`; the session-end review uses `final_sample_rate`. The draw is $u=\mathrm{SHA256}(\text{seed}\,|\,\text{event\_id})/2^{64}$, deterministic per event, so a replayed event makes the same choice. Each session also has `max_reviews_per_session`.
+- **Background reviews.** A mid-session review runs as a background task, so a slow model never stalls the consume plane. Its verdict is reported on the session's next event.
+  - At session end the plugin waits for an in-flight review instead of starting a second one.
+  - That wait is bounded by `final_timeout_s`; when it runs out the review is dropped and `judge.dropped` is logged.
+  - The plugin declares `timeout_s` and the manager honours it, because LLM calls need more than the default `plugin_timeout_s`.
+- **Failure containment.** An unreachable Ollama, a model that isn't pulled, transport errors and invalid output are logged (`judge.unavailable` / `judge.error`). The backend is then skipped for `availability_ttl_s`, and `handle` returns normally, so events never fail, retry or dead-letter because of the judge.
+
+**Not implemented yet:**
+- the `anthropic` and `stub` backends (tests use a fake backend);
+- `get_content_excerpt`;
+- per-day cost budgets;
+- `LOWER_TRUST` evidence, which waits for §4.
+
+**Enabling it:**
+- Simulation: `GOAL_JUDGE=1`, plus optionally `GOAL_JUDGE_MODEL` and `GOAL_JUDGE_SAMPLE_RATE`.
+- Standalone daemon: `plugins.goal-alignment-judge.enabled` in `consume_plane.yaml`.
+- Real-model test: `RUN_OLLAMA_TESTS=1 OLLAMA_MODEL=<model> scripts/test.sh consume`.
+
 ---
 
 ## 4. Layer 1 session trust: fusing the evidence

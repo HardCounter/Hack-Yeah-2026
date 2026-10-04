@@ -153,10 +153,11 @@ class ConsumerManager:
         ctx = PluginContextImpl(p, a, self.reader)
         start = time.perf_counter()
         error = None
+        timeout = getattr(p.instance, "timeout_s", None) or self.plugin_timeout_s  # a plugin may declare a longer bound
         try:
-            await asyncio.wait_for(p.instance.handle(a, ctx), self.plugin_timeout_s)
+            await asyncio.wait_for(p.instance.handle(a, ctx), timeout)
         except TimeoutError:
-            error = f"timeout after {self.plugin_timeout_s}s"
+            error = f"timeout after {timeout}s"
         except Exception as e:
             error = f"{type(e).__name__}: {e}"
         return ctx.buffer, error, (time.perf_counter() - start) * 1000
