@@ -43,8 +43,7 @@ class GovernedRuntime:
         self.app_id = app_id
         self.config = json.loads(Path(policy_path).read_text()) if policy_config is None else json.loads(json.dumps(policy_config))
         self.policy_revision = policy_revision
-        # Managed configs are used only by interception in this iteration. Keep consume-plane
-        # configuration on its existing trusted path; do not wire intercept.velocity_guard etc.
+        # Layer 1 plugins use managed config; Layer 3 remains on its existing trusted path.
         self.consumer_config = (json.loads(POLICY_PATH.read_text())["consumer"]
                                 if "intercept" in self.config else self.config["consumer"])
         self.operator_contract_id = contract_id
@@ -109,7 +108,10 @@ class GovernedRuntime:
         )
         credential = object()
         self._feedback_credential = credential
-        self.gateway = GovernedGateway(policy, Pipeline(self.config["auditors"]), self.persistence,
+        plugin_settings = {key: value for key, value in self.config.get("intercept", {}).items()
+                           if key in {"pattern_match", "velocity_guard"} and value is not None}
+        self.gateway = GovernedGateway(policy, Pipeline(self.config["auditors"], plugin_config=plugin_settings,
+                                                       contract=self.contract, policy_level=self.config.get("name", "standard")), self.persistence,
                                        registry_module=registry, feedback_credential=credential,
                                        controls=self.config.get("controls") or {})
         self.source = PersistenceEventSource(self.persistence)

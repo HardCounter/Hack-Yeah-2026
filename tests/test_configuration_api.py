@@ -94,6 +94,10 @@ def test_management_errors_are_sanitized(api, method, path, body, headers, statu
     lambda c: c["intercept"]["velocity_guard"].update(window_s=0),
     lambda c: c["intercept"]["semantic_guard"].update(approve_threshold=0.99),
     lambda c: c["intercept"]["feedback"].update(allow_agent_scope=True),
+    lambda c: c["intercept"]["pattern_match"].update(patterns=["("]),
+    lambda c: c["intercept"]["pattern_match"].update(patterns=[r"(x)\1"]),
+    lambda c: c["intercept"]["pattern_match"].update(fields=["raw_credentials"]),
+    lambda c: c["intercept"]["pattern_match"].update(action="ALLOW"),
     lambda c: c.update(auditors=[{"id": "x", "type": "webhook", "config": {}}]),
     lambda c: c.update({"synthetic-private-secret": "do not echo"}),
 ])

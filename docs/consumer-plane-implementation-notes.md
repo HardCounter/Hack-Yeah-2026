@@ -21,7 +21,7 @@ Layer 2 yet, and no built-in detection plugins exist.
 | Wire decoder, envelope v2.1 ([spec](consumer-plane-event-envelope.md)) | `contracts/wire.py` | `test_decode.py` |
 | Task Contract, findings, proposals, signals | `contracts/task_contract.py`, `consume_plane/model/outputs.py` | `test_feedback.py`, `test_manager.py` |
 | Ports (protocols) | `consume_plane/ports/` | indirectly |
-| Plugin SDK surface | `consume_plane/sdk.py` | `plugins/velocity_guard.py` |
+| Plugin SDK surface | `consume_plane/sdk.py` | `tests/consume_plane/fixtures/plugins/velocity_observer.py` |
 | Memory and JSONL adapters | `consume_plane/adapters/` | all tests |
 | Config (`consume_plane.yaml`) | `consume_plane/runtime/config.py` | `test_loader.py` |
 | Loader and registry (drop-in files, `module:Class`, embedded classes) | `runtime/loader.py`, `registry.py` | `test_loader.py` |
@@ -30,7 +30,7 @@ Layer 2 yet, and no built-in detection plugins exist.
 | Manager (partitions, timeouts, retries, settle) | `runtime/manager.py` | `test_manager.py` |
 | Feedback controller | `runtime/feedback.py` | `test_feedback.py` |
 | CLI replay | `consume_plane/__main__.py` | `test_replay_cli.py` |
-| Example drop-in plugin | `plugins/velocity_guard.py` | `test_loader.py`, `test_replay_cli.py` |
+| Consumer-only drop-in fixture | `tests/consume_plane/fixtures/plugins/velocity_observer.py` | `test_loader.py`, `test_replay_cli.py` |
 | Built-in `trajectory-risk` plugin ([model](trajectory-risk-model.md)) | `consume_plane/plugins/trajectory_risk.py` | `test_trajectory_risk.py` |
 | Test and demo scripts | `scripts/test_consume_plane.sh`, `scripts/run_consume_plane.sh` | run manually |
 

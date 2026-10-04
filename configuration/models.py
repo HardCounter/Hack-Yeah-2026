@@ -70,8 +70,22 @@ class AllowlistAuditor(Model):
 
 
 class VelocityGuardConfig(Model):
+    enabled: bool = True
     window_s: Annotated[float, Field(gt=0, le=3600)]
     max_calls: Annotated[int, Field(ge=1, le=10_000)]
+
+
+class PatternMatchConfig(Model):
+    enabled: bool = True
+    patterns: Annotated[list[Annotated[str, Field(min_length=1, max_length=256)]], Field(max_length=64)]
+    fields: Annotated[list[Literal["tool", "arguments"]], Field(min_length=1, max_length=2)] = ["tool", "arguments"]
+    action: Literal["BLOCK"] = "BLOCK"
+
+    @model_validator(mode="after")
+    def valid_regexes(self):
+        from plugins.pattern_match import PatternMatch
+        PatternMatch().setup(self.model_dump())
+        return self
 
 
 class SemanticGuardConfig(Model):
@@ -102,6 +116,7 @@ class InterceptConfig(Model):
     # This iteration reserves trajectory settings but does not configure the consume plane.
     trajectory_risk: Model
     velocity_guard: VelocityGuardConfig
+    pattern_match: PatternMatchConfig | None = None
     feedback: FeedbackConfig
     semantic_guard: SemanticGuardConfig
 

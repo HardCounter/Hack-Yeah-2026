@@ -47,9 +47,9 @@ def test_drop_in_file_is_discovered_and_configured(tmp_path):
     assert registry.plugins[0].instance.limit == 7
 
 
-def test_repository_example_plugin_loads():
-    registry = load(ConsumePlaneConfig(plugin_dirs=[str(REPO / "plugins")]))
-    assert "velocity-guard" in [p.name for p in registry.plugins]
+def test_interception_plugins_cannot_be_loaded_as_consumers():
+    with pytest.raises(PluginLoadError, match="subscription"):
+        load(ConsumePlaneConfig(plugin_dirs=[str(REPO / "plugins")]))
 
 
 def test_module_class_handler_loads(tmp_path, monkeypatch):
@@ -118,5 +118,6 @@ def test_config_rejects_unknown_keys_and_resolves_paths(tmp_path):
 def test_repository_config_file_parses():
     from consume_plane.runtime.config import load_config
     cfg = load_config(REPO / "consume_plane.yaml")
-    assert cfg.plugin_dirs == [str(REPO / "plugins")]
-    assert cfg.feedback.allowed_actions["velocity-guard"] == ["REQUIRE_APPROVAL_FOR"]
+    assert cfg.plugin_dirs == []
+    assert "velocity-guard" not in cfg.plugins
+    assert "velocity-guard" not in cfg.feedback.allowed_actions

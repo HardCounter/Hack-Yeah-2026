@@ -481,18 +481,23 @@ The three ways requested, in the order a developer meets them.
 
 ### 8.1 Way 1: drop a Python file into the plugin directory
 
+**Current boundary:** repository `plugins/` belongs to Layer 1 interception. Configure a separate
+consumer directory for this illustrative SDK example; the executable replay fixture is
+`tests/consume_plane/fixtures/plugins/velocity_observer.py`. Production VelocityGuard runs before
+dispatch, as documented in [intercept-plugins.md](intercept-plugins.md).
+
 ```text
-plugins/                     # configurable: consume_plane.yaml → plugin_dirs
-└── velocity_guard.py
+consumer_plugins/            # illustrative configurable directory, not repository plugins/
+└── velocity_observer.py
 ```
 
 ```python
-# plugins/velocity_guard.py
+# consumer_plugins/velocity_observer.py (illustrative consumer, not a pre-dispatch enforcer)
 from datetime import timedelta
 from consume_plane.sdk import Subscription, FindingDraft, AdjustmentProposal
 
-class VelocityGuard:
-    name = "velocity-guard"
+class VelocityObserver:
+    name = "velocity-observer"
     version = "1.0.0"
     method = "deterministic"
     subscription = Subscription(kinds=frozenset({"tool_use"}))
@@ -516,7 +521,7 @@ class VelocityGuard:
                 reason="tool-call velocity above limit",
             ))
 
-PLUGINS = [VelocityGuard]
+PLUGINS = [VelocityObserver]
 ```
 
 **Discovery rules (`runtime/loader.py`):**
@@ -747,7 +752,7 @@ consume_plane:
   max_attempts: 3
   breaker: {threshold: 5, cooldown_s: 30}
   on_plugin_load_error: fail    # fail | skip
-  plugin_dirs: ["plugins"]
+  plugin_dirs: ["consumer_plugins"] # illustrative; current repository default is []
   ledger_path: "var/consumer_ledger.db"
 
   sinks:
@@ -778,7 +783,7 @@ plugins:
     handler: "consume_plane.plugins.trajectory_grader:TrajectoryGrader"
     enabled: false
     config: {provider: "anthropic", model: "claude-haiku-4-5", api_key_env: "LLM_API_KEY"}
-  velocity-guard:               # file plugin from plugins/; only its config lives here
+  velocity-observer:            # illustrative consumer from consumer_plugins/, not Layer 1
     config: {window_s: 10, max_calls: 8}
 ```
 
@@ -899,7 +904,7 @@ Run command: `uv run pytest tests/consume_plane -q`.
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
 | **0. Contract** | `model/actions.py`, `model/contract.py`, `model/outputs.py`, `decode.py`; team decision on the envelope (3.6) | `test_decode.py` green; envelope decision recorded in `contract/` |
-| **1. Core runtime** | Ports, memory/JSONL adapters, loader, registry, context, ledger, manager, `python -m consume_plane` running against `JsonlReplaySource` | Loader, subscription, at-least-once, timeout, and ordering tests green; a drop-in `plugins/velocity_guard.py` loads and emits findings to `findings.jsonl` |
+| **1. Core runtime** | Ports, memory/JSONL adapters, loader, registry, context, ledger, manager, `python -m consume_plane` running against `JsonlReplaySource` | Loader, subscription, at-least-once, timeout, and ordering tests; a consumer-only velocity observer fixture emits findings to `findings.jsonl` |
 | **2. Built-ins** | `usage-accountant`, `loop-detector`, `scope-drift`, `repeat-side-effect`, `step-order`, `outcome-verifier` | Built-in and outcome-verifier tests green on fixture trajectories for the listed ONB scenarios |
 | **3. Integration** | Layer 2 adapters (`EventSource`, `TrajectoryReader`), `StoreSink`, `SseSink`, `InProcessFeedbackChannel` wired to Layer 1 cache, `/consumer/health` | One end-to-end run (ONB-15): Layer 1 event → store → Queue 2 → `scope-drift` → signal → Layer 1 blocks the **next** out-of-scope call, and the dashboard shows the finding |
 | **4. Optional** | Feedback controller hardening, config hot reload, `trajectory-grader`, webhook plugin adapter | Each has tests; semantic results are labelled as such in the dashboard |

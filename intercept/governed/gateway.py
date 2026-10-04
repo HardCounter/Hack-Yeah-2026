@@ -529,7 +529,8 @@ class GovernedGateway:
                 if not reason:
                     reason = policy_result["code"]
                 decision = self._make_decision(proposal.action_id, decision_name, reason, auditor_rows, None, started, state)
-                await self._persist_action(state, proposal, decision_name, reason, changed_args, fault_injected)
+                await self._persist_action(state, proposal, decision_name, reason, changed_args, fault_injected,
+                                           auditor_rows=auditor_rows)
                 state.calls.add(proposal.tool)
                 return decision, {"error": reason or decision_name}
 
@@ -613,7 +614,8 @@ class GovernedGateway:
 
             # Inspect results before delivery. Any result block withholds content
             # and does not count as progress toward a later write.
-            inspected, out_rows, out_verdict, out_changed = await self.pipeline.evaluate({
+            output_evaluator = getattr(self.pipeline, "evaluate_output", self.pipeline.evaluate)
+            inspected, out_rows, out_verdict, out_changed = await output_evaluator({
                 **action, "arguments": {"tool_result": result},
             })
             auditor_rows = tuple(auditor_rows) + tuple({**row, "phase": "output"} for row in out_rows)
@@ -828,10 +830,10 @@ class GovernedGateway:
     @staticmethod
     def _safe_auditor_row(row: Mapping[str, Any]) -> dict[str, Any]:
         safe = {k: row[k] for k in ("auditor", "decision", "latency_ms", "phase") if k in row}
-        if "code" in row:
-            safe["rule_id"] = row["code"]
-        elif "rule_id" in row:
+        if "rule_id" in row:
             safe["rule_id"] = row["rule_id"]
+        elif "code" in row:
+            safe["rule_id"] = row["code"]
         return safe
 
     def _safe_parameters(self, state: _Run, tool: str, args: Mapping[str, Any]) -> dict[str, Any]:

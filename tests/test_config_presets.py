@@ -28,7 +28,9 @@ def test_presets_have_consistent_intercept_policy_shape_and_ordered_strictness()
         assert (0 < guard["alert_threshold"] <= guard["approve_threshold"]
                 <= guard["block_threshold"] <= 1)
         assert guard["on_error"] == "BLOCK"
-        assert "velocity-guard" in intercept["feedback"]["allowed_actions"]
+        assert "velocity-guard" not in intercept["feedback"]["allowed_actions"]
+        assert intercept["pattern_match"]["enabled"]
+        assert intercept["pattern_match"]["action"] == "BLOCK"
         assert preset["budget"]["tokens"] > 0
         assert preset["budget"]["tool_calls"] > 0
         token_budgets.append(preset["budget"]["tokens"])

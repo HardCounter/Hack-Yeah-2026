@@ -155,15 +155,63 @@ def webhook(config, action):
 
 
 class Pipeline:
-    def __init__(self, specs):
+    def __init__(self, specs, *, plugin_config=None, contract=None, policy_level="standard"):
         validate_specs(specs)
         self.specs = copy.deepcopy(specs)
+        from intercept.plugins import load_plugins
+        self.plugin_config = copy.deepcopy(plugin_config or {})
+        self.plugins = load_plugins(self.plugin_config)
+        self.contract = contract
+        self.policy_level = policy_level
 
-    async def evaluate(self, action):
+    def for_prompts(self):
+        return Pipeline([s for s in self.specs if s["type"] != "tool_allowlist"],
+                        plugin_config=self.plugin_config, contract=self.contract, policy_level=self.policy_level)
+
+    async def evaluate_output(self, action):
+        return await self.evaluate(action, phase="output")
+
+    async def evaluate_prompt(self, action, *, phase="input"):
+        return await self.evaluate(action, phase=phase, action_type="llm_call")
+
+    async def evaluate(self, action, *, phase="input", action_type="tool_call"):
         checked = copy.deepcopy(action)
         evidence = []
         blocked = approval = False
         changed = False
+        from intercept.plugins import AuditContext, AuditDecision
+        contract = self.contract.to_dict() if self.contract is not None else {}
+        for plugin in self.plugins:
+            start = time.monotonic()
+            ctx = AuditContext(
+                trace_id=contract.get("run_id") or checked["session_id"],
+                session_id=checked["session_id"], agent_id=contract.get("agent_id", "unbound_policy"),
+                action_type=action_type, action_name=checked["tool"], payload=copy.deepcopy(checked["arguments"]),
+                current_policy_level=self.policy_level, task_contract=copy.deepcopy(contract),
+                policy_version=contract.get("policy_version", "unbound_policy"),
+                action_id=checked["call_id"], phase=phase,
+            )
+            try:
+                result = plugin.evaluate(ctx)
+                if (not isinstance(result, AuditDecision)
+                        or result.decision not in {"ALLOW", "BLOCK", "REQUIRE_APPROVAL", "ALERT"}
+                        or result.modified_payload is not None
+                        or (result.violation_code is not None and (
+                            not isinstance(result.violation_code, str)
+                            or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", result.violation_code)))
+                        or any(key not in {"pattern_index", "calls_in_window"} or type(value) is not int
+                               or not 0 <= value <= 10001 for key, value in result.evidence.items())):
+                    raise ValueError("invalid plugin decision")
+            except Exception:
+                result = AuditDecision("BLOCK", violation_code="INTERCEPT_PLUGIN_FAILED")
+            row = {"auditor": plugin.name, "decision": result.decision,
+                   "code": result.violation_code or "PASS",
+                   "latency_ms": round((time.monotonic() - start) * 1000, 3)}
+            if "pattern_index" in result.evidence:
+                row["rule_id"] = f"regex.pattern.{result.evidence['pattern_index']}"
+            evidence.append(row)
+            blocked |= result.decision == "BLOCK"
+            approval |= result.decision == "REQUIRE_APPROVAL"
         for spec in self.specs:
             start = time.monotonic()
             config = spec["config"]

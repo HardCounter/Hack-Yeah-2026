@@ -103,6 +103,13 @@ The OpenCode plugin path and the optional HTTP/MCP gateway path are distinct. Th
 
 ## 2. Layer 1: Interception Layer (Gateway & Policy Enforcement)
 
+**Implemented plugin update:** `plugins/` is now the Layer 1 package, not the consumer drop-in
+directory. `intercept/plugins.py` defines the audit context/decision interface and fixed trusted
+registry. `pattern-match` and `velocity-guard` run before dispatch through the existing auditor
+pipeline; selected JSON presets configure them under `intercept.pattern_match` and
+`intercept.velocity_guard`. See [interception plugins](intercept-plugins.md) for current behavior
+and tests. Other historical proposed interfaces below are not evidence of additional coverage.
+
 The planned Interception Layer authenticates and scopes proposals, performs synchronous
 hard/semantic/approval gates, reserves resources, routes permitted requests and inspects
 outputs. Critical evidence is durable before high-impact dispatch. Protocol breadth and
@@ -221,7 +228,8 @@ Each auditor returns a structured decision:
 The pipeline uses deterministic conflict resolution, not first-match allow: hard `BLOCK` (including exhausted budget) takes precedence over `REQUIRE_APPROVAL`, which takes precedence over `ALLOW`; `ALERT` is additive and never grants permission. Apply configured argument transformations in order, then re-run hard checks against the final payload before execution. Bind approval to the finalized action, run, policy version, and active intervention/overlay version; a changed action or applicable policy overlay invalidates the approval and requires a new decision. Record every auditor decision, including alerts and denials, in sanitized audit evidence.
 
 #### Dual Plugin Delivery Mechanisms
-Two future trusted plugin modes are proposed, not implemented. Plugin code/config is part
+The fixed in-process registry described above is implemented; arbitrary plugin import paths and
+the generalized delivery modes below remain proposals. Plugin code/config is part
 of the trusted control plane; agent inputs cannot choose handlers or endpoints:
 1. **In-Application Callbacks (In-Process):** Fast, zero-overhead Python/Go functions implementing a standard `ActionAuditor` interface. Ideal for fast local regex, allowlists, argument bounds checking, and token budgets.
 2. **Webhook Callbacks (HTTP/gRPC):** Authorized allowlisted endpoints receive only policy-permitted sanitized data, with authentication, bounded time/size and validated decision schemas. Mandatory callback failure blocks/pauses; never defaults to ALLOW. Sending private data externally requires approval.

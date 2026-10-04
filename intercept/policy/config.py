@@ -36,12 +36,14 @@ def load(path):
         raise ValueError("config must be an object")
     if set(config) == {"runs"}:
         return Policy(config), Pipeline([])  # Backward-compatible initial policy.
-    if set(config) not in ({"schema_version", "runs", "auditors"}, {"schema_version", "runs", "contracts", "auditors"}) or type(config["schema_version"]) is not int or config["schema_version"] != 1:
+    if (set(config) - {"schema_version", "runs", "auditors", "contracts", "intercept"}
+            or not {"schema_version", "runs", "auditors"} <= set(config)
+            or type(config["schema_version"]) is not int or config["schema_version"] != 1):
         raise ValueError("unsupported configuration schema")
     core = {"runs": config["runs"]}
     if "contracts" in config:
         core["contracts"] = config["contracts"]
     policy = Policy(core)
-    pipeline = Pipeline(config["auditors"])
+    pipeline = Pipeline(config["auditors"], plugin_config=config.get("intercept"))
     policy.version = hashlib.sha256(json.dumps(config, sort_keys=True, allow_nan=False).encode()).hexdigest()
     return policy, pipeline

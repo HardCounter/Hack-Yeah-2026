@@ -78,7 +78,8 @@ def parse_json(data):
 
 def validate_policy(value):
     try:
-        return PolicyConfig.model_validate(value).model_dump(mode="json")
+        # New optional plugin fields must not alter hashes of already-pinned snapshots.
+        return PolicyConfig.model_validate(value).model_dump(mode="json", exclude_unset=True)
     except ValidationError as exc:
         # Only model field paths, never submitted values or validator exception prose.
         known = {"name", "description", "allowed_tools", "admin_tools", "budget", "tokens", "tool_calls",
@@ -86,6 +87,7 @@ def validate_policy(value):
                  "controls", "email_recipients", "egress_hosts", "model_source_hosts", "allowed_model_suffixes",
                  "auditors", "id", "type", "config", "patterns", "action", "classes", "intercept",
                  "trajectory_risk", "velocity_guard", "window_s", "max_calls", "feedback", "enabled",
+                 "pattern_match", "fields",
                  "allow_agent_scope", "max_ttl_s", "max_signals_per_session_per_minute", "allowed_actions",
                  "semantic_guard", "block_threshold", "approve_threshold", "alert_threshold", "on_error"}
         fields = [".".join(str(part) if isinstance(part, int) or part in known else "field"
@@ -160,7 +162,7 @@ class ConfigService:
                 data = source.read(1_000_001)
             if len(data) > 1_000_000:
                 raise ValueError("state too large")
-            state = ConfigState.model_validate(parse_json(data)).model_dump(mode="json")
+            state = ConfigState.model_validate(parse_json(data)).model_dump(mode="json", exclude_unset=True)
             if state["schema_version"] != 1 or set(state["configs"]) != set(PRESET_NAMES):
                 raise ValueError("invalid state")
             for name, entry in state["configs"].items():

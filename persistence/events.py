@@ -30,7 +30,7 @@ def auditor_decisions(rows: Iterable[Mapping[str, Any]]) -> list[AuditorDecision
         verdict = VERDICT_FOR_DECISION.get(row.get("decision"))
         if verdict is None:
             continue
-        rule = row.get("code") or row.get("rule_id")
+        rule = row.get("rule_id") or row.get("code")
         out.append(AuditorDecision(
             auditor_name=str(row.get("auditor", "unknown")), verdict=verdict,
             latency_ms=float(row.get("latency_ms", 0.0)), rule=str(rule) if rule else None,

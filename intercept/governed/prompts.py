@@ -59,7 +59,8 @@ class PromptGateway:
         specs = getattr(pipeline, "specs", None)
         if specs is not None and hasattr(pipeline, "evaluate"):
             from intercept.policy.auditors import Pipeline
-            self.pipeline = Pipeline([s for s in specs if s.get("type") != "tool_allowlist"])
+            self.pipeline = (pipeline.for_prompts() if isinstance(pipeline, Pipeline)
+                             else Pipeline([s for s in specs if s.get("type") != "tool_allowlist"]))
         else:
             self.pipeline = pipeline
         self._lock = asyncio.Lock()
@@ -98,13 +99,15 @@ class PromptGateway:
         self._used_tokens = used
         return used
 
-    async def _evaluate(self, *, call_id: str, arguments: dict[str, Any]):
+    async def _evaluate(self, *, call_id: str, arguments: dict[str, Any], phase="input"):
         action = {
             "session_id": self.contract.session_id,
             "call_id": call_id,
             "tool": "llm_call",
             "arguments": arguments,
         }
+        if callable(getattr(self.pipeline, "evaluate_prompt", None)):
+            return await self.pipeline.evaluate_prompt(action, phase=phase)
         return await self.pipeline.evaluate(action)
 
     @staticmethod
@@ -112,7 +115,7 @@ class PromptGateway:
         return tuple({
             "auditor": str(row.get("auditor", "unknown")),
             "decision": str(row.get("decision", "ALLOW")),
-            "rule_id": str(row.get("code")) if row.get("code") else None,
+            "rule_id": row.get("rule_id") or (str(row.get("code")) if row.get("code") else None),
             "latency_ms": float(row.get("latency_ms", 0.0)),
         } for row in rows if row.get("decision") in DECISIONS)
 
@@ -362,6 +365,7 @@ class PromptGateway:
                                 inspected, output_rows, output_verdict, output_changed = await self._evaluate(
                                     call_id=action_id,
                                     arguments={"messages": [], "tools": [], "tool_result": response},
+                                    phase="output",
                                 )
                                 rows = tuple(rows) + tuple({**r, "phase": "output"} for r in output_rows)
                                 output_final = self._final_decision(output_verdict, output_changed, output_rows)

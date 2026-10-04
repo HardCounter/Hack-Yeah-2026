@@ -919,13 +919,19 @@ Model definitions and the generated OpenAPI schema are in `configuration/models.
 | `controls.allowed_model_suffixes` | at most 20 suffixes of the form `.safetensors`, at most 40 characters |
 | `auditors` | 0–32 entries: `id`, `type`, `config`; unique telemetry-safe IDs |
 | `intercept.trajectory_risk` | empty reserved object; stored-only |
-| `intercept.velocity_guard.window_s` | finite number, greater than 0 and at most 3,600; stored-only |
-| `intercept.velocity_guard.max_calls` | integer, 1–10,000; stored-only |
+| `intercept.velocity_guard.enabled` | optional boolean, default `true`; controls the Layer 1 velocity gate |
+| `intercept.velocity_guard.window_s` | finite number, greater than 0 and at most 3,600; monotonic rolling window |
+| `intercept.velocity_guard.max_calls` | integer, 1–10,000; exceeding this limit requires approval before dispatch |
+| `intercept.pattern_match` | optional object or `null`; absent/null disables regex matching for old snapshots |
+| `intercept.pattern_match.enabled` | optional boolean, default `true` |
+| `intercept.pattern_match.patterns` | at most 64 RE2 regexes, each 1–256 characters; invalid/unsupported patterns return `422 invalid_config` |
+| `intercept.pattern_match.fields` | unique, nonempty subset of `tool`, `arguments`; default both; matches argument keys and nested string values |
+| `intercept.pattern_match.action` | optional, must be `BLOCK`; default `BLOCK` |
 | `intercept.feedback.enabled` | boolean; stored-only |
 | `intercept.feedback.allow_agent_scope` | must be `false`; stored-only |
 | `intercept.feedback.max_ttl_s` | integer, 1–86,400; stored-only |
 | `intercept.feedback.max_signals_per_session_per_minute` | integer, 1–1,000; stored-only |
-| `intercept.feedback.allowed_actions` | map of `trajectory-risk` / `velocity-guard` to at most 5 adjustment actions per plugin; stored-only |
+| `intercept.feedback.allowed_actions` | stored-only map; older configs may retain `velocity-guard`, but it no longer uses async feedback |
 | `intercept.semantic_guard.block_threshold`, `approve_threshold`, `alert_threshold` | finite numbers, `0 ≤ alert ≤ approve ≤ block ≤ 1`; stored-only risk-score thresholds, not adherence percentages |
 | `intercept.semantic_guard.on_error` | must be `BLOCK`; stored-only |
 
@@ -946,8 +952,13 @@ are rejected before model validation.
 egress controls, model allowlist, output cap, feed identity and per-session budgets to interception.
 Model controls/token accounting apply where calls actually traverse `PromptGateway`; this does not
 claim that every OpenCode provider request is intercepted or that financial pricing is implemented.
-The `intercept` plugin settings are stored and validated only. The consume plane continues using
-its existing configuration; no VelocityGuard or semantic inference implementation is added here.
+`intercept.pattern_match` and `intercept.velocity_guard` now configure actual pre-dispatch
+Layer 1 plugins. Pattern matches hard-block the current call; velocity holds an over-limit
+proposal without dispatch. Plugin errors fail closed. [Plugin details](intercept-plugins.md)
+document bounds, RE2 syntax, phase handling and evidence. `trajectory_risk`, `feedback` and
+`semantic_guard` remain stored-only here; the consume plane keeps its separate trusted config.
+Existing snapshot revisions are preserved when optional fields are absent; activating new
+patterns requires explicitly saving/selecting them, not reseeding defaults or mutating live runs.
 
 ### 5.16 Configuration results
 

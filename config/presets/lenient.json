@@ -105,8 +105,18 @@
   "intercept": {
     "trajectory_risk": {},
     "velocity_guard": {
+      "enabled": true,
       "window_s": 10,
       "max_calls": 8
+    },
+    "pattern_match": {
+      "enabled": true,
+      "patterns": [
+        "(?i)ignore\\s+previous\\s+instructions",
+        "(?i)system\\s+override"
+      ],
+      "fields": ["tool", "arguments"],
+      "action": "BLOCK"
     },
     "feedback": {
       "enabled": true,
@@ -118,9 +128,6 @@
           "ALERT",
           "REQUIRE_APPROVAL_FOR",
           "HALT_SESSION"
-        ],
-        "velocity-guard": [
-          "REQUIRE_APPROVAL_FOR"
         ]
       }
     },

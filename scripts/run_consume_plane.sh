@@ -3,7 +3,7 @@
 #
 # Usage: scripts/run_consume_plane.sh [events.jsonl [contracts.jsonl]]
 #   With no arguments it replays the bundled demo: 10 tool calls in 10 s, which trips the
-#   drop-in plugin plugins/velocity_guard.py (limit: 8 calls per 10 s).
+#   consumer handlers from consume_plane.yaml (plugins/ contains Layer 1 auditors).
 #   A sibling <name>.contracts.jsonl is used automatically when no contracts file is given.
 #   Risk demo: scripts/run_consume_plane.sh tests/consume_plane/fixtures/risky_onboarding.jsonl
 #
