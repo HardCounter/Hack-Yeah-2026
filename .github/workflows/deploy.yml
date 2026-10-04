@@ -46,9 +46,9 @@ jobs:
           git checkout -B deploy origin/deploy
           export GIT_SHA=$(git rev-parse --short HEAD)
           docker compose up -d --build
-          # A changed Caddyfile is a bind mount, so `up` does not apply it. An invalid file fails here
-          # and Caddy keeps serving the previous config.
-          docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+          # The Caddyfile is a single-file bind mount: git checkout replaces its inode, so the container
+          # keeps the old file and `caddy reload` sees no change. A restart re-binds the mount.
+          docker compose restart caddy
           # fresh synthetic bank on every deploy (deterministic, seed 2026)
           docker compose exec -T app python data/generate.py
           REMOTE
