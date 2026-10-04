@@ -146,13 +146,6 @@
           </div>
         </div>
         <div class="panel">
-          <div class="panel-head"><h2>Session budget</h2><span class="cap faint mono" id="budTxt"></span></div>
-          <div class="panel-body">
-            <div class="meter" role="meter" aria-label="Session token budget" aria-valuemin="0" id="budMeter"><div class="fill" id="budFill"></div><div class="tick"><span>80%</span></div></div>
-            <p class="cap muted" id="costTxt"></p>
-          </div>
-        </div>
-        <div class="panel">
           <div class="panel-head"><h2>Controls</h2><span class="cap faint">Per control, since start</span></div>
           <div class="scroll"><table>
             <thead><tr><th>Control</th><th class="n">Runs</th><th class="n">Acted</th><th class="n">p50</th><th class="n">p95</th></tr></thead>
@@ -160,20 +153,29 @@
           </table></div>
         </div>
       </div>
-      <div class="panel risk-side">
-        <div class="panel-head"><h2>Sessions</h2><span class="cap faint">Highest expected loss first</span></div>
-        <div class="scroll"><table>
-          <thead><tr><th>Session</th><th class="n">P</th><th class="n">C</th><th class="n">Exp. loss</th><th>Level</th><th>Proposed action</th></tr></thead>
-          <tbody id="riskTable"></tbody>
-        </table></div>
-        <dl class="risk-help">
-          <dt>Likelihood · P, 0 to 1</dt>
-          <dd>How likely it is that the session has already gone wrong. Every session starts at 0.02. Each warning sign pushes it up: a blocked or redacted call, a request outside the task, a skipped check such as sanctions screening, a repeated write.</dd>
-          <dt>Impact · C, 1 to 10</dt>
-          <dd>How bad a step is if it was wrong: read 1, external call 4, write 5, create a client 8, run code 9, delete 10. The chart plots each session's worst step that actually ran.</dd>
-          <dt>Expected loss · Σ P × C</dt>
-          <dd>Adds up likelihood × impact over every step that ran. Blocked steps add nothing but raise the likelihood of later ones. It sets the level: medium from 3, high from 8 (a human must approve further actions), critical from 15 (the session is halted).</dd>
-        </dl>
+      <div class="stack">
+        <div class="panel risk-side">
+          <div class="panel-head"><h2>Sessions</h2><span class="cap faint">Highest expected loss first</span></div>
+          <div class="scroll"><table>
+            <thead><tr><th>Session</th><th class="n">P</th><th class="n">C</th><th class="n">Exp. loss</th><th>Level</th><th>Proposed action</th></tr></thead>
+            <tbody id="riskTable"></tbody>
+          </table></div>
+          <dl class="risk-help">
+            <dt>Likelihood · P, 0 to 1</dt>
+            <dd>How likely it is that the session has already gone wrong. Every session starts at 0.02. Each warning sign pushes it up: a blocked or redacted call, a request outside the task, a skipped check such as sanctions screening, a repeated write.</dd>
+            <dt>Impact · C, 1 to 10</dt>
+            <dd>How bad a step is if it was wrong: read 1, external call 4, write 5, create a client 8, run code 9, delete 10. The chart plots each session's worst step that actually ran.</dd>
+            <dt>Expected loss · Σ P × C</dt>
+            <dd>Adds up likelihood × impact over every step that ran. Blocked steps add nothing but raise the likelihood of later ones. It sets the level: medium from 3, high from 8 (a human must approve further actions), critical from 15 (the session is halted).</dd>
+          </dl>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Session budget</h2><span class="cap faint mono" id="budTxt"></span></div>
+          <div class="panel-body">
+            <div class="meter" role="meter" aria-label="Session token budget" aria-valuemin="0" id="budMeter"><div class="fill" id="budFill"></div><div class="tick"><span>80%</span></div></div>
+            <p class="cap muted" id="costTxt"></p>
+          </div>
+        </div>
       </div>
     </div>
 
