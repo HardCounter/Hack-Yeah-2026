@@ -1,8 +1,11 @@
 # Dashboard REST API and configuration management
 
-**Status (2026-10-04): core persisted evidence reads implemented.** Health, storage stats, session
-list/detail, session verification, action drill-down, session trajectories and audit export use
-real read-only SQLite queries in `persistence/query.py`. Tests: `tests/test_http_api_persisted.py`.
+**Status (2026-10-04): core persisted evidence reads and governance panels implemented.** Health,
+storage stats, session list/detail/usage, session verification, action list/drill-down, intervention
+history, session trajectories, count/token timeseries and audit export use real read-only SQLite
+queries in `persistence/query.py` and `persistence/query_usage.py`. Tests include
+`tests/test_http_api_persisted.py`, `tests/test_http_api_governance.py`,
+`tests/test_http_api_lists.py` and `tests/test_query_usage.py`.
 Remaining evidence endpoints return **501 `not_implemented`**, not fabricated data, in normal mode.
 Frontend examples require explicit `--example-mode` / `create_app(example_mode=True)` and carry
 `X-Data-Source: example`; successful normal reads carry `X-Data-Source: persisted`.
@@ -70,7 +73,9 @@ uv run python -m persistence.http_api --evidence-dir <bank-runs dir> --config-di
 `<runs-dir>/<session_id>.evidence.db` when a session binds, so the API takes the directory
 (`--evidence-dir`), not one database file. Each read opens the matching store read-only.
 The implemented `/sessions` and `/system/stats` scan matching stores in the directory.
-Cross-session detections/metrics remain deferred. The live pipeline passes its `bank-runs/` directory. See
+Cross-session detections and aggregate usage/security/performance metrics remain deferred;
+bounded cross-session action/intervention lists and count/token timeseries are implemented.
+The live pipeline passes its `bank-runs/` directory. See
 [scripts/README.md](../scripts/README.md) for the process layout and the env files.
 
 The OpenAPI schema is served at `/api/v1/openapi.json`, with an interactive UI at `/api/v1/docs`.
@@ -184,9 +189,10 @@ covers the "exportable audit logs" deliverable, so build it as soon as P0 works.
 
 ### Current persisted-read scope
 
-Implemented: endpoints 1, 2, 3, 6, 15, 16, 17 and **session scope only** of endpoint 4.
-Configuration endpoints 18–21 remain real backend operations. Endpoints 5, 7–14 and 22 return
-501 in normal mode; run/case/agent trajectories also return 501. Future descriptions below
+Implemented: endpoints 1, 2, 3, 5, 6, 10, 14, 15, 16, 17 and **session scope only** of endpoint 4.
+Endpoint 13 supports `actions`, `blocked`, `redacted`, `input_tokens` and `output_tokens`;
+its other metrics return 501. Configuration endpoints 18–21 remain real backend operations.
+Endpoints 7–9, 11–12 and 22 return 501 in normal mode; run/case/agent trajectories also return 501. Future descriptions below
 remain target contracts, not claims of implemented aggregation. See §11 for current limits and demo.
 
 ## 4. Endpoints
@@ -265,7 +271,11 @@ A flat, filterable action list for tables and drill-down.
 | `name` | string | Tool name, model ID or egress host |
 | `side_effects` | CSV of `read`, `write`, `irreversible` | Tool steps only |
 | `include_intents` | bool, default `false` | Include `PENDING` intent records |
-| `since`, `until`, `limit`, `cursor` | | Sorted by `ts` ascending, then insertion order |
+| `since`, `until`, `limit`, `cursor` | | Sorted by `ts` ascending, then store identity and insertion order |
+
+`statuses=pending` is accepted by this list (not trajectories) and only returns records when
+`include_intents=true`. Cursor keys include the store identity so tied timestamps across stores
+remain stable. Cursors are bound to all filters, including `include_intents`.
 
 Response: `Page<ActionSummary>`.
 
@@ -347,6 +357,21 @@ Response: `SecurityOverview` (§5.10).
 At most 1,000 points are returned. A wider window returns `400 bad_request`. Buckets with no data
 are returned with `value: 0`, or with `null` for the percentile metric, so the chart has no gaps.
 
+**Persisted support:** only `actions`, `blocked`, `redacted`, `input_tokens` and `output_tokens`
+are implemented. `detections`, `cost_usd` and `interception_overhead_ms_p95` return 501 in normal
+mode. Buckets are UTC, anchored at `since`, and include a final partial bucket; the 1,000-point
+limit uses ceiling division. Action counts exclude durable intents and session/approval/control
+bookkeeping. Block/redact counts use the final gateway decision, including output-blocked calls
+that consumed resources. Token charts use resolved dispatched model usage, share the session-usage
+eligibility rules and label tokens as estimates. Unresolved intents are reserved capacity, not
+completed token usage.
+
+Token responses add `source: "estimated"`, `complete`, `legacy_calls`, `uncertain_calls` and
+`pending_calls`. Missing recorded measurements produce a null bucket value rather than invented
+zero consumption; `complete` is false for unknown measurements, ambiguous dispatches or unresolved
+intents within the window. A pending intent is counted at its intent timestamp; resolved usage
+is attributed to the result timestamp, even if its intent preceded `since`.
+
 Response: `TimeSeries`.
 
 ### 4.14 `GET /interventions`
@@ -363,6 +388,12 @@ whether Layer 1 applied them.
 | `since`, `until`, `limit`, `cursor` | |
 
 Response: `Page<Intervention>`.
+
+The persisted list captures one current time per request when calculating `active`, and returns
+only sanitized reason codes. Cursor pagination is bound to all filters, including `active`.
+Ordering is ascending timestamp, store identity, then insertion order (signal ID is the final
+tie-breaker). As TTL expires, an `active`-filtered cursor whose anchor no longer matches returns
+400 `invalid_cursor` rather than silently restarting pagination.
 
 ### 4.15 `GET /sessions/{session_id}/verification`
 
@@ -726,6 +757,10 @@ fields scope it, rank it, and link it to evidence.
 
 ### 5.8 `SessionUsage`
 
+The JSON below illustrates the target shape. Current persisted responses include additional
+accounting metadata and return unavailable financial/live-ledger values as null, as described
+after the example.
+
 ```json
 {
   "session_id": "sess_onb_APP0007",
@@ -756,6 +791,35 @@ fields scope it, rank it, and link it to evidence.
 - `reserved` is the sum of `reserved_usage` on intents that have no result yet.
 - `remaining` is `limit − used − reserved`, never below 0.
 - `budget_blocks` counts actions that were blocked with a budget reason code.
+
+**Persisted accounting and limitations:**
+
+- Model intent/result pairs are correlated by session and action ID and count as one logical
+  call. `model_calls.total` includes unresolved dispatches and rejected proposals; `pending`,
+  `pending_approval`, `dispatched` and `incomplete` are additive counters. `blocked` counts final
+  decisions and can overlap `failed` when output filtering denied an already dispatched call.
+- `usage` includes only resolved dispatched model calls. Rejected proposals can contain nonzero
+  proposed token bounds; those are never counted as consumption. Output-blocked, failed and
+  cancelled dispatches remain charged. Unknown measurements are null, not zero.
+- Token budget `used` sums the durable reservations of resolved model dispatches; `reserved`
+  sums unresolved intents. These conservative charges can differ from the estimated token totals
+  in `usage`. Neither failures nor output denial refund reservations.
+- Every budget adds `accounting_source` and `complete`. Legacy results without intents are
+  disclosed as reconstructed charges; missing reservations or ambiguous records make accounting
+  incomplete. Incomplete budgets have null `remaining` and `utilisation`; `exceeded` can be null
+  unless recorded charges already prove an overrun. Contradictory correlations fail closed with
+  503 rather than double-charge or invent a dispatch.
+- Tool budgets report reconstructable admitted dispatches and unresolved intents, **not** the
+  exact live Policy/BudgetGuard ledger. Late pre-dispatch vetoes can consume ledger capacity without
+  a dispatch. Tool `complete` is always false and remaining capacity/utilisation are null.
+- Financial pricing is unavailable: `usage.cost_usd`, cost budget usage/reservations and unknown
+  cost-budget status are null; `usage.cost_source` is `"unavailable"`. Stored zero values do not
+  establish that inference was free.
+- `usage` adds `complete`, `legacy_calls`, `uncertain_calls` and `pending_calls`. Pending dispatches
+  make completed-usage reporting incomplete but may still have fully known reserved token capacity.
+- Latency percentiles use nearest rank, return null for empty samples, and distinguish backend
+  samples from interception overhead. `latency_ms` adds `percentile_method`, `backend_samples` and
+  `complete`. Limits come from the pinned contract, never the currently selected configuration.
 
 ### 5.9 `UsageReport` and `UsageBucket`
 
@@ -1164,6 +1228,12 @@ Pagination loads a bounded snapshot and uses scope/filter-bound keyset cursors. 
 or a removed anchor return 400 `invalid_cursor`. A response/export for one session is consistent
 inside its read transaction. Cross-session reads are per-file consistent, not globally atomic.
 
+The row/byte read budgets are request-local and shared across tables and stores in cross-store
+list/timeseries scans; concurrent requests do not share mutable accounting. Session-scoped new
+reads open only the matching store. Relevant expired scopes return 410, conservatively even when
+pruning removed timestamps needed to establish time-window irrelevance. Unrelated agent/run scopes
+are skipped where their pinned identity establishes that they cannot match.
+
 ### Projection limitations
 
 - No raw prompts, completions, tool results, finding summaries, auditor reasons or Task Contract
@@ -1182,8 +1252,9 @@ inside its read transaction. Cross-session reads are per-file consistent, not gl
   verification timestamp falls back to a recorded session-end time or null; the fallback is not
   claimed to be the exact verifier timestamp.
 - Session-summary usage includes executed/failed mediated model events, excludes intents and is
-  labeled estimated. It does not cover unmediated OpenCode provider calls. Dedicated usage and
-  aggregated metrics endpoints still return 501.
+  labeled estimated. It does not cover unmediated OpenCode provider calls. Dedicated session usage
+  and count/token timeseries are implemented with dispatch-aware accounting; aggregate usage,
+  security and performance metrics remain deferred.
 - Export includes session detail, action/intent records, gateway/finding detections, interventions
   and stored verification. The NDJSON footer hashes all preceding bytes. The persisted store
   quotas are checked before sending any data; overflow returns 413.
@@ -1205,8 +1276,13 @@ curl "$BASE/system/stats"
 curl "$BASE/sessions"
 # substitute the IDs printed by the demo:
 curl "$BASE/trajectories/session/BLOCKED_SESSION_ID"
+curl "$BASE/actions?session_id=BLOCKED_SESSION_ID&decisions=BLOCK"
+curl "$BASE/interventions?session_id=BLOCKED_SESSION_ID"
 # substitute a blocked event_id from that timeline:
 curl "$BASE/actions/BLOCKED_EVENT_ID"
+curl "$BASE/sessions/ALLOWED_SESSION_ID/usage"
+# use the recorded session timestamps for the desired chart window:
+curl "$BASE/metrics/timeseries?metric=blocked&bucket=1m&session_id=BLOCKED_SESSION_ID&since=2026-10-04T00:00:00Z&until=2026-10-04T01:00:00Z"
 curl "$BASE/sessions/ALLOWED_SESSION_ID/verification"
 curl -OJ "$BASE/export/sessions/ALLOWED_SESSION_ID"
 ```

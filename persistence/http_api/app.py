@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import asyncio
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -25,6 +26,7 @@ from persistence.query import ReadQueries, QueryError
 
 Kind = Literal["prompt", "tool_use", "egress", "session", "approval", "control"]
 Status = Literal["completed", "blocked", "redacted", "pending_approval", "failed"]
+ActionListStatus = Literal["completed", "blocked", "redacted", "pending_approval", "failed", "pending"]
 Decision = Literal["ALLOW", "BLOCK", "REDACT", "REQUIRE_APPROVAL", "ALERT"]
 Severity = Literal["info", "low", "medium", "high", "critical"]
 Source = Literal["gateway", "finding", "alert", "verification"]
@@ -96,7 +98,7 @@ def query_time(value: datetime | None) -> str | None:
 
 
 def window(since: datetime | None, until: datetime | None,
-           default: timedelta | None = None) -> tuple[str | None, str | None]:
+           default: timedelta | None = None, *, precise: bool = False) -> tuple[str | None, str | None]:
     for name, value in (("since", since), ("until", until)):
         if value is not None and value.tzinfo is None:
             raise ApiError(400, "bad_request", parameter=name, reason="timezone required")
@@ -105,7 +107,10 @@ def window(since: datetime | None, until: datetime | None,
     if default is not None:
         until = until or datetime.now(timezone.utc)
         since = since or until - default
-    return iso(since), iso(until)
+    if since and until and since >= until:
+        raise ApiError(400, "bad_request", parameter="since")
+    formatter = query_time if precise else iso
+    return formatter(since), formatter(until)
 
 
 # The stub cursor encodes a list offset. The real implementation encodes the keyset sort key.
@@ -177,7 +182,9 @@ async def get_session(session_id: Id, request: Request):
 
 
 @router.get("/sessions/{session_id}/usage")
-async def get_session_usage(session_id: Id):
+async def get_session_usage(session_id: Id, request: Request):
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.session_usage, session_id)
     return ex.session_usage(session_id)
 
 
@@ -229,16 +236,26 @@ async def get_trajectory(scope: Scope, scope_id: Id, request: Request, kinds: Cs
 
 
 @router.get("/actions")
-async def list_actions(session_id: OptId = None, run_id: OptId = None, case_id: OptId = None,
+async def list_actions(request: Request, session_id: OptId = None, run_id: OptId = None, case_id: OptId = None,
                        agent_id: OptId = None, action_id: OptId = None, name: OptId = None,
                        kinds: Csv = None, statuses: Csv = None, decisions: Csv = None, side_effects: Csv = None,
                        include_intents: bool = False, since: Since = None, until: Until = None,
                        limit: Limit = 100, cursor: Cursor = None):
-    filters = (("kind", csv("kinds", kinds, Kind)), ("status", csv("statuses", statuses, Status)),
-               ("decision", csv("decisions", decisions, Decision)),
-               ("side_effect", csv("side_effects", side_effects, SideEffect)),
+    kind_list = csv("kinds", kinds, Kind)
+    status_list = csv("statuses", statuses, ActionListStatus)
+    decision_list = csv("decisions", decisions, Decision)
+    side_effect_list = csv("side_effects", side_effects, SideEffect)
+    filters = (("kind", kind_list), ("status", status_list),
+               ("decision", decision_list), ("side_effect", side_effect_list),
                ("name", name), ("action_id", action_id))
     window(since, until)
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(
+            request.app.state.read_queries.actions, limit=limit, cursor=cursor,
+            include_intents=include_intents, session_id=session_id, run_id=run_id,
+            case_id=case_id, agent_id=agent_id, action_id=action_id, name=name,
+            kinds=kind_list, statuses=status_list, decisions=decision_list,
+            side_effects=side_effect_list, since=query_time(since), until=query_time(until))
     items = ex.steps(session_id or ex.SESSION)
     for key, allowed in filters:
         items = keep(items, key, allowed)
@@ -305,13 +322,17 @@ async def performance_metrics(agent_id: OptId = None, session_id: OptId = None,
 
 
 @router.get("/metrics/timeseries")
-async def timeseries(metric: Metric, bucket: Bucket = "5m", agent_id: OptId = None, session_id: OptId = None,
-                     since: Since = None, until: Until = None):
-    lo, hi = window(since, until, timedelta(hours=1))
+async def timeseries(request: Request, metric: Metric, bucket: Bucket = "5m", agent_id: OptId = None, session_id: OptId = None,
+                      since: Since = None, until: Until = None):
+    lo, hi = window(since, until, timedelta(hours=1), precise=True)
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.timeseries,
+                                       metric=metric, bucket=bucket, since=lo, until=hi,
+                                       session_id=session_id, agent_id=agent_id)
     start = datetime.fromisoformat(lo.replace("Z", "+00:00"))
     end = datetime.fromisoformat(hi.replace("Z", "+00:00"))
     step = BUCKET_SECONDS[bucket]
-    count = int((end - start).total_seconds() // step) or 1
+    count = math.ceil((end - start).total_seconds() / step)
     if count > 1000:
         raise ApiError(400, "bad_request", parameter="bucket", reason="more than 1000 points")
     points = []
@@ -326,11 +347,17 @@ async def timeseries(metric: Metric, bucket: Bucket = "5m", agent_id: OptId = No
 
 
 @router.get("/interventions")
-async def list_interventions(session_id: OptId = None, source_plugin: OptId = None, actions: Csv = None,
+async def list_interventions(request: Request, session_id: OptId = None, source_plugin: OptId = None, actions: Csv = None,
                              applied: bool | None = None, active: bool | None = None,
                              since: Since = None, until: Until = None, limit: Limit = 100, cursor: Cursor = None):
     action_list = csv("actions", actions, Adjustment)
     window(since, until)
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.interventions,
+                                       limit=limit, cursor=cursor, session_id=session_id,
+                                       source_plugin=source_plugin, actions=action_list,
+                                       applied=applied, active=active,
+                                       since=query_time(since), until=query_time(until))
     items = keep([ex.intervention(session_id or ex.SESSION)], "action", action_list)
     if applied is not None:
         items = [i for i in items if i["applied"] is applied]
@@ -397,11 +424,9 @@ def create_app(cors_origins: frozenset[str] = frozenset(), docs: bool = True,
                 request.method == "PUT" and management_put(request.url.path)):
             return error_response(405, "method_not_allowed")
         path = request.url.path
-        deferred = {"/api/v1/actions", "/api/v1/detections", "/api/v1/catalog/detections",
-                    "/api/v1/metrics/usage", "/api/v1/metrics/security", "/api/v1/metrics/performance",
-                    "/api/v1/metrics/timeseries", "/api/v1/interventions"}
-        if not example_mode and (path in deferred or path.startswith("/api/v1/detections/")
-                                 or re.fullmatch(r"/api/v1/sessions/[^/]+/usage", path)):
+        deferred = {"/api/v1/detections", "/api/v1/catalog/detections",
+                     "/api/v1/metrics/usage", "/api/v1/metrics/security", "/api/v1/metrics/performance"}
+        if not example_mode and (path in deferred or path.startswith("/api/v1/detections/")):
             return error_response(501, "not_implemented")
         response = await call_next(request)
         response.headers.setdefault("Cache-Control", "no-store")
