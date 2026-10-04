@@ -1,6 +1,6 @@
 {
   "name": "lenient",
-  "description": "Fewest interruptions: large budgets, secrets redacted, no human approval.",
+  "description": "Fewest interruptions: large budgets; scanners and the velocity guard may still request approval.",
   "allowed_tools": [
     "read_application",
     "read_documents",
@@ -88,8 +88,12 @@
       }
     }
   ],
-  "consumer": {
+  "intercept": {
     "trajectory_risk": {},
+    "velocity_guard": {
+      "window_s": 10,
+      "max_calls": 8
+    },
     "feedback": {
       "enabled": true,
       "allow_agent_scope": false,
@@ -100,14 +104,17 @@
           "ALERT",
           "REQUIRE_APPROVAL_FOR",
           "HALT_SESSION"
+        ],
+        "velocity-guard": [
+          "REQUIRE_APPROVAL_FOR"
         ]
       }
+    },
+    "semantic_guard": {
+      "block_threshold": 0.95,
+      "approve_threshold": 0.85,
+      "alert_threshold": 0.7,
+      "on_error": "BLOCK"
     }
-  },
-  "semantic_guard": {
-    "block_threshold": 0.95,
-    "approve_threshold": 0.85,
-    "alert_threshold": 0.7,
-    "on_error": "BLOCK"
   }
 }
