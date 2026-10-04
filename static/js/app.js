@@ -27,7 +27,35 @@ const Risk = {
   tools: { read_application: 1, read_documents: 1, extract_fields: 1, check_registry: 4, screen_sanctions: 4, compute_risk: 1,
     fetch_url: 4, request_more_docs: 2, escalate_edd: 2, reject_application: 4, send_email: 6, load_risk_model: 7,
     create_client: 8, run_code: 9, delete_client: 10 },
+  sideEffect: { read: 1, write: 5, irreversible: 10 },  // consequence of a tool missing from `tools`
+  prerequisites: { create_client: ['screen_sanctions'] },
   levels: [['CRITICAL', 15], ['HIGH', 8], ['MEDIUM', 3], ['LOW', 0]],
+  // Signals of each real tool call, as RiskModel.assess derives them. steps: [{ name, side_effect, status,
+  // decision, executed, args }] in order; contract: { target_ids, allowed_tools, budget } from the read API.
+  // A signal that only raises later steps (untrusted content) is reported on the next step.
+  signalsFor(steps, contract = {}) {
+    const targets = contract.target_ids || [], allowed = contract.allowed_tools || [], cap = contract.budget?.tool_calls;
+    const calls = {}, done = new Set();
+    let later = [], budgetFlagged = false;
+    return steps.map((st, i) => {
+      const own = later; later = [];
+      own.push(...{ blocked: ['gateway_blocked'], redacted: ['gateway_redacted'], failed: ['tool_error'] }[st.status] || []);
+      if (st.decision === 'ALERT') own.push('gateway_alert');
+      if (allowed.length && !allowed.includes(st.name)) own.push('out_of_contract_tool');
+      if (targets.length && Object.values(st.args || {}).some(v => typeof v === 'string' && /^[A-Z]{3}-\d{4}$/.test(v) && !targets.includes(v)))
+        own.push('out_of_scope_target');
+      if (st.executed) {
+        const key = st.name + JSON.stringify(st.args || {}), n = calls[key] = (calls[key] || 0) + 1;
+        if (n > 1 && st.side_effect !== 'read') own.push('repeated_side_effect');
+        else if (n >= 3) own.push('repeated_read');
+        if ((this.prerequisites[st.name] || []).some(p => !done.has(p))) own.push('missing_prerequisite');
+        done.add(st.name);
+        if (st.name === 'fetch_url') later.push('untrusted_external_content');
+      }
+      if (cap && !budgetFlagged && i + 1 >= .8 * cap) { own.push('budget_pressure'); budgetFlagged = true; }
+      return own;
+    });
+  },
   // noisy-OR: P = 1 - (1 - p0) * prod(1 - w_k) over every signal seen so far in the session
   probability(signals) { return 1 - (1 - this.base) * signals.reduce((m, s) => m * (1 - (this.weights[s] ?? 0)), 1); },
   level(loss) { return this.levels.find(([, t]) => loss >= t)[0]; },

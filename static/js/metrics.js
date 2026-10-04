@@ -229,5 +229,6 @@
   // A detail view is left as is when new events arrive; a list refreshes
   App.on('event', () => { if (!path[1]) show(true); });
   App.on('config', () => show(false));
+  App.on('sessions', () => show(false));  // the risk map loaded agent sessions from the read API
   App.on('tab', (t, rest) => { if (t === 'metrics') { path = rest; show(false); scrollTo(0, 0); } });
 })();
