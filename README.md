@@ -1,6 +1,8 @@
-# AI Control Layer
+# Sentinel Interlock - AI Control Layer
 
-A policy-driven runtime control and verification layer for autonomous AI agents.
+Built by team **HardCounter** at HackYeah 2026 (Goldman Sachs challenge: AI Control Layer).
+
+Sentinel Interlock (SI) is a policy-driven runtime control and verification layer for autonomous AI agents. It works like the interlock on industrial machinery: nothing moves until the check passes. Every tool call, API request or model call an agent attempts is intercepted and checked against a central, live-editable policy, then allowed, redacted, held for a human, or blocked. The check runs outside the model, so a prompt injection cannot switch it off, and every decision is logged with its reason.
 
 The system is intended to sit between agents and LLMs, MCP servers, APIs, tools, and other agents. It combines deterministic interaction enforcement, task-level trajectory supervision, and independent verification of the resulting external state under a shared Task Contract and centralized policy.
 
@@ -76,7 +78,7 @@ The interface and its three implementations are in `tracing/`.
 - [Technical challenge and criteria](docs/goldman/GoldmanSachsCriteria.md)
 - [Competition rules](docs/goldman/GoldmanSachsRules.md)
 - [OpenCode agents, NVIDIA setup, and review commands](.opencode/README.md)
-- [Shared engineering instructions](AGENTS.md)
+- [Shared engineering instructions](docs/AGENTS.md)
 
 The Rules and Criteria disagree on self-testing and scalability scoring weights. Preserve both sources and confirm the applicable weights with the organizer.
 

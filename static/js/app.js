@@ -122,7 +122,6 @@ function route() {
   const tab = TABS.includes(first) ? first : 'metrics';
   $$('[data-view]').forEach(s => s.hidden = s.id !== 'v-' + tab);
   $$('.tabs a').forEach(a => a.hash === '#' + tab ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
-  document.title = `${$('#v-' + tab + ' h1').textContent} · AI Control Layer`;
   App.emit('tab', tab, rest.map(decodeURIComponent));
   if (App.config) App.syncActive().catch(() => {});
 }
