@@ -309,3 +309,48 @@ async def test_backup_and_restore_with_epoch_rotation(tmp_path: Path):
 
     await store.close()
     await restored_store.close()
+
+
+@async_test
+async def test_maintain_prunes_with_audit_run_indices(tmp_path: Path):
+    db_path = tmp_path / "maintain_idx.db"
+    settings = PersistenceSettings(terminal_retention_seconds=3600.0)
+    store = EventStore(db_path, settings=settings)
+    await store.initialize()
+    writer = BoundAuditWriter(store)
+
+    binding = RunBinding(
+        run_id="run-maint-idx",
+        contract_id="contract-1",
+        session_id="session-1",
+        principal_id="principal-1",
+        agent_id="agent-1",
+        policy_version="policy-v1",
+        policy_hash="a" * 64,
+        feed_version="feed-v1",
+    )
+    await writer.bind_run(binding)
+    now = datetime(2026, 10, 3, 12, 0, 0, tzinfo=timezone.utc)
+    old_ts = (now - timedelta(hours=2)).isoformat()
+
+    ev = sample_envelope("ev-maint-1", "run-maint-idx", old_ts)
+    await store.append_with_outbox([ev])
+    with store._conn:
+        store._conn.execute(
+            "INSERT INTO audit_run_indices (run_id, action_index, event_id) VALUES ('run-maint-idx', 0, 'ev-maint-1')"
+        )
+    # Drain outbox
+    await store.claim_delivery(["default"])
+    await store.finish_delivery(ev, "default", "lease-1", failed=False)
+
+    await writer.seal_run("run-maint-idx", verification_status="VERIFIED_SUCCESS")
+
+    report = await maintain(store, now=now)
+    assert report.events_pruned == 1
+    assert await store.get_event("ev-maint-1") is None
+    with sqlite3.connect(db_path) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM audit_run_indices WHERE event_id = 'ev-maint-1'"
+        ).fetchone()[0]
+        assert count == 0
+    await store.close()

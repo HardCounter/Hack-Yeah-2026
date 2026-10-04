@@ -465,3 +465,104 @@ async def test_unknown_schema_and_false_string_are_not_valid_evidence(tmp_path):
         with pytest.raises(ValueError):
             InterceptionMetadata.from_dict({"verdict": "ALLOWED", "fault_injected": "false"})
         assert (await engine.get_stats())["total_events"] == 0
+
+
+@async_test
+async def test_corrupted_outbox_payload_is_routed_to_dlq_without_crashing_worker(tmp_path):
+    store = EventStore(tmp_path / "corrupt.db")
+    await store.initialize()
+    ev = event("ev-corrupt")
+    await store.append_with_outbox([ev])
+    with store._conn:
+        store._conn.execute("INSERT OR REPLACE INTO consumers (name, status) VALUES ('test-cons', 'ACTIVE')")
+        store._conn.execute("INSERT INTO outbox (event_id, consumer_name) VALUES ('ev-corrupt', 'test-cons')")
+        # Corrupt the payload_json in events table
+        store._conn.execute("UPDATE events SET payload_json = 'INVALID_JSON{{' WHERE event_id = 'ev-corrupt'")
+
+    # claim_delivery should cleanly handle corrupted json and unblock outbox without raising
+    claimed = await store.claim_delivery(["test-cons"])
+    assert claimed is None
+    # Outbox job should be removed
+    pending = store._conn.execute("SELECT COUNT(*) FROM outbox WHERE event_id = 'ev-corrupt'").fetchone()[0]
+    assert pending == 0
+    # DLQ should contain corrupted payload record with preserved event_id
+    dlqs = await store.get_dlq_records()
+    matched = [d for d in dlqs if d.error_message == "CONSUMER_DELIVERY_FAILED" and d.consumer_name == "test-cons"]
+    assert len(matched) == 1
+    assert matched[0].event.get("event_id") == "ev-corrupt"
+    row = store._conn.execute("SELECT event_id FROM dead_letter_queue WHERE consumer_name = 'test-cons'").fetchone()
+    assert row[0] == "ev-corrupt"
+    await store.close()
+
+
+@async_test
+async def test_dead_letter_failure_preserves_outbox_item_and_rolls_back(tmp_path, monkeypatch):
+    import sqlite3
+    store = EventStore(tmp_path / "dlq_fail.db")
+    await store.initialize()
+    ev = event("ev-dlq-fail")
+    await store.append_with_outbox([ev])
+    with store._conn:
+        store._conn.execute("INSERT OR REPLACE INTO consumers (name, status) VALUES ('c-fail', 'ACTIVE')")
+        store._conn.execute("INSERT INTO outbox (event_id, consumer_name) VALUES ('ev-dlq-fail', 'c-fail')")
+        store._conn.execute("UPDATE events SET payload_json = 'INVALID_JSON{{' WHERE event_id = 'ev-dlq-fail'")
+
+    # Simulate DLQ insertion failure (e.g. database disk error or constraint failure)
+    def fail_insert(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error on dead_letter_queue")
+
+    monkeypatch.setattr(store, "_insert_dead_letter", fail_insert)
+
+    with pytest.raises(sqlite3.OperationalError):
+        await store.claim_delivery(["c-fail"])
+
+    # Outbox row must be preserved because transaction rolled back
+    pending = store._conn.execute("SELECT COUNT(*) FROM outbox WHERE event_id = 'ev-dlq-fail'").fetchone()[0]
+    assert pending == 1
+    await store.close()
+
+
+
+@async_test
+async def test_prune_before_cleans_referencing_consumer_completions(tmp_path):
+    store = EventStore(tmp_path / "prune.db")
+    await store.initialize()
+    ev = event("ev-prune")
+    await store.append_with_outbox([ev])
+    with store._conn:
+        store._conn.execute("INSERT OR REPLACE INTO consumers (name, status) VALUES ('c1', 'ACTIVE')")
+        store._conn.execute("INSERT INTO consumer_completions (consumer_name, event_id, completed_at) VALUES ('c1', 'ev-prune', '2020-01-01T00:00:00Z')")
+        # Ensure outbox is empty for this event so it can be pruned
+        store._conn.execute("DELETE FROM outbox WHERE event_id = 'ev-prune'")
+        store._conn.execute("UPDATE events SET ts = '2020-01-01T00:00:00Z' WHERE event_id = 'ev-prune'")
+
+    deleted = await store.prune_before("2021-01-01T00:00:00Z")
+    assert deleted == 1
+    # Check consumer_completions was also pruned
+    remaining = store._conn.execute("SELECT COUNT(*) FROM consumer_completions WHERE event_id = 'ev-prune'").fetchone()[0]
+    assert remaining == 0
+    await store.close()
+
+
+@async_test
+async def test_prune_before_cleans_referencing_audit_run_indices(tmp_path):
+    store = EventStore(tmp_path / "prune_idx.db")
+    await store.initialize()
+    ev = event("ev-prune-idx")
+    await store.append_with_outbox([ev])
+    with store._conn:
+        store._conn.execute(
+            "INSERT INTO audit_run_indices (run_id, action_index, event_id) VALUES ('run-1', 0, 'ev-prune-idx')"
+        )
+        store._conn.execute("DELETE FROM outbox WHERE event_id = 'ev-prune-idx'")
+        store._conn.execute("UPDATE events SET ts = '2020-01-01T00:00:00Z' WHERE event_id = 'ev-prune-idx'")
+
+    deleted = await store.prune_before("2021-01-01T00:00:00Z")
+    assert deleted == 1
+    remaining = store._conn.execute(
+        "SELECT COUNT(*) FROM audit_run_indices WHERE event_id = 'ev-prune-idx'"
+    ).fetchone()[0]
+    assert remaining == 0
+    assert await store.get_event("ev-prune-idx") is None
+    await store.close()
+

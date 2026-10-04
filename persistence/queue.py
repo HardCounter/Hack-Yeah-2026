@@ -154,7 +154,7 @@ class ConsumerDispatcher:
                 if filter_fn is not None and not filter_fn(snapshot):
                     continue
                 try:
-                    queue.put_nowait(sanitize_event(event))
+                    queue.put_nowait(snapshot)
                 except asyncio.QueueFull:
                     self.dropped_deliveries += 1
                     logger.warning("Live feed capacity exhausted; replay from EventStore")

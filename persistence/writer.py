@@ -155,8 +155,8 @@ class BoundAuditWriter:
             row = self.store._event_row(envelope)
             self.store._insert_event_row(row)
 
-            # Register outbox jobs for all consumers
-            consumers = [r[0] for r in conn.execute("SELECT name FROM consumers")]
+            # Register outbox jobs for active consumers
+            consumers = [r[0] for r in conn.execute("SELECT name FROM consumers WHERE status != 'RETIRED'")]
             pending = conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0]
             if pending + len(consumers) > self.store.outbox_maxsize:
                 from persistence.store import AuditBackpressureError

@@ -51,6 +51,35 @@ class AuditorTests(unittest.IsolatedAsyncioTestCase):
         specs = [{"id": "scanner", "type": "pattern_scanner", "config": {"patterns": ["ignore previous instructions"], "action": "BLOCK"}}]
         self.assertEqual((await Pipeline(specs).evaluate(a))[2], "BLOCK")
 
+    async def test_unicode_casefold_length_change_does_not_bypass_scanner(self):
+        # Casefold expansion: Straße folded is "strasse", matching pattern "STRASSE"
+        a = action()
+        a["arguments"]["text"] = "Gehe zur Straße jetzt"
+        specs = [{"id": "scanner", "type": "pattern_scanner", "config": {"patterns": ["STRASSE"], "action": "BLOCK"}}]
+        checked, _, verdict, _ = await Pipeline(specs).evaluate(a)
+        self.assertEqual(verdict, "BLOCK")
+
+        # Test redaction accurately replaces the expanded span
+        specs_redact = [{"id": "redactor", "type": "pattern_scanner", "config": {"patterns": ["STRASSE"], "action": "REDACT"}}]
+        checked_redact, _, verdict_redact, changed = await Pipeline(specs_redact).evaluate(a)
+        self.assertTrue(changed)
+        self.assertEqual(checked_redact["arguments"]["text"], "Gehe zur [REDACTED] jetzt")
+
+    async def test_unicode_casefold_overlapping_spans_coalesced(self):
+        # "ß" folds to "ss", pattern "s" matches twice at indices 0 and 1, mapping to orig (0, 1) twice
+        a = action()
+        a["arguments"]["text"] = "ß"
+        specs = [{"id": "redactor", "type": "pattern_scanner", "config": {"patterns": ["s"], "action": "REDACT"}}]
+        checked, _, verdict, changed = await Pipeline(specs).evaluate(a)
+        self.assertTrue(changed)
+        self.assertEqual(checked["arguments"]["text"], "[REDACTED]")
+
+        # "Straße" with pattern "s" should redact "S" once and "ß" once
+        a["arguments"]["text"] = "Straße"
+        checked2, _, _, changed2 = await Pipeline(specs).evaluate(a)
+        self.assertTrue(changed2)
+        self.assertEqual(checked2["arguments"]["text"], "[REDACTED]tra[REDACTED]e")
+
     async def test_classified_scanner_redacts_pesel_and_keeps_the_original(self):
         a = action()
         a["arguments"]["text"] = "PESEL 44051401359"
