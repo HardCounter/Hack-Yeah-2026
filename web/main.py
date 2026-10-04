@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 
-from intercept.auditors import Pipeline
+from intercept.policy.auditors import Pipeline
 from web import sessions
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from intercept.auditors import Pipeline
+from intercept.policy.auditors import Pipeline
 from web.main import app
 
 client = TestClient(app)

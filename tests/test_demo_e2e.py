@@ -469,8 +469,8 @@ def test_cw_seeded_postconditions_fail_without_the_gateway(dataset, tmp_path):
 
 
 def test_gw_01_missing_and_unknown_credentials_are_rejected(dataset, tmp_path):
-    from intercept.local import LocalService
-    from intercept.server import Gateway
+    from intercept.service.local import LocalService
+    from intercept.service.server import Gateway
 
     async def scenario():
         service = LocalService(bank_path=dataset, runs_dir=tmp_path / "runs", app_id="APP-0001", contract_id="contract_demo_http")

@@ -105,7 +105,7 @@ It shows the agent's replies and the gateway's decision for every tool call. Sce
 suite live elsewhere; this page has neither.
 
 Opening the page starts a **session** (`web/sessions.py`): one long-lived OpenCode server
-(`opencode serve`) plus one control gateway (`intercept.local --catalog-all`). Messages are sent to
+(`opencode serve`) plus one control gateway (`intercept.service.local --catalog-all`). Messages are sent to
 the running server with `opencode run --server`, so only the session start pays the start-up cost.
 Measured on the instance with `gpt-4.1-mini`: about 1-3 s to start a session, then about 2-4 s per message.
 
