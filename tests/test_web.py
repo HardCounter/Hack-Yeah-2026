@@ -94,4 +94,3 @@ def test_opencode_wrapper_page_is_served_under_its_own_path():
     assert response.status_code == 200
     assert "opencode-wrapper" in response.text
     assert client.get("/opencode-wrapper", follow_redirects=False).status_code in (301, 307, 308)
->>>>>>> 4a14036 (intercept: Implement configs)
