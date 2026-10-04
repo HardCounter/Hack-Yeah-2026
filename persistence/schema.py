@@ -206,6 +206,22 @@ def migrate_audit_schema(conn: sqlite3.Connection, settings: PersistenceSettings
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_case_ts ON alerts(case_id, ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(ts)")
 
+        # Control-plane decision trace: one row per plugin decision point or failed plugin run.
+        # The payload is the privacy projection from persistence.privacy.decision_projection.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS plugin_decisions (
+                decision_id TEXT PRIMARY KEY,
+                ts TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                plugin TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                trigger_event_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_decisions_session_ts ON plugin_decisions(session_id, ts)")
+
         # Audit actions
         conn.execute(
             """

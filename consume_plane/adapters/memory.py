@@ -7,7 +7,7 @@ from typing import Iterable, Sequence
 
 from contracts.action import ActionKind, AgentAction, ContentRef
 from contracts.task_contract import TaskContract
-from ..model.outputs import Finding, PolicyAdjustmentSignal
+from ..model.outputs import Finding, PluginDecision, PolicyAdjustmentSignal
 from ..ports.event_source import Delivery
 
 
@@ -120,12 +120,17 @@ class MemoryTrajectoryReader:
 class MemorySink:
     def __init__(self):
         self.findings: dict[str, Finding] = {}   # by finding_id, so rewrites dedupe
+        self.decisions: dict[str, PluginDecision] = {}  # by decision_id; first write wins, like the store
         self.writes = 0
 
     async def write(self, findings: Sequence[Finding]) -> None:
         self.writes += 1
         for f in findings:
             self.findings[f.finding_id] = f
+
+    async def write_decisions(self, decisions: Sequence[PluginDecision]) -> None:
+        for d in decisions:
+            self.decisions.setdefault(d.decision_id, d)
 
 
 class MemoryFeedbackChannel:

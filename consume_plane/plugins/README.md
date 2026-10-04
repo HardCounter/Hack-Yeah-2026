@@ -37,7 +37,11 @@ class RepeatedRejects:
     async def handle(self, action, ctx):
         rejects = (await ctx.trajectory()).count(
             lambda a: a.kind == "tool_use" and a.payload.tool == "reject_application" and a.executed)
-        if rejects == self.limit + 1:  # report once, when the limit is first crossed
+        crossed = rejects == self.limit + 1  # report once, when the limit is first crossed
+        ctx.record_decision("LIMIT_CROSSED" if crossed else "OVER_LIMIT" if rejects > self.limit else "WITHIN_LIMIT",
+                            f"{rejects} rejects in this session (limit {self.limit})",
+                            rejects=rejects, limit=self.limit)
+        if crossed:
             ctx.emit_finding(FindingDraft(
                 rule_id="workflow.repeated_rejects", severity="medium",
                 summary=f"{rejects} rejects in one session (limit {self.limit})",
@@ -90,6 +94,7 @@ A load error (bad shape, duplicate name, failing `setup`) stops startup when
 | `ctx.emit_finding(FindingDraft(...))` | severity `low/medium/high/critical` |
 | `ctx.emit_metric(name, value, **labels)` | exposed as telemetry, labelled with the plugin name |
 | `ctx.propose_adjustment(AdjustmentProposal(...))` | `REQUIRE_APPROVAL_FOR`, `BLOCK_TOOLS`, `HALT_SESSION`, … |
+| `ctx.record_decision(decision, reasoning, **factors)` | trace a decision point (see §6, rule 6) |
 | `await ctx.run_blocking(fn, *args)` | run blocking I/O (SQLite, files) off the event loop |
 | `ctx.config`, `ctx.log` | config block and a per-plugin logger |
 
@@ -105,6 +110,11 @@ Adjustments are **denied by default**. A plugin may only send the actions listed
 3. **Deterministic plugins are pure** in (action, trajectory, contract, config): no network, no models.
 4. **Semantic plugins** must set `confidence` in `[0, 1]` on findings; `critical` is capped to `high`.
 5. **No PII or argument values in outputs.** Reference `event_id`s, tool names and fixed codes.
+6. **Record every decision point** with `ctx.record_decision("UPPER_SNAKE_CODE", "one brief sentence", **factors)`,
+   including "nothing to do" and "skipped" outcomes. Build `reasoning` from codes, tool names and numbers
+   only; `factors` are numbers, booleans, codes or small maps/lists of them. The manager persists it with
+   the findings and adjustments of the same run, and records failed runs itself. The trace is served by
+   `GET /api/v1/sessions/{id}/decisions` (`docs/rest.md` §4.21).
 
 ## 7. Test it
 
@@ -131,5 +141,6 @@ case, plus any feedback proposal (`h.channel.signals`).
 - [ ] `name`, `version`, `method`, `subscription`, `async handle(self, action, ctx)` defined.
 - [ ] Registered (drop-in `PLUGINS` list or `handler:` entry) and config documented in `consume_plane.yaml`.
 - [ ] Any adjustment actions added to `feedback.allowed_actions`.
-- [ ] Findings contain no PII or raw argument values.
+- [ ] Findings and recorded decisions contain no PII or raw argument values.
+- [ ] Every decision point calls `ctx.record_decision`.
 - [ ] Positive and negative tests pass under `scripts/test.sh consume`.

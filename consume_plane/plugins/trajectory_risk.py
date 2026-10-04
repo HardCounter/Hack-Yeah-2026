@@ -207,11 +207,22 @@ class TrajectoryRisk:
         ctx.emit_metric("trajectory_expected_loss", round(now.expected_loss, 4), **labels)
         ctx.emit_metric("trajectory_failure_probability", round(now.probability, 4), **labels)
 
-        if LEVELS.index(now.level) <= LEVELS.index(before.level) or now.level == "low":
-            return  # report only when the session enters a higher level
-
         top = sorted(now.steps, key=lambda s: s.risk, reverse=True)[:3]
         counts = Counter(s.name for s in now.signals)
+        raised = LEVELS.index(now.level) > LEVELS.index(before.level) and now.level != "low"
+        action_taken = {"high": "require approval", "critical": "halt session"}.get(now.level) if raised else None
+        ctx.record_decision(
+            "LEVEL_RAISED" if raised else "NO_CHANGE",
+            f"expected loss {now.expected_loss:.2f} -> level {now.level} (was {before.level}); "
+            f"P(failure) {now.probability:.2f}; "
+            + (f"top step {top[0].tool} risk {top[0].risk:.2f}" if top else "no executed steps")
+            + (f"; proposing {action_taken}" if action_taken else ""),
+            expected_loss=round(now.expected_loss, 4), failure_probability=round(now.probability, 4),
+            level=now.level, previous_level=before.level, signals=dict(counts), contract_found=contract is not None,
+        )
+        if not raised:
+            return  # report only when the session enters a higher level
+
         evidence = dict.fromkeys([s.event_id for s in now.signals] + [s.event_id for s in top])
         ctx.emit_finding(FindingDraft(
             rule_id=f"risk.trajectory_{now.level}",

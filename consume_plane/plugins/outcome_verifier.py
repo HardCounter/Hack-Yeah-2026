@@ -549,6 +549,18 @@ class OutcomeVerifier:
             details={"verification_status": result.verification_status,
                      "checks": [{"id": c.id, "status": c.status, "detail": c.detail} for c in result.checks]},
         ))
+        # Check details are fixed codes (never verifier prose), so they can explain the decision.
+        not_passed = [c for c in result.checks if c.status != "PASS"]
+        passed = len(result.checks) - len(not_passed)
+        ctx.record_decision(
+            result.verification_status,
+            f"{passed}/{len(result.checks)} checks passed"
+            + ("; " + ", ".join(f"{c.id} {c.status} ({c.detail})" for c in not_passed[:4]) if not_passed else "")
+            + (f"; +{len(not_passed) - 4} more" if len(not_passed) > 4 else ""),
+            checks_total=len(result.checks), checks_passed=passed,
+            failed=[c.id for c in not_passed if c.status == "FAIL"][:16],
+            incomplete=[c.id for c in not_passed if c.status == "INCOMPLETE"][:16],
+        )
 
     async def result(self, session_id: str) -> VerificationResult | None:
         """Fetch the durable, sanitized verification result for a session."""

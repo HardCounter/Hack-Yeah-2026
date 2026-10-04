@@ -23,12 +23,16 @@ class Context:
         self._contract = contract
         self.trace_ids = trace_ids
         self.findings = []
+        self.decisions = []
 
     async def contract(self):
         return self._contract
 
     def emit_finding(self, finding):
         self.findings.append(finding)
+
+    def record_decision(self, decision, reasoning="", **factors):
+        self.decisions.append((decision, reasoning, factors))
 
     async def trajectory(self):
         names = {"audit-read": "read_application", "audit-create": "create_client"}
@@ -178,6 +182,9 @@ def test_terminal_no_create_verifies_and_is_durably_readable(tmp_path, verifier_
     assert result.verification_status == "VERIFIED_SUCCESS"
     assert next(c for c in result.checks if c.id == "KYC-CLIENT-COUNT").status == "PASS"
     assert ctx.findings[0].details["verification_status"] == "VERIFIED_SUCCESS"
+    [(decision, reasoning, factors)] = ctx.decisions
+    assert decision == "VERIFIED_SUCCESS" and factors["checks_passed"] == factors["checks_total"]
+    assert reasoning == f"{factors['checks_total']}/{factors['checks_total']} checks passed"
 
 
 def test_approved_application_requires_exactly_one_client_and_create_trace(tmp_path, verifier_store):

@@ -7,7 +7,7 @@ from typing import Any, Sequence
 
 from contracts.task_contract import TaskContract
 from contracts.wire import DecodeError, decode_event
-from ..model.outputs import Finding
+from ..model.outputs import Finding, PluginDecision
 from .memory import MemoryEventSource, MemoryTrajectoryReader
 
 
@@ -56,3 +56,12 @@ class JsonlSink:
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, "a", encoding="utf-8") as out:
                 out.write(json.dumps(f.to_dict(), sort_keys=True) + "\n")
+
+    async def write_decisions(self, decisions: Sequence[PluginDecision]) -> None:
+        """Decision trace next to the findings file: findings.jsonl -> decisions.jsonl."""
+        for d in decisions:
+            path = Path(self.path_template.format(run_id=d.run_id or "unknown"))
+            path = path.with_name("decisions.jsonl" if path.name == "findings.jsonl" else path.stem + ".decisions.jsonl")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as out:
+                out.write(json.dumps(d.to_dict(), sort_keys=True) + "\n")

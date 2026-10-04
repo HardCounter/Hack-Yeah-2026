@@ -281,3 +281,32 @@ def test_real_llm_review_returns_a_valid_verdict():
     judge.samples, judge.max_turns, judge.max_tokens, judge.temperature = 1, 2, 400, 0.2
     v = asyncio.run(judge._review(build_digest(session()[:2], CONTRACT), "evt_sess_1_2", "sess_1"))
     assert v is not None and 0 <= v.score <= 1
+
+
+# --- decision trace -----------------------------------------------------------------------------
+
+def judge_trace(h):
+    items = sorted(h.sink.decisions.values(), key=lambda d: (d.trigger_seq, d.decision_id))
+    return [(d.trigger_seq, d.decision, d.factors.get("skip_reason")) for d in items if d.plugin == "goal-alignment-judge"]
+
+
+def test_judge_traces_review_lifecycle(harness):
+    backend = FakeOllama({"p_goal_drift": 0.9, "p_injection_influence": 0.0, "suspect_event_ids": [],
+                          "rationale_code": "SKIPPED_CONTROL"})
+    h = run(harness, backend)
+    # seq 1 is a read: no trigger, no decision point. seq 2 starts a background review whose verdict is
+    # reported on the end event, which then skips its own review because one was already in flight.
+    assert judge_trace(h) == [(2, "REVIEW_STARTED", None), (3, "VERDICT_APPROVAL_REQUIRED", None),
+                              (3, "REVIEW_SKIPPED", "BUSY")]
+    verdict = next(d for d in h.sink.decisions.values() if d.decision == "VERDICT_APPROVAL_REQUIRED")
+    assert verdict.factors["score"] == 0.9 and verdict.factors["rationale"] == "SKIPPED_CONTROL"
+    assert "score 0.90" in verdict.reasoning and verdict.finding_ids and verdict.adjustments
+
+
+def test_judge_traces_skips_with_their_reason(harness):
+    h = run(harness, FakeOllama(), config={"sample_rate": 0.0, "final_sample_rate": 0.0})
+    assert judge_trace(h) == [(2, "REVIEW_SKIPPED", "SAMPLING"), (3, "REVIEW_SKIPPED", "SAMPLING")]
+    h = run(harness, FakeOllama(available="MODEL_NOT_PULLED"))
+    skipped = [d for d in h.sink.decisions.values() if d.decision == "REVIEW_SKIPPED"]
+    assert skipped and all(d.factors["skip_reason"] == "UNAVAILABLE" for d in skipped)
+    assert "MODEL_NOT_PULLED" in skipped[0].reasoning
