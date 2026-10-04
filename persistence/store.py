@@ -425,17 +425,18 @@ class EventStore:
             try:
                 event = sanitize_event(ActionEventEnvelope.from_json(row["payload_json"]))
             except Exception as e:
+                # Record in dead letter queue before deleting from outbox.
+                # Both operations occur within the same immediate transaction:
+                # if DLQ insertion fails, the exception propagates, the transaction
+                # rolls back, and the outbox row is preserved for investigation and recovery.
+                self._insert_dead_letter(DeadLetterEnvelope(
+                    event={"event_id": row["event_id"], "corrupted_payload": True, "error": str(e)},
+                    consumer_name=row["consumer_name"],
+                    error_message="CONSUMER_DELIVERY_FAILED",
+                    retry_count=row["attempts"],
+                ))
                 conn.execute("DELETE FROM outbox WHERE event_id = ? AND consumer_name = ?",
                              (row["event_id"], row["consumer_name"]))
-                try:
-                    self._insert_dead_letter(DeadLetterEnvelope(
-                        event={"event_id": row["event_id"], "corrupted_payload": True},
-                        consumer_name=row["consumer_name"],
-                        error_message="CONSUMER_DELIVERY_FAILED",
-                        retry_count=row["attempts"],
-                    ))
-                except Exception:
-                    pass
                 return None
             if row["attempts"] > max_retries:
                 self._insert_dead_letter(DeadLetterEnvelope(event, row["consumer_name"],

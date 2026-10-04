@@ -492,6 +492,34 @@ async def test_corrupted_outbox_payload_is_routed_to_dlq_without_crashing_worker
 
 
 @async_test
+async def test_dead_letter_failure_preserves_outbox_item_and_rolls_back(tmp_path, monkeypatch):
+    import sqlite3
+    store = EventStore(tmp_path / "dlq_fail.db")
+    await store.initialize()
+    ev = event("ev-dlq-fail")
+    await store.append_with_outbox([ev])
+    with store._conn:
+        store._conn.execute("INSERT OR REPLACE INTO consumers (name, status) VALUES ('c-fail', 'ACTIVE')")
+        store._conn.execute("INSERT INTO outbox (event_id, consumer_name) VALUES ('ev-dlq-fail', 'c-fail')")
+        store._conn.execute("UPDATE events SET payload_json = 'INVALID_JSON{{' WHERE event_id = 'ev-dlq-fail'")
+
+    # Simulate DLQ insertion failure (e.g. database disk error or constraint failure)
+    def fail_insert(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error on dead_letter_queue")
+
+    monkeypatch.setattr(store, "_insert_dead_letter", fail_insert)
+
+    with pytest.raises(sqlite3.OperationalError):
+        await store.claim_delivery(["c-fail"])
+
+    # Outbox row must be preserved because transaction rolled back
+    pending = store._conn.execute("SELECT COUNT(*) FROM outbox WHERE event_id = 'ev-dlq-fail'").fetchone()[0]
+    assert pending == 1
+    await store.close()
+
+
+
+@async_test
 async def test_prune_before_cleans_referencing_consumer_completions(tmp_path):
     store = EventStore(tmp_path / "prune.db")
     await store.initialize()
