@@ -45,6 +45,9 @@ jobs:
           git fetch origin deploy
           git checkout -B deploy origin/deploy
           export GIT_SHA=$(git rev-parse --short HEAD)
+          # An interrupted recreate leaves the old container behind under "<id>_app-<service>-1"; compose
+          # then fails with a name conflict on every later deploy. Remove such leftovers first.
+          docker ps -aq --filter "name=[0-9a-f]{12}_app-" | xargs -r docker rm -f
           docker compose up -d --build
           # The Caddyfile is a single-file bind mount: git checkout replaces its inode, so the container
           # keeps the old file and `caddy reload` sees no change. A restart re-binds the mount.
