@@ -41,35 +41,50 @@
     return d;
   }
 
-  // One bar per time slice, oldest left, shown above a drill-down table. value(rows in slice) sets the bar height;
-  // hover a bar for tip(rows, value). aria(minutes per slice, peak) labels the chart.
-  function timeChart(rows, value, tip, aria) {
-    const N = 20, H = 24, NS = 'http://www.w3.org/2000/svg';
-    const node = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
-    const svg = node('svg', { class: 'spark', viewBox: `0 0 ${N * 5} ${H}`, preserveAspectRatio: 'none', role: 'img' });
+  // Bar chart over time, oldest left, shown above a drill-down table. value(rows in a slice) sets a bar's height,
+  // fmt formats the y axis, yTitle names it; hover a bar for tip(rows, value).
+  function timeChart(rows, value, tip, yTitle, fmt) {
+    const N = 20, W = 640, H = 240, L = 64, R = 16, T = 12, B = 48, pw = W - L - R, ph = H - T - B, bw = pw / N;
+    const NS = 'http://www.w3.org/2000/svg';
+    const node = (tag, attrs, text) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+    const svg = node('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, role: 'img' });
     if (!rows.length) return svg;
     const end = Date.now(), start = Math.min(...rows.map(a => +time(a))), w = Math.max(1, (end - start) / N);
     const slices = Array.from({ length: N }, () => []);
     for (const a of rows) slices[Math.min(N - 1, Math.floor((time(a) - start) / w))].push(a);
-    const vals = slices.map(b => b.length ? value(b) : 0), max = Math.max(...vals) || 1;
-    svg.setAttribute('aria-label', aria(Math.round(w / 60e3), max));
+    const vals = slices.map(b => b.length ? value(b) : 0), peak = Math.max(...vals);
+    // y scale: 4 steps of 1, 2 or 5 x 10^k, the top tick at or above the peak
+    const raw = (peak || 1) / 4, mag = 10 ** Math.floor(Math.log10(raw)), step = [1, 2, 5, 10].find(f => f * mag >= raw) * mag;
+    const top = step * Math.ceil((peak || 1) / step), y = v => T + ph - v / top * ph;
+    svg.setAttribute('aria-label', `${yTitle} over time, ${fmtTime(new Date(start))} to ${fmtTime(new Date(end))}, peak ${fmt(peak)}`);
+    for (let v = 0; v <= top + step / 2; v += step) {
+      svg.append(node('line', { class: 'grid', x1: L, x2: W - R, y1: y(v), y2: y(v) }),
+        node('text', { class: 'tick', x: L - 6, y: y(v), 'text-anchor': 'end', 'dominant-baseline': 'middle' }, v ? fmt(v) : '0'));
+    }
+    for (let i = 0; i <= N; i += 5) {
+      const x = L + i * bw;
+      svg.append(node('line', { class: 'axis', x1: x, x2: x, y1: T + ph, y2: T + ph + 4 }),
+        node('text', { class: 'tick', x, y: T + ph + 16, 'text-anchor': i === 0 ? 'start' : i === N ? 'end' : 'middle' }, fmtTime(new Date(start + i * w))));
+    }
+    svg.append(node('line', { class: 'axis', x1: L, x2: W - R, y1: T + ph, y2: T + ph }),
+      node('line', { class: 'axis', x1: L, x2: L, y1: T, y2: T + ph }),
+      node('text', { class: 'title', x: L + pw / 2, y: H - 6, 'text-anchor': 'middle' }, 'Time (Warsaw)'),
+      node('text', { class: 'title', transform: `translate(14 ${T + ph / 2}) rotate(-90)`, 'text-anchor': 'middle' }, yTitle));
     vals.forEach((n, i) => {
-      const h = n ? Math.max(1, n / max * H) : 0, g = node('g', {}), t = node('title', {});
-      t.textContent = `${fmtTime(new Date(start + i * w))}–${fmtTime(new Date(start + (i + 1) * w))}
-${tip(slices[i], n)}`;
-      g.append(t, node('rect', { class: 'hit', x: i * 5, y: 0, width: 5, height: H }),
-        node('rect', { class: 'bar', x: i * 5 + .5, y: H - h, width: 4, height: h }));
+      const h = n ? Math.max(1, n / top * ph) : 0, g = node('g', {});
+      g.append(node('title', {}, `${fmtTime(new Date(start + i * w))}–${fmtTime(new Date(start + (i + 1) * w))}
+${tip(slices[i], n)}`),
+        node('rect', { class: 'hit', x: L + i * bw, y: T, width: bw, height: ph }),
+        node('rect', { class: 'bar', x: L + i * bw + 2, y: T + ph - h, width: bw - 4, height: h }));
       svg.append(g);
     });
     return svg;
   }
   const CHARTS = {
     spend: list => timeChart(list, b => sum(b.map(a => a.usage.total_tokens)),
-      (b, n) => `${fmtNum(n)} tokens · ${usd(sum(b.map(a => a.usage.cost_usd)))}`,
-      (m, peak) => `Tokens per ${m} minutes, peak ${fmtNum(peak)}`),
+      (b, n) => `${fmtNum(n)} tokens · ${usd(sum(b.map(a => a.usage.cost_usd)))}`, 'Tokens', fmtNum),
     latency: list => timeChart(list, b => Math.max(...b.map(overhead)),
-      (b, n) => `slowest ${ms(n)} · ${fmtNum(b.length)} requests`,
-      (m, peak) => `Slowest gateway time per ${m} minutes, peak ${ms(peak)}`),
+      (b, n) => `slowest ${ms(n)} · ${fmtNum(b.length)} requests`, 'Slowest gateway time', ms),
   };
 
   function render(fresh) {
