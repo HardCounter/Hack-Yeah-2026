@@ -147,13 +147,11 @@ def main(argv=None) -> int:
 
     env = {**os.environ, "INTERCEPT_TOKEN": token, "INTERCEPT_ADMIN_TOKEN": admin,
            "CONTROL_LOG": "file", "CONTROL_LOG_FILE": str(trace_log)}
-    # Management credentials belong to the REST API only, never the gateway/agent process.
-    gateway_env = {k: v for k, v in env.items() if k != "CONFIG_ADMIN_TOKEN"}
     gateway_out = open(run_dir / "gateway.log", "w", encoding="utf-8")
     gateway = subprocess.Popen(
         [sys.executable, "-m", "intercept.service.local", "--bank-db", str(bank), "--application",
          args.application, "--contract-id", contract_id, "--runs-dir", str(bank_runs), "--port", str(args.port)],
-        cwd=REPO, env=gateway_env, stdout=gateway_out, stderr=subprocess.STDOUT, start_new_session=True)
+        cwd=REPO, env=env, stdout=gateway_out, stderr=subprocess.STDOUT, start_new_session=True)
     api, api_out = None, None
     status = 1
     try:

@@ -56,12 +56,7 @@
       if (j > i && +f[n].value > v) f[n].value = v;
     });
   }
-  // The management token is typed by the operator and kept for this tab only; it is never part of a config.
-  try { f.token.value = sessionStorage.getItem('configToken') || ''; } catch {}
-  form.addEventListener('input', e => {
-    if (e.target.name === 'token') { try { sessionStorage.setItem('configToken', f.token.value); } catch {} return; }
-    orderThresholds(e.target.name); showOutputs(); markDirty();
-  });
+  form.addEventListener('input', e => { orderThresholds(e.target.name); showOutputs(); markDirty(); });
   form.addEventListener('change', e => { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') markDirty(); });
 
   function renderTools(c) {
@@ -160,13 +155,11 @@
   }
 
   function explain(err) {
-    if (err.status === 401) { f.token.focus(); return 'The management token is missing or wrong.'; }
     if (err.status === 409) return 'The config changed on the server. Reload it and try again.';
     return err.message;
   }
   function writeOptions(body) {
-    return { method: 'PUT', body: JSON.stringify(body),
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + f.token.value.trim() } };
+    return { method: 'PUT', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } };
   }
 
   async function load(name) {
@@ -224,7 +217,7 @@
       const revision = dirty ? (await save())?.revision : item(editing).revision;
       if (!revision) return;
       await App.request('/api/v1/config-selection', writeOptions({ name: editing, revision }));
-      App.setActive(editing, structuredClone(loaded));  // emits 'config', which refreshes the list
+      App.setActive(editing, structuredClone(loaded), revision);  // emits 'config', which refreshes the list
       say(`"${label(editing)}" is now active for new agent sessions.`);
     } catch (err) { say('Not made active: ' + explain(err), true); refreshList().catch(() => {}); }
   };

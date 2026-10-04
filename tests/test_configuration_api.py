@@ -12,14 +12,12 @@ import pytest
 from configuration.service import ConfigService
 from persistence.http_api import create_app
 
-TOKEN = "synthetic-management-credential"
-HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 
 @pytest.fixture
 def api(tmp_path):
     service = ConfigService(tmp_path / "configs")
-    app = create_app(frozenset({"http://localhost:5173"}), config_service=service, config_admin_token=TOKEN)
+    app = create_app(frozenset({"http://localhost:5173"}), config_service=service)
     with TestClient(app) as client:
         yield client, service
 
@@ -31,18 +29,18 @@ def test_update_select_restart_and_revision_contract(api):
     assert response.headers["etag"] == f'"{old["revision"]}"'
     config = response.json()
     config["budget"]["tokens"] = 12345
-    updated = client.put("/api/v1/configs/standard", json=config, headers=HEADERS)
+    updated = client.put("/api/v1/configs/standard", json=config)
     assert updated.status_code == 200
     result = updated.json()
     assert set(result) == {"name", "revision", "updated_at", "selected", "active_revision", "requires_selection"}
     assert result["selected"] and result["requires_selection"]
     assert result["active_revision"] == old["revision"]
     assert service.snapshot_for_intercept() == old  # saving does not mutate active snapshot
-    selected = client.put("/api/v1/config-selection", json={"name": "standard", "revision": result["revision"]}, headers=HEADERS)
+    selected = client.put("/api/v1/config-selection", json={"name": "standard", "revision": result["revision"]})
     assert selected.status_code == 200
     assert set(selected.json()) == {"name", "revision", "selected_at", "effective_for"}
     assert selected.json()["effective_for"] == "new_sessions"
-    again = client.put("/api/v1/config-selection", json={"name": "standard", "revision": result["revision"]}, headers=HEADERS)
+    again = client.put("/api/v1/config-selection", json={"name": "standard", "revision": result["revision"]})
     assert again.json() == selected.json()
     restarted = ConfigService(service.directory)
     assert restarted.snapshot_for_intercept()["config"]["budget"]["tokens"] == 12345
@@ -54,26 +52,24 @@ def test_every_preset_is_editable_and_selectable(api, name):
     client, _ = api
     config = client.get(f"/api/v1/configs/{name}").json()
     config["budget"]["tokens"] += 1
-    result = client.put(f"/api/v1/configs/{name}", json=config, headers=HEADERS)
+    result = client.put(f"/api/v1/configs/{name}", json=config)
     assert result.status_code == 200
-    selection = client.put("/api/v1/config-selection", json={"name": name, "revision": result.json()["revision"]}, headers=HEADERS)
+    selection = client.put("/api/v1/config-selection", json={"name": name, "revision": result.json()["revision"]})
     assert selection.status_code == 200
 
 
 @pytest.mark.parametrize("method,path,body,headers,status,code", [
-    ("PUT", "/api/v1/configs/standard", "{}", {}, 401, "unauthorized"),
-    ("PUT", "/api/v1/config-selection", "{}", {}, 401, "unauthorized"),
-    ("PUT", "/api/v1/configs/standard", "{}", {**HEADERS, "Content-Type": "text/plain"}, 415, "unsupported_media_type"),
-    ("PUT", "/api/v1/configs/standard", "{", HEADERS, 400, "bad_request"),
-    ("PUT", "/api/v1/configs/standard", '{"name":"standard","name":"strict"}', HEADERS, 400, "bad_request"),
-    ("PUT", "/api/v1/configs/standard", "NaN", HEADERS, 400, "bad_request"),
-    ("PUT", "/api/v1/configs/standard", "{}", HEADERS, 422, "invalid_config"),
-    ("PUT", "/api/v1/configs/missing", "{}", HEADERS, 404, "config_not_found"),
-    ("PUT", "/api/v1/configs/Bad%20Name", "{}", HEADERS, 400, "bad_request"),
-    ("PUT", "/api/v1/config-selection", "{}", HEADERS, 422, "invalid_config"),
-    ("PUT", "/api/v1/configs/standard", " " * 64001, HEADERS, 413, "config_too_large"),
-    ("POST", "/api/v1/configs/standard", "{}", HEADERS, 405, "method_not_allowed"),
-    ("GET", "/api/v1/config-selection", "", HEADERS, 405, "method_not_allowed"),
+    ("PUT", "/api/v1/configs/standard", "{}", {"Content-Type": "text/plain"}, 415, "unsupported_media_type"),
+    ("PUT", "/api/v1/configs/standard", "{", {}, 400, "bad_request"),
+    ("PUT", "/api/v1/configs/standard", '{"name":"standard","name":"strict"}', {}, 400, "bad_request"),
+    ("PUT", "/api/v1/configs/standard", "NaN", {}, 400, "bad_request"),
+    ("PUT", "/api/v1/configs/standard", "{}", {}, 422, "invalid_config"),
+    ("PUT", "/api/v1/configs/missing", "{}", {}, 404, "config_not_found"),
+    ("PUT", "/api/v1/configs/Bad%20Name", "{}", {}, 400, "bad_request"),
+    ("PUT", "/api/v1/config-selection", "{}", {}, 422, "invalid_config"),
+    ("PUT", "/api/v1/configs/standard", " " * 64001, {}, 413, "config_too_large"),
+    ("POST", "/api/v1/configs/standard", "{}", {}, 405, "method_not_allowed"),
+    ("GET", "/api/v1/config-selection", "", {}, 405, "method_not_allowed"),
 ])
 def test_management_errors_are_sanitized(api, method, path, body, headers, status, code):
     client, _ = api
@@ -108,18 +104,16 @@ def test_invalid_policy_never_replaces_selected_state(api, mutate):
     mutate(config)
     # Python's serializer deliberately exercises nonstandard Infinity input too.
     response = client.put("/api/v1/configs/standard", content=json.dumps(config),
-                          headers={**HEADERS, "Content-Type": "application/json"})
+                          headers={"Content-Type": "application/json"})
     assert response.status_code in (400, 422)
     assert "synthetic-private-secret" not in response.text and "do not echo" not in response.text
     assert service.path.read_bytes() == before
 
 
-def test_stale_selection_disabled_auth_and_corrupt_state(api, monkeypatch):
+def test_stale_selection_and_corrupt_state(api, monkeypatch):
     client, service = api
-    response = client.put("/api/v1/config-selection", json={"name": "standard", "revision": "sha256:" + "0" * 64}, headers=HEADERS)
+    response = client.put("/api/v1/config-selection", json={"name": "standard", "revision": "sha256:" + "0" * 64})
     assert response.status_code == 409
-    client.app.state.config_admin_token = ""
-    assert client.put("/api/v1/config-selection", json={}, headers=HEADERS).status_code == 401
     service.path.write_text("{broken", encoding="utf-8")
     assert client.get("/api/v1/configs").status_code == 503
 
@@ -132,7 +126,7 @@ def test_failed_replace_does_not_change_state(api, monkeypatch):
     def fail(*_):
         raise OSError("synthetic-private-error")
     monkeypatch.setattr(os, "replace", fail)
-    response = client.put("/api/v1/configs/standard", json=config, headers=HEADERS)
+    response = client.put("/api/v1/configs/standard", json=config)
     assert response.status_code == 503
     assert "synthetic-private-error" not in response.text
     assert service.path.read_bytes() == before
@@ -149,7 +143,7 @@ def test_directory_sync_failure_rolls_back_selection(api, monkeypatch):
             raise OSError("synthetic sync failure")
         return real_fsync(fd)
     monkeypatch.setattr(os, "fsync", fail_directory)
-    response = client.put("/api/v1/config-selection", json={"name": "strict", "revision": config["revision"]}, headers=HEADERS)
+    response = client.put("/api/v1/config-selection", json={"name": "strict", "revision": config["revision"]})
     assert response.status_code == 503
     assert service.path.read_bytes() == before
     assert not list(service.directory.glob(".config-*"))
@@ -214,9 +208,9 @@ def test_cors_and_openapi_contract(api):
     schema = client.get("/api/v1/openapi.json").json()
     for path in ("/api/v1/configs/{name}", "/api/v1/config-selection"):
         operation = schema["paths"][path]["put"]
-        assert operation["security"] == [{"ConfigManagementBearer": []}]
+        assert "security" not in operation  # config writes need no credential
         assert "requestBody" in operation
-        assert {"200", "400", "401", "404", "405", "409", "413", "415", "422", "503"} <= set(operation["responses"])
+        assert {"200", "400", "404", "405", "409", "413", "415", "422", "503"} <= set(operation["responses"])
     assert "PolicyConfig" in schema["components"]["schemas"]
 
 
@@ -243,7 +237,7 @@ def test_state_from_an_older_schema_is_upgraded_instead_of_failing(api):
     client, service = api
     edited = client.get("/api/v1/configs/strict").json()
     edited["budget"]["tokens"] = 4321
-    assert client.put("/api/v1/configs/strict", json=edited, headers=HEADERS).status_code == 200
+    assert client.put("/api/v1/configs/strict", json=edited).status_code == 200
     state = json.loads(service.path.read_text())
     for entry in (state["configs"]["lenient"], state["configs"]["standard"], state["selection"]):
         del entry["config"]["intercept"]["semantic_guard"]["allowed_models"]  # written before the field existed

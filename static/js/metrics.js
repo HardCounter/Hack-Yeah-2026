@@ -22,7 +22,7 @@
     const hard = verdict === 'BLOCKED' && by !== 'AI injection check';
     const controls = CONTROLS.filter(n => !(hard && (n === 'AI injection check' || n === 'Action approval')))
       .map(name => ({ name, acted: name === by, ms: name === 'AI injection check' ? rand(110, 260) : rand(.1, .9) }));
-    return { seq: ++seq, t, id: 'sample', verdict, rule, config: 'standard', source: 'sample', excerpt,
+    return { seq: ++seq, t, id: 'sample', verdict, rule, config: App.configName || 'standard', source: 'sample', excerpt,
       tokens: verdict === 'ALLOWED' || verdict === 'REDACTED' ? Math.round(rand(250, 900)) : 0, controls };
   }
 

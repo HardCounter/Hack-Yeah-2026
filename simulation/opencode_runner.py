@@ -62,7 +62,7 @@ def free_port():
 def _child_env(config_home, token, admin):
     """Keep provider credentials from the process environment, but not the operator's OpenCode config."""
     env = os.environ.copy()
-    for key in ('OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR', 'CONFIG_ADMIN_TOKEN'):
+    for key in ('OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR'):
         env.pop(key, None)
     config_home.mkdir(parents=True, exist_ok=True)
     env.update(

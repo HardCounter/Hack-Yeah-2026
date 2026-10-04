@@ -77,7 +77,7 @@ decisions from the gateway's SSE stream and history from this API.
 |---|---|
 | Base path | `/api/v1`. Evidence routes remain `GET` only (plus `HEAD`). Two management exceptions permit `PUT /configs/{name}` and `PUT /config-selection`. Other writes return `405`. Allowed-origin CORS preflight (`OPTIONS`) carries no data. |
 | Format | `application/json; charset=utf-8`. Exports use `application/x-ndjson`. |
-| Auth | Evidence/config reads remain unauthenticated. Management PUTs require `Authorization: Bearer <CONFIG_ADMIN_TOKEN>`; absent server credential disables writes (`401`). Default bind is loopback; `--allow-remote` is not authorization. See §7. |
+| Auth | Evidence/config reads remain unauthenticated. The two config PUTs are unauthenticated too: whoever can reach the server can change and select configs. Default bind is loopback; `--allow-remote` is not authorization. See §7. |
 | Binding | Default `127.0.0.1`. Binding elsewhere requires `--allow-remote`. This port is never reachable from the agent's tool path. |
 | CORS | Allowed only for origins listed in `--cors-origin`. No wildcard. |
 | Timestamps | ISO 8601 UTC with `Z`, for example `2026-10-03T15:42:10.500Z`. Query parameters accept any ISO 8601 with a timezone. |
@@ -126,7 +126,6 @@ Configuration-specific errors (same envelope; fixed messages, no submitted value
 | HTTP | `code` | Fixed `message` | When |
 |---|---|---|---|
 | 400 | `bad_request` | `malformed configuration request` | Malformed JSON, duplicate keys, non-finite JSON constants, invalid name |
-| 401 | `unauthorized` | `management authentication required` | Missing/invalid bearer credential or management disabled; includes `WWW-Authenticate: Bearer` |
 | 404 | `config_not_found` | `configuration not found` | Unknown config name; PUT never creates configs |
 | 405 | `method_not_allowed` | `method not allowed` | Unsupported management method |
 | 409 | `config_revision_conflict` | `configuration revision changed` | Requested selection revision differs from saved revision |
@@ -390,7 +389,7 @@ return `404`/`503` for missing configs/unavailable storage.
 
 `PUT /configs/{name}` takes a complete `PolicyConfig` (§5.15), **not a partial patch**.
 Its body `name` must equal the path name. The endpoint only replaces existing configs and
-requires management authentication. Successful response: **200**, JSON `ConfigUpdateResult`:
+needs no credential. Successful response: **200**, JSON `ConfigUpdateResult`:
 
 ```json
 {
@@ -404,7 +403,7 @@ requires management authentication. Successful response: **200**, JSON `ConfigUp
 ```
 
 Saving does **not** activate the new revision. Repeating identical normalized content preserves
-its revision and `updated_at`. Errors: **400, 401, 404, 405, 413, 415, 422, 503** (§2.2).
+its revision and `updated_at`. Errors: **400, 404, 405, 413, 415, 422, 503** (§2.2).
 
 ### 4.19 `PUT /config-selection`
 
@@ -430,7 +429,7 @@ Successful response: **200**, JSON `ConfigSelectionResult`:
 Selecting the same name/revision is idempotent and preserves `selected_at`. Existing sessions
 keep their pinned config, spent budgets, approval state and Task Contract. The next trusted
 session binding loads the selected snapshot; no server restart is required. Errors:
-**400, 401, 404, 405, 409, 413, 415, 422, 503** (§2.2). No empty success responses or `204`.
+**400, 404, 405, 409, 413, 415, 422, 503** (§2.2). No empty success responses or `204`.
 
 ### 4.20 `GET /metrics/performance`
 
@@ -1057,11 +1056,8 @@ the current readers do.
 
 - **Evidence remains read-only:** evidence connections use `mode=ro` and evidence routes have no
   write SQL. Configuration writes use a separate backend store, not the evidence write path.
-- **Management authentication:** the two PUTs require an operator-managed `CONFIG_ADMIN_TOKEN`.
-  Without it they fail closed with `401`. This is separate from gateway/agent tokens and must be
-  supplied securely to the REST/web server, not embedded in preset files, frontend assets or logs.
-  Gateway/OpenCode subprocess environments exclude it. Use a trusted frontend backend/proxy to
-  attach it, or authenticated operator requests; CORS and loopback binding are not authorization.
+- **No management authentication:** the two config PUTs accept any caller that can reach the
+  server (team decision for the demo). Anyone with the dashboard URL can edit and activate configs.
 - **Unauthenticated reads:** the read side trusts its network position. It binds loopback by default, so on
   a shared machine any local process can read the sanitized evidence, and that includes an agent
   that can run shell commands. In the governed pipeline the agent only gets gateway-backed tools,
@@ -1101,7 +1097,7 @@ None of these changes alters Event Envelope v2.1 or the decision semantics.
 - Push delivery. Dashboards poll this API, and live gateway decisions come from the gateway's
   `/api/v1/events/stream` SSE. A future `/api/v1/stream` could push detections, but it would be
   volatile and never a substitute for the durable lists.
-- Per-principal read scoping. Reads rely on the loopback bind; config PUTs require management authentication. `AuditReader`
+- Per-principal read scoping. Reads rely on the loopback bind; config PUTs are unauthenticated. `AuditReader`
   and `ReadScope` remain the API for principal-scoped run export.
 - Content bodies (§7), and the consume plane's in-process metric gauges. Those are exposed by the
   consume-plane runtime (`/consumer/metrics`, [consumer-plane.md §9.2](consumer-plane.md#92-metrics))

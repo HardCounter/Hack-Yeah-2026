@@ -79,7 +79,7 @@ Known-pattern scanning is not comprehensive prompt-injection protection.
 Use one validated configuration source for allowed tools/models, data-flow rules,
 thresholds, budgets, approvals, expected side effects, verifier selection and signature-feed
 references. Separate examples are sections of that source, not competing policy files.
-Only authenticated administrators can change it. Plugin paths, webhook targets and upstream
+For the demo, the dashboard changes it without authentication. Plugin paths, webhook targets and upstream
 destinations are trusted deployment configuration, never agent-controlled values.
 
 Validate new snapshots atomically; reject invalid reloads and retain the last valid version.

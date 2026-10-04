@@ -24,7 +24,6 @@ MAX_CONFIG_BYTES = 64_000
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$")
 MESSAGES = {
     "bad_request": "malformed configuration request",
-    "unauthorized": "management authentication required",
     "config_not_found": "configuration not found",
     "method_not_allowed": "method not allowed",
     "config_revision_conflict": "configuration revision changed",

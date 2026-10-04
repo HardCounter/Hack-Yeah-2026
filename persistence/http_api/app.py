@@ -341,7 +341,7 @@ EVIDENCE_GLOB = "*.evidence.db"  # GovernedRuntime writes <runs-dir>/<session_id
 
 
 def create_app(cors_origins: frozenset[str] = frozenset(), docs: bool = True,
-               evidence_dir: Path | None = None, *, config_service=None, config_admin_token=None) -> FastAPI:
+               evidence_dir: Path | None = None, *, config_service=None) -> FastAPI:
     """Build dashboard reads and authenticated config management (evidence remains read-only).
 
     ``evidence_dir`` holds the per-session evidence stores the handlers will read once implemented.
@@ -353,7 +353,7 @@ def create_app(cors_origins: frozenset[str] = frozenset(), docs: bool = True,
     app.state.evidence_dir = evidence_dir
     app.include_router(router)
     from configuration.api import install_config_api, management_put
-    install_config_api(app, config_service=config_service, admin_token=config_admin_token)
+    install_config_api(app, config_service=config_service)
 
     @app.middleware("http")
     async def read_only(request: Request, call_next):

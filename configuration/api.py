@@ -1,14 +1,11 @@
 """Shared management router; evidence routes remain read-only."""
 import asyncio
 from contextlib import asynccontextmanager
-import os
 import re
-import secrets
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import ValidationError
 
 from configuration.models import (ConfigSelectionRequest, ConfigSelectionResult, ConfigSummary,
@@ -16,21 +13,11 @@ from configuration.models import (ConfigSelectionRequest, ConfigSelectionResult,
 from configuration.service import ConfigError, ConfigService, MAX_CONFIG_BYTES, parse_json
 
 router = APIRouter(prefix="/api/v1", tags=["configuration"])
-bearer = HTTPBearer(auto_error=False, scheme_name="ConfigManagementBearer")
-ERRORS = {status: {"model": ErrorResponse} for status in (400, 401, 404, 405, 409, 413, 415, 422, 503)}
+ERRORS = {status: {"model": ErrorResponse} for status in (400, 404, 405, 409, 413, 415, 422, 503)}
 
 
 def service(request):
     return getattr(request.app.state, "config_service", None) or ConfigService()
-
-
-async def administrator(request: Request, credential: HTTPAuthorizationCredentials | None = Depends(bearer)):
-    token = getattr(request.app.state, "config_admin_token", None)
-    if token is None:
-        token = os.environ.get("CONFIG_ADMIN_TOKEN", "")
-    if (not token or credential is None or credential.scheme.lower() != "bearer"
-            or not secrets.compare_digest(credential.credentials.encode(), token.encode())):
-        raise ConfigError(401, "unauthorized")
 
 
 async def body(request):
@@ -58,7 +45,6 @@ async def get_config(name: str, request: Request):
 
 
 @router.put("/configs/{name}", response_model=ConfigUpdateResult, responses=ERRORS,
-            dependencies=[Depends(administrator)],
             openapi_extra={"requestBody": {"required": True, "content": {"application/json": {
                 "schema": {"$ref": "#/components/schemas/PolicyConfig"}}}}})
 async def update_config(name: str, request: Request):
@@ -67,7 +53,6 @@ async def update_config(name: str, request: Request):
 
 
 @router.put("/config-selection", response_model=ConfigSelectionResult, responses=ERRORS,
-            dependencies=[Depends(administrator)],
             openapi_extra={"requestBody": {"required": True, "content": {"application/json": {
                 "schema": {"$ref": "#/components/schemas/ConfigSelectionRequest"}}}}})
 async def select_config(request: Request):
@@ -83,9 +68,8 @@ def management_put(path):
     return path == "/api/v1/config-selection" or bool(re.fullmatch(r"/api/v1/configs/[^/]+", path))
 
 
-def install_config_api(app, *, config_service=None, admin_token=None):
+def install_config_api(app, *, config_service=None):
     app.state.config_service = config_service
-    app.state.config_admin_token = admin_token
     app.include_router(router)
 
     original_lifespan = app.router.lifespan_context
@@ -112,8 +96,7 @@ def install_config_api(app, *, config_service=None, admin_token=None):
 
     @app.exception_handler(ConfigError)
     async def error_handler(_, exc):
-        headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else {}
-        return JSONResponse(exc.body(), status_code=exc.status, headers=headers)
+        return JSONResponse(exc.body(), status_code=exc.status)
 
     def openapi():
         if app.openapi_schema is None:

@@ -54,8 +54,8 @@ const App = {
   on(evt, fn) { (this.listeners[evt] ||= []).push(fn); },
   emit(evt, ...data) { (this.listeners[evt] || []).forEach(fn => fn(...data)); },
 
-  setActive(name, config) {
-    this.configName = name; this.config = config;
+  setActive(name, config, revision) {
+    this.configName = name; this.config = config; this.configRevision = revision;
     this.tokensUsed = 0;  // the session budget restarts with each config
     $$('.activeName').forEach(n => n.textContent = label(name));
     this.emit('config', config);
@@ -78,6 +78,13 @@ const App = {
     return body;
   },
   api(path, opts) { return this.request('/api/v1/configs' + path, opts); },
+  // The active config is the one selected on the server, the same for every browser. Called again
+  // on a timer and on tab changes, so a selection made elsewhere shows up in the header and metrics.
+  async syncActive() {
+    const selected = (await this.api('')).find(c => c.selected);
+    if (!selected || (selected.name === this.configName && selected.revision === this.configRevision)) return;
+    this.setActive(selected.name, await this.api('/' + encodeURIComponent(selected.name)), selected.revision);
+  },
 };
 
 /* Tabs: hash routing so the back button and shared links work */
@@ -89,6 +96,7 @@ function route() {
   $$('.tabs a').forEach(a => a.hash === '#' + tab ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   document.title = `${$('#v-' + tab + ' h1').textContent} · AI Control Layer`;
   App.emit('tab', tab, rest.map(decodeURIComponent));
+  if (App.config) App.syncActive().catch(() => {});
 }
 addEventListener('hashchange', route);
 
@@ -109,8 +117,6 @@ async function health() {
 document.addEventListener('DOMContentLoaded', async () => {
   route();
   health(); setInterval(health, 30000);
-  // The active config is the one selected on the server, the same for every browser.
-  const configs = await App.api('');
-  const name = (configs.find(c => c.selected) || configs[0]).name;
-  App.setActive(name, await App.api('/' + encodeURIComponent(name)));
+  await App.syncActive();
+  setInterval(() => App.syncActive().catch(() => {}), 10000);
 });
