@@ -23,7 +23,7 @@ What's done so far and our goal
 Sentinel Interlock was started from scratch at HackYeah 2026. No code or design existed before the event. Our goal is to deliver a working AI Control Layer within 24 hours. It consists of:
 
 - Interception gateway that sits in front of the agent and captures every prompt and tool call before it executes.
-- Hybrid guardrail engine. Fast regex and signature checks catch PII, leaked secrets and known exploits. A local semantic model detects prompt injection and goal drift. No data leaves your infrastructure.
+- Hybrid guardrail engine. Fast regex and signature checks catch PII, leaked secrets and known exploits. An optional AI judge checks whether the agent's actions still match its assigned task, and a trajectory risk score tracks the whole session. Personal data and secrets are redacted before a prompt reaches the model.
 - Centralized live policy. Rules change instantly across all agents, with no restart.
 - Budget caps on tokens, execution time and tool calls, so a runaway agent can't burn resources.
 - Persistent audit logs that record every decision and its reason.
