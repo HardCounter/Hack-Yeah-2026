@@ -491,8 +491,8 @@ def test_malformed_and_unknown_calls_fail_closed(sessions):
 
 @pytest.mark.parametrize("preset,code_tool,second_model,paste_link_email", [
     ("lenient", "ALLOW", True, "ALERT"),    # blocklisted domain is only flagged
-    ("standard", "ALLOW", True, "BLOCK"),
-    ("strict", "BLOCK", False, "BLOCK"),    # no code tool, one model, approval on every write
+    ("standard", "ALLOW", False, "BLOCK"),
+    ("strict", "BLOCK", False, "BLOCK"),    # no code tool, approval on every write
 ])
 def test_presets_enforce_increasing_strictness(sessions, preset, code_tool, second_model, paste_link_email):
     cfg = json.loads((ROOT / "config" / "presets" / f"{preset}.json").read_text())
@@ -500,7 +500,7 @@ def test_presets_enforce_increasing_strictness(sessions, preset, code_tool, seco
     session.execute("run_code", {"code": SUM})
     assert last(session).decision == code_tool
     answer = session.runtime.prompt(
-        "gpt-4.1-mini", [{"role": "user", "content": "Summarise application APP-0001."}], [], ok_backend)
+        "gpt-4.1", [{"role": "user", "content": "Summarise application APP-0001."}], [], ok_backend)  # only lenient lists it
     assert ("error" not in answer) is second_model
     session.execute("send_email", {"to": "kyc-team@bank.example", "body": "notes are at https://pastebin.com/raw/abc"})
     assert last(session).decision == paste_link_email

@@ -67,7 +67,7 @@ def test_prompt_requests_are_judged_by_the_prompt_gateway(tmp_path):
     import generate
 
     generate.build(tmp_path / "base")
-    preset = Path(__file__).resolve().parents[1] / "config" / "presets" / "standard.json"
+    preset = Path(__file__).resolve().parents[2] / "config" / "presets" / "standard.json"
 
     async def scenario():
         service = LocalService(bank_path=tmp_path / "base" / "bank.db", runs_dir=tmp_path / "runs",
