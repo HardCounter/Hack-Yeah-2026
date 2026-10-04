@@ -51,6 +51,13 @@ class AuditorTests(unittest.IsolatedAsyncioTestCase):
         specs = [{"id": "scanner", "type": "pattern_scanner", "config": {"patterns": ["ignore previous instructions"], "action": "BLOCK"}}]
         self.assertEqual((await Pipeline(specs).evaluate(a))[2], "BLOCK")
 
+    async def test_unicode_casefold_length_change_does_not_bypass_scanner(self):
+        a = action()
+        a["arguments"]["text"] = "Straße ... ignore previous instructions"
+        specs = [{"id": "scanner", "type": "pattern_scanner", "config": {"patterns": ["ignore previous instructions"], "action": "BLOCK"}}]
+        checked, _, verdict, _ = await Pipeline(specs).evaluate(a)
+        self.assertEqual(verdict, "BLOCK")
+
     async def test_classified_scanner_redacts_pesel_and_keeps_the_original(self):
         a = action()
         a["arguments"]["text"] = "PESEL 44051401359"

@@ -12,37 +12,20 @@ CLASSIFIED = {
     # Operator-selected classes. The expressions live in code, not in the policy file.
     "pesel": re.compile(r"\b\d{11}\b"),
     "iban": re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"),
-    "aws_access_key": re.compile(r"\bAKIA[A-Z2-7]{16}\b"),
-    "private_key": re.compile(r"-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----", re.DOTALL),
+    "aws_access_key": re.compile(r"\b(AKIA|ASIA)[A-Z2-7]{16}\b"),
+    "private_key": re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.DOTALL),
     "api_key": re.compile(r"\bpgw_live_[A-Za-z0-9]+\b"),
 }
 
 
 def _contains_literal(value, pattern):
-    folded_value, folded_pattern = value.casefold(), pattern.casefold()
-    if len(folded_value) != len(value):
-        return pattern in value
-    return folded_pattern in folded_value
+    return pattern.casefold() in value.casefold()
 
 
 def _redact_literal(value, pattern):
-    folded_value, folded_pattern = value.casefold(), pattern.casefold()
-    if len(folded_value) != len(value) or len(folded_pattern) != len(pattern):
-        if pattern not in value:
-            return value, False
-        return value.replace(pattern, "[REDACTED]"), True
-    if folded_pattern not in folded_value:
-        return value, False
-    parts, start = [], 0
-    while True:
-        found = folded_value.find(folded_pattern, start)
-        if found < 0:
-            parts.append(value[start:])
-            break
-        parts.append(value[start:found])
-        parts.append("[REDACTED]")
-        start = found + len(folded_pattern)
-    return "".join(parts), True
+    new_value, count = re.subn(re.escape(pattern), "[REDACTED]", value, flags=re.IGNORECASE)
+    return new_value, count > 0
+
 
 
 def validate_specs(specs):
