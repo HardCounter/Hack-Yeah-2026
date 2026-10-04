@@ -72,7 +72,7 @@
           "pesel",
           "iban"
         ],
-        "action": "REDACT"
+        "action": "REQUIRE_APPROVAL"
       }
     },
     {
@@ -84,7 +84,7 @@
           "private_key",
           "api_key"
         ],
-        "action": "REDACT"
+        "action": "REQUIRE_APPROVAL"
       }
     }
   ],

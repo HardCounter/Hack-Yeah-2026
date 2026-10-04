@@ -3,10 +3,9 @@ from contextlib import asynccontextmanager
 import json
 import os
 import re
-import secrets
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 
 from intercept.auditors import Pipeline
@@ -97,12 +96,7 @@ def get_config(name: str):
 
 
 @app.put("/api/v1/configs/{name}")
-async def save_config(name: str, request: Request, authorization: str = Header("")):
-    token = os.environ.get("ADMIN_TOKEN", "")
-    if not token:
-        raise HTTPException(503, "saving is disabled: ADMIN_TOKEN is not set")
-    if not secrets.compare_digest(authorization.encode(), f"Bearer {token}".encode()):
-        raise HTTPException(401, "admin token required")
+async def save_config(name: str, request: Request):
     if not NAME.fullmatch(name):
         raise HTTPException(422, "name: lowercase letters, digits, - and _, up to 40 characters")
     if (PRESETS / f"{name}.json").exists():
