@@ -106,6 +106,8 @@
   },
   "semantic_guard": {
     "block_threshold": 0.95,
+    "approve_threshold": 0.85,
+    "alert_threshold": 0.7,
     "on_error": "BLOCK"
   }
 }
