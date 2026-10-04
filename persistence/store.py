@@ -724,6 +724,35 @@ class EventStore:
                 return [json.loads(r[0]) for r in rows]
             return await self._offload(read)
 
+    async def write_plugin_decision(self, payload: Mapping[str, Any]) -> bool:
+        """Store one control-plane decision; True on first insert.
+
+        First write wins: a redelivered event produces the same decision_id, and its retry
+        must not fail on a different timestamp or duration.
+        """
+        from persistence.privacy import decision_projection
+        safe = decision_projection(payload)
+        raw = json.dumps(safe, sort_keys=True, separators=(",", ":"))
+        async with self._lock:
+            def write():
+                conn = self._get_connection()
+                with conn:
+                    cursor = conn.execute(
+                        "INSERT OR IGNORE INTO plugin_decisions VALUES(?,?,?,?,?,?,?,?)",
+                        (safe["decision_id"], safe["ts"], safe["session_id"], safe["plugin"], safe["outcome"],
+                         safe["decision"], safe["trigger_event_id"], raw))
+                    return cursor.rowcount == 1
+            return await self._offload(write)
+
+    async def list_plugin_decisions(self, session_id: str) -> list[dict[str, Any]]:
+        async with self._lock:
+            def read():
+                rows = self._get_connection().execute(
+                    "SELECT payload_json FROM plugin_decisions WHERE session_id=? ORDER BY ts, rowid", (session_id,)
+                ).fetchall()
+                return [json.loads(r[0]) for r in rows]
+            return await self._offload(read)
+
     @staticmethod
     def _verification_projection(payload: Mapping[str, Any]) -> dict[str, Any]:
         from persistence.privacy import token

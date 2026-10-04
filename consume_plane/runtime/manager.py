@@ -10,7 +10,7 @@ from typing import Callable, Sequence
 
 from .. import __version__
 from contracts.action import AgentAction
-from ..model.outputs import Finding, FindingDraft, finding_id
+from ..model.outputs import DecisionDraft, Finding, FindingDraft, PluginDecision, decision_id, finding_id
 from ..ports.event_source import Delivery, EventSource, source_is_idle
 from ..ports.sinks import FindingSink
 from ..ports.trajectory import TrajectoryReader
@@ -23,6 +23,14 @@ from tracing import get_logger
 
 log = logging.getLogger("consume_plane.manager")
 SELF_NAME = "consume-plane"
+
+
+def failure_code(error: str) -> str:
+    """Reduce a plugin error to a fixed code: exception type or TIMEOUT, never the message text."""
+    head = error.split(":", 1)[0].strip()
+    if head.startswith("timeout"):
+        return "TIMEOUT"
+    return head if head.isidentifier() else "PLUGIN_ERROR"
 
 
 def _utcnow() -> datetime:
@@ -114,9 +122,9 @@ class ConsumerManager:
         for p, (buffer, error, duration_ms) in zip(pending, outcomes):
             if error is None:
                 try:
-                    await self._commit(p, a, buffer)
+                    await self._commit(p, a, buffer, attempt=d.attempt, duration_ms=duration_ms)
                 except Exception as e:
-                    error = f"commit: {type(e).__name__}: {e}"
+                    error = f"{type(e).__name__}: commit: {e}"
             if error is None:
                 self.ledger.mark_done(a.event_id, p.name, p.version, duration_ms)
                 self.metrics.inc("consumer_plugin_runs_total", plugin=p.name, outcome="done")
@@ -124,7 +132,10 @@ class ConsumerManager:
             attempts = self.ledger.record_failure(a.event_id, p.name, p.version, error, duration_ms)
             self.metrics.inc("consumer_plugin_runs_total", plugin=p.name, outcome="failed")
             p.log.warning("failed on %s (attempt %d/%d): %s", a.event_id, attempts, self.max_attempts, error)
-            if attempts >= self.max_attempts:
+            dead_now = attempts >= self.max_attempts
+            await self._record_failure(p, a, error, attempt=attempts, duration_ms=duration_ms,
+                                       outcome="dead_lettered" if dead_now else "failed")
+            if dead_now:
                 self.ledger.mark_dead(a.event_id, a.session_id, p.name, p.version, attempts, error)
                 self.metrics.inc("consumer_plugin_dead_letters_total", plugin=p.name)
                 await self._report_plugin_failure(p, a, attempts, error)
@@ -190,7 +201,8 @@ class ConsumerManager:
         for f in findings:
             self.metrics.inc("consumer_findings_total", plugin=f.plugin, severity=f.severity, rule_id=f.rule_id)
 
-    async def _commit(self, p: LoadedPlugin, a: AgentAction, buffer: OutputBuffer) -> None:
+    async def _commit(self, p: LoadedPlugin, a: AgentAction, buffer: OutputBuffer, *,
+                      attempt: int = 1, duration_ms: float = 0.0) -> None:
         findings = [self._finalize(p.name, p.version, p.method, a, draft, i) for i, draft in enumerate(buffer.findings)]
         if findings:
             await self._write_findings(findings)
@@ -199,11 +211,58 @@ class ConsumerManager:
                                  rule=f.rule_id, severity=f.severity)
         for name, value, labels in buffer.metrics:
             self.metrics.set(name, value, **{**labels, "plugin": p.name})
+        adjustments = []
         for proposal in buffer.proposals:
             decision = await self.feedback.submit(proposal, plugin=p.name, method=p.method, action=a)
             get_logger().log("consume", "feedback.proposed", session=a.session_id, event_id=a.event_id, plugin=p.name,
                              adjustment=proposal.action, outcome=decision.reason)
             self.metrics.inc("consumer_feedback_total", plugin=p.name, outcome=decision.reason)
+            adjustments.append({"action": proposal.action, "outcome": decision.reason,
+                                **({"signal_id": decision.signal.signal_id} if decision.signal else {})})
+        drafts = list(buffer.decisions)
+        if not drafts and (findings or adjustments):
+            # Every output stays traceable even when a plugin does not record its decision explicitly.
+            drafts = [DecisionDraft(decision="OUTPUT_EMITTED",
+                                    reasoning="plugin emitted outputs without recording a decision")]
+        decisions = [PluginDecision(
+            decision_id=decision_id(p.name, p.version, a.event_id, "decided", i, attempt),
+            ts=self.clock(), plugin=p.name, plugin_version=p.version, method=p.method, outcome="decided",
+            decision=draft.decision, reasoning=draft.reasoning, reason=None, factors=dict(draft.factors),
+            session_id=a.session_id, run_id=a.run_id, agent_id=a.agent_id, case_id=a.case_id,
+            trigger_event_id=a.event_id, trigger_seq=a.seq, attempt=attempt, duration_ms=round(duration_ms, 3),
+            finding_ids=tuple(f.finding_id for f in findings), adjustments=tuple(adjustments),
+        ) for i, draft in enumerate(drafts)]
+        if decisions:
+            await self._write_decisions(decisions)
+
+    async def _write_decisions(self, decisions: list[PluginDecision]) -> None:
+        for sink in self.sinks:
+            write = getattr(sink, "write_decisions", None)
+            if write is not None:
+                await write(decisions)
+        for d in decisions:
+            self.metrics.inc("consumer_decisions_total", plugin=d.plugin, outcome=d.outcome, decision=d.decision)
+            get_logger().log("consume", "plugin.decision", session=d.session_id, event_id=d.trigger_event_id,
+                             plugin=d.plugin, outcome=d.outcome, decision=d.decision, reason=d.reason,
+                             decision_id=d.decision_id)
+
+    async def _record_failure(self, p: LoadedPlugin, a: AgentAction, error: str, *, attempt: int,
+                              duration_ms: float, outcome: str) -> None:
+        code = failure_code(error)
+        record = PluginDecision(
+            decision_id=decision_id(p.name, p.version, a.event_id, outcome, 0, attempt),
+            ts=self.clock(), plugin=p.name, plugin_version=p.version, method=p.method, outcome=outcome,
+            decision="PLUGIN_FAILED" if outcome == "failed" else "PLUGIN_GAVE_UP",
+            reasoning=(f"attempt {attempt} of {self.max_attempts} failed ({code}); "
+                       + ("event will be retried" if outcome == "failed" else "no further retries")),
+            reason=code, factors={"attempt": attempt, "max_attempts": self.max_attempts},
+            session_id=a.session_id, run_id=a.run_id, agent_id=a.agent_id, case_id=a.case_id,
+            trigger_event_id=a.event_id, trigger_seq=a.seq, attempt=attempt, duration_ms=round(duration_ms, 3),
+        )
+        try:
+            await self._write_decisions([record])
+        except Exception:
+            log.exception("could not record failure of %s on %s", p.name, a.event_id)
 
     async def _report_plugin_failure(self, p: LoadedPlugin, a: AgentAction, attempts: int, error: str) -> None:
         error_type = error.split(":", 1)[0]

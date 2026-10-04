@@ -688,6 +688,13 @@ class FeedbackChannel(Protocol):
 Phase 1 uses `InProcessFeedbackChannel` (the all-in-one daemon shares memory with Layer 1).
 A unix-socket or HTTP channel to Layer 1's policy cache comes later.
 
+### 9.3a Decision trace
+
+Besides findings, metrics and proposals, a plugin records each decision point with
+`ctx.record_decision(code, reasoning, **factors)`. The manager persists those records with the run's
+outputs, linked to the finding IDs and feedback outcomes, and records failed and dead-lettered runs
+itself. Sinks implementing `write_decisions` receive them. See [decision-trace.md](decision-trace.md).
+
 ### 9.4 Sinks
 
 ```python

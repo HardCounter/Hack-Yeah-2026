@@ -54,6 +54,12 @@ writes JSON lines to `CONTROL_LOG_FILE`, default `var/control-layer.log`). `scri
 the terminal by default. Only IDs, names and reason codes are logged, never prompts or tool arguments.
 The interface and its three implementations are in `tracing/`.
 
+Separately from the log, every **consume-plane decision** is persisted in the session's evidence store:
+each plugin decision point (including "no change" and "skipped") and every failed plugin run, with a brief
+reasoning, its inputs, the triggering step and the findings and adjustments it produced. Inspect it with
+`GET /api/v1/sessions/{id}/decisions` or `scripts/inspect_decisions.sh`. See
+[docs/decision-trace.md](docs/decision-trace.md).
+
 ## Documentation Index
 
 - [Integrated local KYC execution](docs/integrated-runtime.md)
@@ -68,6 +74,7 @@ The interface and its three implementations are in `tracing/`.
 - [Interception slice status](docs/intercept/implementation-status.md)
 - [Consume plane design](docs/consumer-plane.md), [implementation notes](docs/consumer-plane-implementation-notes.md), [event envelope v2.1](docs/consumer-plane-event-envelope.md)
 - [Trajectory risk model](docs/trajectory-risk-model.md)
+- [Control-plane decision trace (persisted plugin decisions, REST, inspection)](docs/decision-trace.md)
 - [Implementation stack: Python asyncio and uv](docs/stack.md)
 - [Monitored banking use cases](docs/use-cases.md)
 - [Mock banking dataset specification](docs/mock-data-spec.md)

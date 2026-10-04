@@ -18,6 +18,7 @@ from persistence.adapters.consumer_v21 import to_consumer_v21
 from persistence.models import ActionEventEnvelope, ActionStatus, ActionType
 from persistence.privacy import sanitize_event, token, timestamp, number, evidence
 from persistence.query_usage import UsageQueriesMixin
+from persistence.privacy import decision_projection, sanitize_event, token, timestamp, number
 from persistence.schema import CURRENT_SCHEMA_VERSION
 from persistence.settings import PersistenceSettings
 from persistence.vocabulary import DECISION_FOR_VERDICT, WIRE_STATUS, is_intent
@@ -664,6 +665,59 @@ class ReadQueries(UsageQueriesMixin):
                              "source": "trajectory-risk"} if session["risk_level"] else None,
                     "verification_status": session["verification_status"], "next_cursor": paged["next_cursor"], "has_more": paged["has_more"]}
 
+    # --- control-plane decision trace ---------------------------------------------------------
+
+    def _decision_rows(self, conn, where, args):
+        # Stores written before the decision trace existed have no table: that is "no decisions".
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='plugin_decisions'").fetchone():
+            return []
+        rows = self._rows(conn, f"SELECT payload_json FROM plugin_decisions WHERE {where} ORDER BY ts, rowid", args)
+        # Re-project on read: a manually edited database cannot leak prose or raw values.
+        return [decision_projection(json.loads(row[0])) for row in rows]
+
+    def _with_context(self, item, bundle):
+        """Attach the trigger step and linked findings so one response explains the decision."""
+        event = next((e for e in bundle["events"] if e.event_id == item["trigger_event_id"]), None)
+        trigger = None
+        if event is not None:
+            summary = self._summary(event)
+            trigger = {key: summary.get(key) for key in ("event_id", "seq", "ts", "kind", "name", "status", "decision")}
+        findings = [f for f in bundle["findings"] if f["finding_id"] in set(item["finding_ids"])]
+        return {**item, "trigger": trigger, "findings": findings}
+
+    def decisions(self, session_id, *, limit=100, cursor=None, **filters):
+        with self.connect(self._session_path(session_id)) as conn:
+            bundle = self._load_session(conn, session_id, allow_expired=True)
+            items = self._decision_rows(conn, "session_id=?", (session_id,))
+        items = [item for item in items
+                 if (not filters.get("plugins") or item["plugin"] in filters["plugins"])
+                 and (not filters.get("outcomes") or item["outcome"] in filters["outcomes"])
+                 and (not filters.get("decisions") or item["decision"] in filters["decisions"])
+                 and (not filters.get("trigger_event_id") or item["trigger_event_id"] == filters["trigger_event_id"])]
+        page = cursor_page(items, limit, cursor, scope=f"decisions:{session_id}", filters=filters,
+                           key=lambda item: (item["ts"], item["decision_id"]))
+        page["items"] = [self._with_context(item, bundle) for item in page["items"]]
+        counts = Counter((item["plugin"], item["outcome"]) for item in items)
+        page["summary"] = [{"plugin": plugin, "outcome": outcome, "count": count}
+                           for (plugin, outcome), count in sorted(counts.items())]
+        return page
+
+    def decision(self, decision_id):
+        if not ID.fullmatch(decision_id):
+            raise QueryError(400, "bad_request")
+        match = None
+        for path in self.paths():
+            with self.connect(path) as conn:
+                rows = self._decision_rows(conn, "decision_id=?", (decision_id,))
+                if rows:
+                    if match is not None:
+                        raise QueryError(503, "store_unavailable")
+                    bundle = self._load_session(conn, rows[0]["session_id"], allow_expired=True)
+                    match = self._with_context(rows[0], bundle)
+        if match is None:
+            raise QueryError(404, "not_found")
+        return match
+
     def export(self, session_id):
         with self.connect(self._session_path(session_id)) as conn:
             bundle = self._load_session(conn, session_id)
@@ -674,6 +728,8 @@ class ReadQueries(UsageQueriesMixin):
                 records.append({"record_type": "intent" if is_intent(event) else "action", **self._action(event, bundle)["event"]})
             records.extend({"record_type": "detection", **item} for item in self._detections(bundle))
             records.extend({"record_type": "intervention", **item} for item in bundle["interventions"])
+            records.extend({"record_type": "plugin_decision", **item}
+                           for item in self._decision_rows(conn, "session_id=?", (session_id,)))
             if bundle["verification"]:
                 records.append({"record_type": "verification", **bundle["verification"]})
             if len(records) > settings.max_export_rows:

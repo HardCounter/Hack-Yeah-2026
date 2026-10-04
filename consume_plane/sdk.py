@@ -18,13 +18,13 @@ from contracts.action import (
     Usage,
 )
 from contracts.task_contract import Budget, TaskContract
-from .model.outputs import AdjustmentProposal, FindingDraft
+from .model.outputs import AdjustmentProposal, DecisionDraft, FindingDraft
 from .ports.plugin import ConsumerPlugin, PluginContext, SetupContext, Subscription
 from .ports.trajectory import Trajectory
 
 __all__ = [
     "ActionKind", "ActionStatus", "AgentAction", "ApprovalPayload", "ContentRef", "ControlPayload",
     "EgressPayload", "PromptPayload", "SessionPayload", "ToolCallIntent", "ToolUsePayload", "UnknownPayload",
-    "Usage", "Budget", "TaskContract", "AdjustmentProposal", "FindingDraft", "ConsumerPlugin", "PluginContext",
+    "Usage", "Budget", "TaskContract", "AdjustmentProposal", "DecisionDraft", "FindingDraft", "ConsumerPlugin", "PluginContext",
     "SetupContext", "Subscription", "Trajectory",
 ]

@@ -222,16 +222,20 @@ class GoalAlignmentJudge:
                 await asyncio.wait_for(asyncio.shield(task), self.final_timeout_s)
             except (TimeoutError, asyncio.TimeoutError):
                 task.cancel()
-                get_logger().log("consume", "judge.dropped", plugin=self.name, session=sid, reason="TIMEOUT")
+                self._dropped(ctx, sid, "TIMEOUT")
             except asyncio.CancelledError:
                 if not task.cancelled() or asyncio.current_task().cancelling():
                     raise  # our own cancellation (e.g. the runtime's timeout) must propagate
-                get_logger().log("consume", "judge.dropped", plugin=self.name, session=sid, reason="CANCELLED")
+                self._dropped(ctx, sid, "CANCELLED")
         if task is not None and task.done():
             self._pending.pop(sid, None)
             verdict = None if task.cancelled() else task.result()
             if verdict is not None:
                 self._report(verdict, action, ctx)
+            elif not task.cancelled():
+                ctx.record_decision("REVIEW_FAILED", "background review returned no verdict "
+                                    "(provider unavailable or invalid model output); no action taken",
+                                    provider=getattr(self.backend, "provider", None))
 
         # 2. Decide whether this event gets a review: trigger, budget, sampling, availability.
         trajectory = await ctx.trajectory()
@@ -246,23 +250,41 @@ class GoalAlignmentJudge:
             skip = "unavailable"
         if skip:
             ctx.emit_metric("judge_skipped", 1, reason=skip)
+            ctx.record_decision("REVIEW_SKIPPED", {
+                "budget": f"review budget of {self.max_reviews} per session used up",
+                "sampling": f"not sampled (draw above rate {rate:.2f})",
+                "busy": ("the session-end review was replaced by the review that was in flight (see the preceding "
+                         "verdict or REVIEW_DROPPED)") if final else "a review of this session is already in flight",
+                "unavailable": f"model provider unavailable ({self._down_reason or 'unknown'})",
+            }[skip], skip_reason=skip.upper(), sample_rate=rate,
+                draw=round(sample_draw(self.seed, action.event_id), 4), final=final)
             if final:
                 self._forget(sid)
             return
         self._reviews[sid] = self._reviews.get(sid, 0) + 1
         digest = build_digest(trajectory, await ctx.contract())
         review = asyncio.create_task(self._review(digest, action.event_id, sid))
+        ctx.record_decision("REVIEW_STARTED",
+                            f"{'session-end' if final else 'background'} review of {len(digest['steps'])} steps "
+                            f"with {self.samples} samples on {getattr(self.backend, 'provider', 'llm')}",
+                            steps=len(digest["steps"]), samples=self.samples, final=final,
+                            provider=getattr(self.backend, "provider", None), model=getattr(self.backend, "model", None))
         if final:  # nothing follows the end event, so wait here (bounded) and report directly
             try:
                 verdict = await asyncio.wait_for(review, max(0.1, deadline - time.monotonic()))
             except (TimeoutError, asyncio.TimeoutError):
                 verdict = None
-                get_logger().log("consume", "judge.dropped", plugin=self.name, session=sid, reason="TIMEOUT")
+                self._dropped(ctx, sid, "TIMEOUT")
             if verdict is not None:
                 self._report(verdict, action, ctx)
             self._forget(sid)
         else:
             self._pending[sid] = review
+
+    def _dropped(self, ctx, sid: str, reason: str) -> None:
+        get_logger().log("consume", "judge.dropped", plugin=self.name, session=sid, reason=reason)
+        ctx.record_decision("REVIEW_DROPPED", f"review abandoned ({reason}) after waiting up to "
+                            f"{self.final_timeout_s:.0f}s at session end; no verdict", drop_reason=reason)
 
     def _forget(self, sid: str) -> None:
         for d in (self._reviews, self._reported):
@@ -357,7 +379,18 @@ class GoalAlignmentJudge:
         ctx.emit_metric("judge_latency_ms", round(v.latency_ms, 1), **labels)
         ctx.emit_metric("judge_tokens", v.tokens, **labels)
         band = 2 if v.score >= self.approve else 1 if v.score >= self.alert else 0
-        if band <= self._reported.get(action.session_id, 0):
+        escalated = band > self._reported.get(action.session_id, 0)
+        ctx.record_decision(
+            ("VERDICT_ALIGNED", "VERDICT_ALERT", "VERDICT_APPROVAL_REQUIRED")[band],
+            f"score {v.score:.2f} (confidence {v.confidence:.2f}, {v.samples} samples, {v.rationale}) vs "
+            f"alert {self.alert:.2f} / approve {self.approve:.2f}"
+            + ("" if band == 0 else "; new finding" if escalated else "; already reported at this level")
+            + ("; proposing approval for all tools" if band == 2 and escalated else ""),
+            score=round(v.score, 4), confidence=round(v.confidence, 4), samples=v.samples, rationale=v.rationale,
+            reviewed_event_id=v.reviewed_event_id, suspects=list(v.suspects)[:16], tokens=v.tokens,
+            latency_ms=round(v.latency_ms, 1), provider=getattr(self.backend, "provider", None),
+            model=getattr(self.backend, "model", None))
+        if not escalated:
             return  # report only on escalation
         self._reported[action.session_id] = band
         ctx.emit_finding(FindingDraft(

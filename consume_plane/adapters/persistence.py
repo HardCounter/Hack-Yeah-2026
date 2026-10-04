@@ -15,7 +15,7 @@ from persistence.adapters import to_agent_action
 from persistence.models import ActionEventEnvelope
 from persistence.vocabulary import is_intent
 
-from ..model.outputs import Finding
+from ..model.outputs import Finding, PluginDecision
 from ..ports.event_source import Delivery
 from ..ports.trajectory import TrajectoryReader
 
@@ -173,6 +173,14 @@ class PersistenceFindingSink:
         for finding in findings:
             payload = finding.to_dict()
             await self.store.write_consumer_finding(finding.finding_id, payload)
+
+    async def write_decisions(self, decisions: Sequence[PluginDecision]) -> None:
+        """Control-plane decision trace; the store projects it and ignores replays of the same ID."""
+        for decision in decisions:
+            await self.store.write_plugin_decision(decision.to_dict())
+
+    async def decisions(self, session_id: str) -> list[dict[str, Any]]:
+        return await self.store.list_plugin_decisions(session_id)
 
     async def write_verification(self, session_id: str, result: VerificationResult) -> None:
         await self.store.write_verification(session_id, result.to_dict())

@@ -34,6 +34,7 @@ SideEffect = Literal["read", "write", "irreversible"]
 SessionState = Literal["active", "ended", "halted"]
 VerificationFilter = Literal["VERIFIED_SUCCESS", "FAILED_POSTCONDITIONS", "VERIFICATION_INCOMPLETE", "none"]
 Adjustment = Literal["ALERT", "REQUIRE_APPROVAL_FOR", "BLOCK_TOOLS", "STRICT_MODE", "HALT_SESSION"]
+DecisionOutcome = Literal["decided", "failed", "dead_lettered"]
 Scope = Literal["session", "run", "case", "agent"]
 GroupBy = Literal["agent", "session", "case", "model", "tool", "day"]
 Metric = Literal["actions", "blocked", "redacted", "detections", "input_tokens", "output_tokens", "cost_usd",
@@ -196,6 +197,31 @@ async def get_verification(session_id: Id, request: Request):
     if not request.app.state.example_mode:
         return await asyncio.to_thread(request.app.state.read_queries.verification, session_id)
     return ex.verification(session_id)
+
+
+@router.get("/sessions/{session_id}/decisions")
+async def list_decisions(session_id: Id, request: Request, plugins: Csv = None, outcomes: Csv = None,
+                         decisions: Csv = None, trigger_event_id: OptId = None,
+                         limit: Limit = 100, cursor: Cursor = None):
+    """Control-plane decision trace of one session: every plugin decision point and failed plugin run,
+    oldest first, each with its brief reasoning, factors, trigger step and linked findings/adjustments."""
+    filters = {"plugins": plugins.split(",") if plugins else None,
+               "outcomes": csv("outcomes", outcomes, DecisionOutcome),
+               "decisions": decisions.split(",") if decisions else None,
+               "trigger_event_id": trigger_event_id}
+    filters = {k: v for k, v in filters.items() if v}
+    if request.app.state.example_mode:
+        return {"items": [], "next_cursor": None, "has_more": False, "summary": []}
+    return await asyncio.to_thread(request.app.state.read_queries.decisions, session_id,
+                                   limit=limit, cursor=cursor, **filters)
+
+
+@router.get("/decisions/{decision_id}")
+async def get_decision(decision_id: Id, request: Request):
+    """One traced decision with its trigger step and linked findings."""
+    if request.app.state.example_mode:
+        raise ApiError(404, "not_found")
+    return await asyncio.to_thread(request.app.state.read_queries.decision, decision_id)
 
 
 @router.get("/trajectories/{scope}/{scope_id}")

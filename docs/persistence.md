@@ -76,6 +76,10 @@ Intent and result must have different event IDs; evidence is append-only until
 explicit operator-authorized retention deletion. Retry comparison concerns the
 sanitized record, not omitted raw payloads.
 
+Consume-plane decisions are stored in the `plugin_decisions` table of the same evidence store, under
+the same privacy rules (`persistence.privacy.decision_projection`, applied on write and on read). See
+[decision-trace.md](decision-trace.md).
+
 ## Analytics and live feeds
 
 Attach an async analytics callback with

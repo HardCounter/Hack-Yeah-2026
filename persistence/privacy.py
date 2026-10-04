@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any
+from typing import Any, Mapping
 
 from persistence.models import (
     ActionEventEnvelope, AlertEvent, AuditActionRecord, DeadLetterEnvelope,
@@ -237,3 +237,85 @@ def sanitize_dead_letter(dlq: DeadLetterEnvelope) -> DeadLetterEnvelope:
         data["error_message"] = "CONSUMER_DELIVERY_FAILED"
     data["event"] = sanitize_event(dlq.event).to_dict() if isinstance(dlq.event, ActionEventEnvelope) else evidence(dlq.event)
     return DeadLetterEnvelope.from_dict(data)
+
+
+# --- control-plane decision trace -------------------------------------------------------------
+
+_BRIEF = re.compile(r"[A-Za-z0-9 _.,:;=()\[\]/%+<>#'*-]*\Z")
+_PII_HINT = re.compile(r"@|\d{9,}|\d{3}-\d{2}-\d{4}|\b\d{4}-\d{2}-\d{2}\b")
+_OUTCOMES = {"decided", "failed", "dead_lettered"}
+_METHODS = {"deterministic", "semantic"}
+MAX_REASONING = 240
+MAX_FACTORS = 24
+
+
+def brief_text(value: Any) -> str:
+    """A short plugin-written explanation, kept only if it looks like codes, names and numbers.
+
+    Anything that could be content (other characters, e-mail, long digit runs, dates, secret
+    markers) or is too long is replaced by OMITTED rather than stored or returned.
+    """
+    if value in (None, ""):
+        return ""
+    if (not isinstance(value, str) or len(value) > MAX_REASONING or not _BRIEF.fullmatch(value)
+            or _PII_HINT.search(value) or _SECRET.search(value)):
+        return OMITTED
+    return value
+
+
+def _factor(value: Any, depth: int = 0) -> Any:
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value) or abs(value) > 2**53:
+            raise ValueError("Decision factor out of range")
+        return round(value, 6) if isinstance(value, float) else value
+    if isinstance(value, str):
+        return token(value, required=True)
+    if isinstance(value, (list, tuple)) and depth == 0 and len(value) <= 16:
+        return [_factor(v, 1) for v in value]
+    if isinstance(value, Mapping) and depth == 0 and len(value) <= MAX_FACTORS:
+        return {token(k, required=True): _factor(v, 1) for k, v in value.items()}
+    raise ValueError("Decision factors must be numbers, booleans, codes, or small lists/maps of them")
+
+
+def decision_projection(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Allowlisted, privacy-safe form of a control-plane decision (writer and read API alike).
+
+    Factors that are not codes or numbers are dropped individually, so one bad value never hides
+    the rest of the decision.
+    """
+    safe: dict[str, Any] = {}
+    for key in ("decision_id", "plugin", "plugin_version", "decision", "session_id", "agent_id", "trigger_event_id"):
+        safe[key] = token(payload.get(key), required=True)
+    for key in ("run_id", "case_id", "reason"):
+        safe[key] = token(payload.get(key))
+    if payload.get("outcome") not in _OUTCOMES or payload.get("method") not in _METHODS:
+        raise ValueError("Invalid decision outcome or method")
+    safe["outcome"], safe["method"] = payload["outcome"], payload["method"]
+    if (safe["outcome"] == "decided") != (safe["reason"] is None):
+        raise ValueError("A failure reason is required exactly when the plugin run failed")
+    safe["ts"] = timestamp(payload["ts"])
+    safe["trigger_seq"] = int(number(payload.get("trigger_seq", 0)))
+    safe["attempt"] = int(number(payload.get("attempt", 1)))
+    safe["duration_ms"] = number(payload.get("duration_ms", 0))
+    safe["reasoning"] = brief_text(payload.get("reasoning"))
+    factors = {}
+    raw = payload.get("factors") or {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("Decision factors must be a mapping")
+    for key, value in list(raw.items())[:MAX_FACTORS]:
+        try:
+            factors[token(key, required=True)] = _factor(value)
+        except ValueError:
+            continue
+    safe["factors"] = factors
+    safe["finding_ids"] = [token(x, required=True) for x in payload.get("finding_ids", ())]
+    adjustments = []
+    for item in payload.get("adjustments", ()):
+        entry = {"action": token(item.get("action"), required=True), "outcome": token(item.get("outcome"), required=True)}
+        if item.get("signal_id") is not None:
+            entry["signal_id"] = token(item["signal_id"], required=True)
+        adjustments.append(entry)
+    safe["adjustments"] = adjustments
+    return safe

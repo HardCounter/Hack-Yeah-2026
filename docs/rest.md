@@ -183,6 +183,8 @@ frontend integration must use these authenticated PUTs (preferably through its t
 | 20 | `PUT /api/v1/configs/{name}` | `ConfigUpdateResult` |
 | 21 | `PUT /api/v1/config-selection` | `ConfigSelectionResult` |
 | 22 | `GET /api/v1/metrics/performance` | `PerformanceOverview` |
+| 23 | `GET /api/v1/sessions/{session_id}/decisions` | `Page<PluginDecision>` plus `summary` |
+| 24 | `GET /api/v1/decisions/{decision_id}` | `PluginDecision` |
 
 Priority for the hackathon build: **P0** is 1, 2, 4, 6, 7, 10 and 12. **P1** is the rest. Endpoint 17
 covers the "exportable audit logs" deliverable, so build it as soon as P0 works.
@@ -193,6 +195,9 @@ Implemented: endpoints 1, 2, 3, 5, 6, 10, 14, 15, 16, 17 and **session scope onl
 Endpoint 13 supports `actions`, `blocked`, `redacted`, `input_tokens` and `output_tokens`;
 its other metrics return 501. Configuration endpoints 18–21 remain real backend operations.
 Endpoints 7–9, 11–12 and 22 return 501 in normal mode; run/case/agent trajectories also return 501. Future descriptions below
+Implemented: endpoints 1, 2, 3, 6, 15, 16, 17, 23, 24 and **session scope only** of endpoint 4.
+Configuration endpoints 18–21 remain real backend operations. Endpoints 5, 7–14 and 22 return
+501 in normal mode; run/case/agent trajectories also return 501. Future descriptions below
 remain target contracts, not claims of implemented aggregation. See §11 for current limits and demo.
 
 ## 4. Endpoints
@@ -417,7 +422,8 @@ Lines are written in this order:
 3. `detection`: each `DetectionEvent`
 4. `intervention`: each `Intervention`
 5. `verification`: the `Verification`, if one exists
-6. `export_footer`: `{"record_type": "export_footer", "rows": N, "sha256": "<hex of all prior lines>", "exported_at": "..."}`
+6. `plugin_decision`: each `PluginDecision` of the session, oldest first
+7. `export_footer`: `{"record_type": "export_footer", "rows": N, "sha256": "<hex of all prior lines>", "exported_at": "..."}`
 
 `Content-Disposition: attachment; filename="audit-<session_id>.ndjson"`. The current export buffers
 one bounded read snapshot; it does not stream pages. It enforces the store's persisted `PersistenceSettings.max_export_rows` and
@@ -513,6 +519,34 @@ hybrid defence's two paths.
 - `backend_latency_ms` is `Usage.latency_ms`: the model or tool call itself.
 - `overhead_share` is total interception overhead divided by total overhead plus backend latency,
   `0..1`, or `null` when the window has no executed action.
+
+### 4.21 `GET /sessions/{session_id}/decisions`
+
+The control-plane decision trace of one session: every point where a consume-plane plugin decided
+something (raised a risk level, verified an outcome, skipped or ran an LLM review, ...) and every
+plugin run that failed or was given up. Oldest first. Each item explains itself with a brief
+`reasoning` sentence and the `factors` behind it, and carries the triggering step and the findings
+and policy adjustments it produced.
+
+| Query | Meaning |
+|---|---|
+| `plugins` | CSV of plugin names, e.g. `trajectory-risk,outcome-verifier` |
+| `outcomes` | CSV of `decided`, `failed`, `dead_lettered` |
+| `decisions` | CSV of decision codes, e.g. `LEVEL_RAISED,VERDICT_ALERT` |
+| `trigger_event_id` | only decisions triggered by this event |
+| `limit`, `cursor` | keyset pagination on `(ts, decision_id)` |
+
+The response adds `summary`: counts per `(plugin, outcome)` over the filtered trace. Stores written
+before the trace existed return an empty list, not an error.
+
+```bash
+curl "$BASE/sessions/$SESSION/decisions?plugins=trajectory-risk&decisions=LEVEL_RAISED"
+```
+
+### 4.22 `GET /decisions/{decision_id}`
+
+One `PluginDecision` with its `trigger` step and linked `findings`. `404` when no evidence store
+holds the ID.
 
 ## 5. Models
 
@@ -1289,3 +1323,42 @@ curl -OJ "$BASE/export/sessions/ALLOWED_SESSION_ID"
 
 The positive workflow is independently verified against persisted bank state. Rejected attempts
 appear in the timeline and export. This demonstrates actual evidence, not static example panels.
+
+### 5.17 `PluginDecision`
+
+Written by the consume-plane manager (`consume_plane/runtime/manager.py`) into the `plugin_decisions`
+table of the session's evidence store. Plugins create decided entries with
+`ctx.record_decision(decision, reasoning, **factors)`; the manager adds failed entries itself and an
+`OUTPUT_EMITTED` entry when a plugin emits findings or adjustments without recording a decision.
+
+| Field | Type | Notes |
+|---|---|---|
+| `decision_id` | string | deterministic per (plugin, version, trigger event, outcome, index, attempt); replays do not duplicate |
+| `ts` | timestamp | when the decision was committed |
+| `session_id`, `run_id`, `agent_id`, `case_id` | string | session context |
+| `trigger_event_id`, `trigger_seq` | string, int | the event the plugin was handling |
+| `plugin`, `plugin_version`, `method` | string | `method` is `deterministic` or `semantic` |
+| `outcome` | enum | `decided`, `failed` (will be retried), `dead_lettered` (given up) |
+| `decision` | code | e.g. `NO_CHANGE`, `LEVEL_RAISED`, `VERIFIED_SUCCESS`, `REVIEW_SKIPPED`, `VERDICT_ALERT`, `PLUGIN_FAILED` |
+| `reasoning` | string | one brief sentence of codes, names and numbers; `[OMITTED]` if it could carry content |
+| `reason` | code or null | **only for failures**: exception type or `TIMEOUT`, never the error message |
+| `factors` | object | inputs behind the decision: numbers, booleans, codes, small lists/maps of them |
+| `attempt`, `duration_ms` | int, number | delivery attempt and plugin run time |
+| `finding_ids` | string[] | findings emitted in the same run |
+| `adjustments` | object[] | `{action, outcome, signal_id?}`: proposals and what the feedback controller did with them |
+| `trigger` | object | read-side join: `event_id, seq, ts, kind, name, status, decision` of the trigger step |
+| `findings` | object[] | read-side join: the linked findings (same projection as session findings) |
+
+Decision codes per built-in plugin:
+
+| Plugin | Decisions |
+|---|---|
+| `trajectory-risk` | `NO_CHANGE`, `LEVEL_RAISED` (every tool/egress event) |
+| `outcome-verifier` | `VERIFIED_SUCCESS`, `FAILED_POSTCONDITIONS`, `VERIFICATION_INCOMPLETE` (session end) |
+| `goal-alignment-judge` | `REVIEW_SKIPPED` (`factors.skip_reason`: `SAMPLING`, `BUDGET`, `BUSY`, `UNAVAILABLE`), `REVIEW_STARTED`, `VERDICT_ALIGNED`, `VERDICT_ALERT`, `VERDICT_APPROVAL_REQUIRED`, `REVIEW_DROPPED`, `REVIEW_FAILED` |
+| any (manager) | `OUTPUT_EMITTED`, `PLUGIN_FAILED`, `PLUGIN_GAVE_UP` |
+
+Privacy: the writer and the read API both apply `persistence.privacy.decision_projection`. Identifier
+fields must be opaque tokens, `reasoning` must match a code/number character allowlist without
+e-mail, dates, long digit runs or secret markers, and factor values that are not codes or numbers
+are dropped one by one.

@@ -12,6 +12,7 @@
 #   e2e          cross-layer and real-OpenCode pipeline tests (+ live adapter handshake check)
 #   adapter      OpenCode adapter Node tests (no npm install needed)
 #   data         dataset generator, KYC tools and outcome postconditions
+#   decisions    control-plane decision trace: model, manager, store, REST and running scenarios
 # Examples: scripts/test.sh persistence -x      scripts/test.sh intercept -k prompt
 set -euo pipefail
 
@@ -26,16 +27,14 @@ pytest() { echo "== pytest $*"; uv run --locked pytest -q "$@"; }
 case "$target" in
     all)         pytest "$@"; echo; scripts/test_opencode_adapter.sh --quiet ;;
     python)      pytest "$@" ;;
-    controls)    pytest tests/control_layer "$@" ;;
-    support)     pytest tests/support "$@" ;;
-    intercept)   pytest tests/support/test_policy.py tests/support/test_auditors.py tests/support/test_reason_families.py \
-                        tests/support/test_server.py tests/support/test_receiver.py tests/support/test_execution.py \
-                        tests/support/test_governed_gateway.py tests/support/test_governed_prompts.py \
-                        tests/support/test_intercept_plugins.py "$@" ;;
-    persistence) pytest tests/support/test_persistence*.py tests/support/test_pipeline_support.py "$@" ;;
-    consume)     pytest tests/support/consume_plane "$@" ;;
-    e2e)         pytest tests/support/test_three_layer_e2e.py tests/support/test_integrated_regressions.py \
-                        tests/support/test_opencode_pipeline.py tests/support/test_pipeline_scripts.py "$@"
+    intercept)   pytest intercept tests/test_governed_gateway.py tests/test_governed_prompts.py \
+                        tests/test_integrated_http.py tests/test_integrated_llm.py "$@" ;;
+    persistence) pytest tests/test_persistence*.py tests/test_pipeline_support.py "$@" ;;
+    consume)     pytest tests/consume_plane "$@" ;;
+    decisions)   pytest tests/consume_plane/test_decision_model.py tests/consume_plane/test_decisions.py \
+                        tests/test_decision_trace_api.py tests/test_decisions_demo.py "$@" ;;
+    e2e)         pytest tests/test_three_layer_e2e.py tests/test_integrated_regressions.py \
+                        tests/test_opencode_pipeline.py tests/test_pipeline_scripts.py "$@"
                  if command -v opencode >/dev/null 2>&1 && command -v script >/dev/null 2>&1; then
                      echo; scripts/check_opencode_pipeline.sh
                  else

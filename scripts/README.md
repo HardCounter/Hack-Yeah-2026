@@ -16,6 +16,7 @@ adapter tests; `opencode` 2.x for anything that starts OpenCode. Synthetic data 
 | `setup_opencode_pipeline.sh` | Installs the locked Python env and a pinned OpenCode 2.0.22 under `var/opencode-cli` (only needed without `opencode` on PATH). |
 | `run_intercept_receiver.sh` | Observe-only receiver: logs every adapter request and ALLOWS it (diagnostics, no enforcement). |
 | `run_consume_plane.sh [events.jsonl]` | Replays a recorded run through the consume plane and prints the findings. |
+| `inspect_decisions.sh [SCENARIO ...] [--json] [--serve] [--judge]` | Runs governed scenarios (clean, skip-screening, duplicate-create, out-of-scope) and prints each session's control-plane decision trace; `--serve` keeps the REST API up to browse it. See [decision trace](../docs/decision-trace.md). |
 
 ### Trace a live OpenCode run
 

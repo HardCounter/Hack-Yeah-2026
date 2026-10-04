@@ -7,7 +7,7 @@ from typing import Any, Callable, Iterable, TypeVar
 
 from contracts.action import ActionKind, AgentAction, ContentRef
 from contracts.task_contract import TaskContract
-from ..model.outputs import SEVERITIES, AdjustmentProposal, FindingDraft
+from ..model.outputs import SEVERITIES, AdjustmentProposal, DecisionDraft, FindingDraft
 from ..ports.trajectory import Trajectory, TrajectoryReader
 from .registry import LoadedPlugin
 
@@ -21,6 +21,7 @@ class OutputBuffer:
     findings: list[FindingDraft] = field(default_factory=list)
     metrics: list[tuple[str, float, dict[str, str]]] = field(default_factory=list)
     proposals: list[AdjustmentProposal] = field(default_factory=list)
+    decisions: list[DecisionDraft] = field(default_factory=list)
 
 
 class PluginContextImpl:
@@ -69,6 +70,9 @@ class PluginContextImpl:
 
     def propose_adjustment(self, proposal: AdjustmentProposal) -> None:
         self.buffer.proposals.append(proposal)
+
+    def record_decision(self, decision: str, reasoning: str = "", **factors: Any) -> None:
+        self.buffer.decisions.append(DecisionDraft(decision=decision, reasoning=reasoning, factors=factors))
 
     async def run_blocking(self, fn: Callable[..., T], *args: Any) -> T:
         return await asyncio.to_thread(fn, *args)
