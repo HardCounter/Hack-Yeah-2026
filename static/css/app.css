@@ -168,7 +168,7 @@ a.kpi:hover, a.kpi:focus-visible { background: var(--paper-2); } a.kpi:hover .la
 .kpi .label { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); }
 .kpi .value { display: block; font: 500 1.75rem/1.2 var(--mono); margin-top: 0.25rem; }
 .kpi .sub { font-size: .8125rem; color: var(--ink-3); }
-.kpi .spark { display: block; width: 100%; height: 2rem; margin-top: .5rem; border-bottom: thin solid var(--rule); }
+.spark { display: block; width: 100%; height: 6rem; margin-bottom: 1rem; border-bottom: thin solid var(--rule); }
 .spark .hit { fill: transparent; } .spark .bar { fill: var(--brass); } .spark g:hover .bar { fill: var(--ink); }
 .meter { position: relative; height: 0.5rem; background: var(--paper-3); margin: 0.5rem 0 1.25rem; }
 .meter .fill { height: 100%; background: var(--ink); width: 0; transition: width 250ms ease-out; }

@@ -34,14 +34,14 @@
     };
   }
 
-  function kpi(view, label, value, sub, tone, extra) {
+  function kpi(view, label, value, sub, tone) {
     const d = el('a', 'kpi'); d.href = '#metrics/' + view; d.title = 'Show the records behind this number';
     const v = el('span', 'value' + (tone ? ' v-' + tone : ''), value);
-    d.append(el('span', 'label', label), v, el('span', 'sub', sub), ...(extra ? [extra] : []));
+    d.append(el('span', 'label', label), v, el('span', 'sub', sub));
     return d;
   }
 
-  // Tokens per time slice, oldest left, from the recorded actions behind the Model spend total. Hover a bar for its numbers.
+  // Tokens per time slice, oldest left, shown above the Model spend drill-down. Hover a bar for its numbers.
   function spendChart(rows) {
     const N = 20, H = 24, NS = 'http://www.w3.org/2000/svg';
     const node = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
@@ -74,7 +74,7 @@ ${fmtNum(n)} tokens · ${usd(cost[i])}`;
       kpi('held', 'Held for approval', num(by?.REQUIRE_APPROVAL), 'requests awaiting a human', 'hold'),
       kpi('tasks', 'Tasks succeeded', tasks.total ? pct(tasksOk, tasks.total) + '%' : '—', `${tasksOk} of ${tasks.total} agent tasks`, 'allow'),
       kpi('spend', 'Model spend', usage ? usd(usage.totals.cost_usd) : '—',
-        usage ? `${fmtNum(usage.totals.total_tokens)} tokens${usage.totals.source === 'reported' ? '' : ' · estimate'}` : 'tokens', null, spendChart(actions)),
+        usage ? `${fmtNum(usage.totals.total_tokens)} tokens${usage.totals.source === 'reported' ? '' : ' · estimate'}` : 'tokens'),
       kpi('latency', 'Gateway p95', ms(perf?.interception_overhead_ms.p95), perf ? `all checks · p50 ${ms(perf.interception_overhead_ms.p50)}` : 'all checks'),
     );
 
@@ -232,7 +232,8 @@ ${fmtNum(n)} tokens · ${usd(cost[i])}`;
     const rows = list.map(a => link(`#metrics/${view}/${encodeURIComponent(a.event_id)}`, el('td', 'mono cap', fmtTime(time(a))), td(null, badge(verdict(a))),
       el('td', 'mono cap', rule(a)), el('td', 'cap', a.triggered_rules.map(t => t.auditor).join(', ') || '—'), el('td', 'n mono cap', fmtNum(a.usage.total_tokens)),
       el('td', 'n mono cap', ms(a.interception_overhead_ms)), el('td', 'mono cap', what(a)), el('td', 'mono cap muted', a.session_id)));
-    return [table([['Time'], ['Decision'], ['Rule'], ['Decided by'], ['Tokens', 'n'], ['Gateway', 'n'], ['Action'], ['Session']], rows,
+    return [...(view === 'spend' ? [spendChart(list)] : []),
+      table([['Time'], ['Decision'], ['Rule'], ['Decided by'], ['Tokens', 'n'], ['Gateway', 'n'], ['Action'], ['Session']], rows,
       reachable ? 'No records of this type yet.' : 'Read API unreachable.')];
   }
 
