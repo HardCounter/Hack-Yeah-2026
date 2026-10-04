@@ -1,9 +1,6 @@
-"""Read API stub for dashboards (docs/rest.md), on FastAPI.
+"""SQLite dashboard reads and config management. Deferred reads return 501.
 
-Routes, parameter validation, errors and pagination follow the contract.
-Handlers return the static examples from ``examples.py``; they do not read the
-evidence store yet. Replace each handler body with an awaited ``ReadQueries`` call
-when the read side is implemented (docs/rest.md section 6.3).
+Static frontend examples are available only when example_mode is explicitly enabled.
 """
 from __future__ import annotations
 
@@ -12,6 +9,7 @@ import binascii
 import hashlib
 import json
 import re
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -23,6 +21,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from persistence.http_api import examples as ex
+from persistence.query import ReadQueries, QueryError
 
 Kind = Literal["prompt", "tool_use", "egress", "session", "approval", "control"]
 Status = Literal["completed", "blocked", "redacted", "pending_approval", "failed"]
@@ -62,6 +61,7 @@ class ApiError(Exception):
         "evidence_expired": "evidence for this run has expired",
         "export_quota_exceeded": "export exceeds the configured quota",
         "store_unavailable": "evidence store is unavailable",
+        "not_implemented": "endpoint is not implemented for persisted evidence",
     }
 
     def __init__(self, status: int, code: str, **details: Any):
@@ -88,6 +88,11 @@ def csv(name: str, value: str | None, allowed: type) -> list[str] | None:
 
 def iso(value: datetime | None) -> str | None:
     return None if value is None else value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def query_time(value: datetime | None) -> str | None:
+    """Match the sanitizer's microsecond precision without truncating query boundaries."""
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ") if value is not None else None
 
 
 def window(since: datetime | None, until: datetime | None,
@@ -140,16 +145,24 @@ router = APIRouter(prefix="/api/v1")
 
 
 @router.get("/health")
-async def health():
+async def health(request: Request):
+    if not request.app.state.example_mode:
+        status, result = await asyncio.to_thread(request.app.state.read_queries.health)
+        return JSONResponse(result, status_code=status)
     return {"status": "ok", "schema_version": 3, "read_only": True, "now": ex.now()}
 
 
 @router.get("/sessions")
-async def list_sessions(agent_id: OptId = None, case_id: OptId = None, run_id: OptId = None,
+async def list_sessions(request: Request, agent_id: OptId = None, case_id: OptId = None, run_id: OptId = None,
                         state: SessionState | None = None, verification_status: VerificationFilter | None = None,
                         min_severity: Severity | None = None, since: Since = None, until: Until = None,
                         limit: Limit = 100, cursor: Cursor = None):
-    window(since, until)
+    lo, hi = window(since, until)
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.sessions, limit=limit, cursor=cursor,
+                                       agent_id=agent_id, case_id=case_id, run_id=run_id, state=state,
+                                       verification_status=verification_status, min_severity=min_severity,
+                                       since=query_time(since), until=query_time(until))
     items = keep(ex.sessions(), "state", state)
     if verification_status is not None:
         items = keep(items, "verification_status", None if verification_status == "none" else verification_status)
@@ -157,7 +170,9 @@ async def list_sessions(agent_id: OptId = None, case_id: OptId = None, run_id: O
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: Id):
+async def get_session(session_id: Id, request: Request):
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.session_detail, session_id)
     return ex.session_detail(session_id)
 
 
@@ -167,12 +182,14 @@ async def get_session_usage(session_id: Id):
 
 
 @router.get("/sessions/{session_id}/verification")
-async def get_verification(session_id: Id):
+async def get_verification(session_id: Id, request: Request):
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.verification, session_id)
     return ex.verification(session_id)
 
 
 @router.get("/trajectories/{scope}/{scope_id}")
-async def get_trajectory(scope: Scope, scope_id: Id, kinds: Csv = None, statuses: Csv = None,
+async def get_trajectory(scope: Scope, scope_id: Id, request: Request, kinds: Csv = None, statuses: Csv = None,
                          from_seq: Annotated[int | None, Query(ge=0)] = None,
                          to_seq: Annotated[int | None, Query(ge=0)] = None,
                          since: Since = None, until: Until = None,
@@ -181,7 +198,16 @@ async def get_trajectory(scope: Scope, scope_id: Id, kinds: Csv = None, statuses
     kind_list, status_list = csv("kinds", kinds, Kind), csv("statuses", statuses, Status)
     if scope != "session" and (from_seq is not None or to_seq is not None):
         raise ApiError(400, "bad_request", parameter="from_seq", reason="session scope only")
-    window(since, until)
+    lo, hi = window(since, until)
+    if from_seq is not None and to_seq is not None and from_seq > to_seq:
+        raise ApiError(400, "bad_request", parameter="from_seq")
+    if not request.app.state.example_mode:
+        if scope != "session":
+            raise ApiError(501, "not_implemented")
+        return await asyncio.to_thread(request.app.state.read_queries.trajectory, scope_id,
+                                       limit=limit, cursor=cursor, view=view, include_detections=include_detections,
+                                       kinds=kind_list, statuses=status_list, from_seq=from_seq, to_seq=to_seq,
+                                       since=query_time(since), until=query_time(until))
     result = ex.trajectory(scope, scope_id, view)
     segment = result["segments"][0]
 
@@ -220,7 +246,9 @@ async def list_actions(session_id: OptId = None, run_id: OptId = None, case_id: 
 
 
 @router.get("/actions/{event_id}")
-async def get_action(event_id: Id):
+async def get_action(event_id: Id, request: Request):
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.action, event_id)
     return ex.action(event_id)
 
 
@@ -313,6 +341,8 @@ async def list_interventions(session_id: OptId = None, source_plugin: OptId = No
 
 @router.get("/system/stats")
 async def system_stats(request: Request):
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.stats)
     stats = ex.store_stats()
     # Real value: how many per-session evidence stores the read side can see (one per bound session).
     evidence_dir = request.app.state.evidence_dir
@@ -321,7 +351,11 @@ async def system_stats(request: Request):
 
 
 @router.get("/export/sessions/{session_id}")
-async def export_session(session_id: Id):
+async def export_session(session_id: Id, request: Request):
+    if not request.app.state.example_mode:
+        payload = await asyncio.to_thread(request.app.state.read_queries.export, session_id)
+        return Response(payload, media_type="application/x-ndjson",
+                        headers={"Content-Disposition": f'attachment; filename="audit-{session_id}.ndjson"'})
     records = [{"record_type": "session", **ex.session_detail(session_id)}]
     records += [{"record_type": "action", **ex.action(s["event_id"])["event"]} for s in ex.steps(session_id)]
     records += [{"record_type": "detection", **d} for d in ex.detections()]
@@ -341,16 +375,18 @@ EVIDENCE_GLOB = "*.evidence.db"  # GovernedRuntime writes <runs-dir>/<session_id
 
 
 def create_app(cors_origins: frozenset[str] = frozenset(), docs: bool = True,
-               evidence_dir: Path | None = None, *, config_service=None) -> FastAPI:
+               evidence_dir: Path | None = None, *, config_service=None, example_mode=False) -> FastAPI:
     """Build dashboard reads and authenticated config management (evidence remains read-only).
 
-    ``evidence_dir`` holds the per-session evidence stores the handlers will read once implemented.
+    ``evidence_dir`` holds per-session evidence stores, opened read-only per query.
     """
     app = FastAPI(title="Dashboard reads and configuration management", version="0.1.0",
-                  description="Evidence reads serve example data; configuration management is file-backed. See docs/rest.md.",
+                  description="Read-only persisted evidence and configuration management. See docs/rest.md.",
                   docs_url="/api/v1/docs" if docs else None, redoc_url=None,
                   openapi_url="/api/v1/openapi.json" if docs else None)
     app.state.evidence_dir = evidence_dir
+    app.state.example_mode = example_mode
+    app.state.read_queries = ReadQueries(evidence_dir)
     app.include_router(router)
     from configuration.api import install_config_api, management_put
     install_config_api(app, config_service=config_service)
@@ -360,8 +396,17 @@ def create_app(cors_origins: frozenset[str] = frozenset(), docs: bool = True,
         if request.method not in ("GET", "HEAD") and not (
                 request.method == "PUT" and management_put(request.url.path)):
             return error_response(405, "method_not_allowed")
+        path = request.url.path
+        deferred = {"/api/v1/actions", "/api/v1/detections", "/api/v1/catalog/detections",
+                    "/api/v1/metrics/usage", "/api/v1/metrics/security", "/api/v1/metrics/performance",
+                    "/api/v1/metrics/timeseries", "/api/v1/interventions"}
+        if not example_mode and (path in deferred or path.startswith("/api/v1/detections/")
+                                 or re.fullmatch(r"/api/v1/sessions/[^/]+/usage", path)):
+            return error_response(501, "not_implemented")
         response = await call_next(request)
         response.headers.setdefault("Cache-Control", "no-store")
+        if path.startswith("/api/v1/") and not path.startswith("/api/v1/config"):
+            response.headers["X-Data-Source"] = "example" if example_mode else "persisted"
         return response
 
     # Registered after read_only so it runs outside it and answers CORS preflight (OPTIONS).
@@ -372,6 +417,10 @@ def create_app(cors_origins: frozenset[str] = frozenset(), docs: bool = True,
     @app.exception_handler(ApiError)
     async def api_error(_: Request, exc: ApiError):
         return error_response(exc.status, exc.code, exc.details)
+
+    @app.exception_handler(QueryError)
+    async def query_error(_: Request, exc: QueryError):
+        return error_response(exc.status, exc.code)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError):

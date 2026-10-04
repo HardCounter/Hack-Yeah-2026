@@ -1,4 +1,4 @@
-"""Read-only REST API for dashboards (docs/rest.md). Currently a stub serving example data."""
+"""Read-only SQLite dashboard API with explicitly opt-in frontend example mode."""
 from persistence.http_api.app import create_app
 
 __all__ = ["create_app"]

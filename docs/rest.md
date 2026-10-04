@@ -1,10 +1,14 @@
 # Dashboard REST API and configuration management
 
-**Status (2026-10-04): evidence-read stub implemented, store queries not.** `persistence/http_api/` serves the
-evidence-read endpoints below, with this validation, error envelope and pagination, but those handlers return
-fixed example data from `persistence/http_api/examples.py`. Tests: `tests/test_http_api_stub.py`.
+**Status (2026-10-04): core persisted evidence reads implemented.** Health, storage stats, session
+list/detail, session verification, action drill-down, session trajectories and audit export use
+real read-only SQLite queries in `persistence/query.py`. Tests: `tests/test_http_api_persisted.py`.
+Remaining evidence endpoints return **501 `not_implemented`**, not fabricated data, in normal mode.
+Frontend examples require explicit `--example-mode` / `create_app(example_mode=True)` and carry
+`X-Data-Source: example`; successful normal reads carry `X-Data-Source: persisted`.
+Example-contract tests remain in `tests/test_http_api_stub.py`.
 **Configuration management is implemented, not a stub:** the shared `configuration/` router
-provides authenticated updates and backend selection, backed by durable JSON state. Tests:
+provides updates and backend selection, backed by durable JSON state. Tests:
 `tests/test_configuration_api.py`, `tests/test_configuration_intercept.py`, `tests/test_web.py`.
 This document is the contract the implementation and the dashboard build against. Where the persistence layer cannot yet supply a
 field, [section 8](#8-required-persistence-changes) lists the change. Until that change lands, the
@@ -36,22 +40,28 @@ The write API in [persistence.md](persistence.md) is
 still not exposed over HTTP.
 
 Module: `persistence/http_api/`, built on **FastAPI** with `async def` handlers, served by
-**uvicorn**. This matches the asyncio-based codebase: the store methods are already coroutines, so a
-handler awaits them directly. These are the only runtime dependencies the API adds (FastAPI is MIT
+**uvicorn**. Read handlers offload synchronous SQLite work with `asyncio.to_thread`, avoiding
+blocking the event loop. These are the only runtime dependencies the API adds (FastAPI is MIT
 licensed, uvicorn is BSD). `httpx2` is a dev dependency, used by the test client.
 
 | File | Content |
 |---|---|
 | `app.py` | `create_app(cors_origins, evidence_dir)`: routes, error handlers, read-only and CORS middleware, pagination |
-| `examples.py` | Example payloads for every model in §5. Delete this file when the handlers call `ReadQueries`. |
+| `examples.py` | Explicit example-mode frontend fixtures, never normal-mode evidence |
+| `persistence/query.py` | Read-only queries, sanitized projections, keyset cursors and bounded audit export |
+| `demo.py` | Real offline scripted gateway runs and independent verification, then a loopback API |
 | `__main__.py` | CLI: binds `127.0.0.1` by default and refuses a non-loopback bind without `--allow-remote` |
 | `configuration/` (repository root) | Typed management models, shared router, and cross-process `ConfigService`; also mounted by `web/main.py` |
 
 ```sh
 # started automatically next to the gateway by the live pipeline
 scripts/run_live_pipeline.sh APP-0001 [--api-port 8790] [--cors-origin http://localhost:5173] [--no-api]
-# on its own, for dashboard development against the stub
-scripts/run_rest_api.sh --cors-origin http://localhost:5173
+# on its own, against recorded evidence
+scripts/run_rest_api.sh --evidence-dir <bank-runs-dir> --cors-origin http://localhost:5173
+# frontend fixture mode only, not a security/control demonstration
+scripts/run_rest_api.sh --example-mode --cors-origin http://localhost:5173
+# fresh actual synthetic gateway evidence, no OpenCode/model required
+scripts/run_rest_demo.sh --port 8790
 # directly
 uv run python -m persistence.http_api --evidence-dir <bank-runs dir> --config-dir <operator-config-dir> --port 8790
 ```
@@ -59,8 +69,8 @@ uv run python -m persistence.http_api --evidence-dir <bank-runs dir> --config-di
 **One evidence store per session.** The governed runtime writes
 `<runs-dir>/<session_id>.evidence.db` when a session binds, so the API takes the directory
 (`--evidence-dir`), not one database file. Each read opens the matching store read-only.
-Cross-session endpoints (`/sessions`, `/detections`, `/metrics/*`) merge over every
-`*.evidence.db` in the directory. The live pipeline passes its `bank-runs/` directory. See
+The implemented `/sessions` and `/system/stats` scan matching stores in the directory.
+Cross-session detections/metrics remain deferred. The live pipeline passes its `bank-runs/` directory. See
 [scripts/README.md](../scripts/README.md) for the process layout and the env files.
 
 The OpenAPI schema is served at `/api/v1/openapi.json`, with an interactive UI at `/api/v1/docs`.
@@ -85,7 +95,7 @@ decisions from the gateway's SSE stream and history from this API.
 | IDs | Opaque strings, as stored. Clients must not parse them. |
 | Enum casing | The wire vocabulary of [Event Envelope v2.1](consumer-plane-event-envelope.md): `kind`, `status` and `severity` are lowercase, and gateway decisions are uppercase (`ALLOW`, `BLOCK`, `REDACT`, `REQUIRE_APPROVAL`, `ALERT`). Uppercase storage enums are mapped through `persistence/vocabulary.py` and never leak. |
 | Unknown fields | Clients must ignore fields they do not know. New fields are additive within `v1`. |
-| Consistency | Each request reads inside one SQLite read transaction, so one response is a consistent snapshot. |
+| Consistency | Session queries/export use one read transaction. Cross-store lists/stats use one snapshot per file; there is no globally atomic snapshot across files. |
 | Privacy | Only data that already passed `persistence/privacy.py` is returned. Bodies (prompts, completions, tool results) are never returned, only `ContentRef` metadata. Free text such as finding summaries, auditor reasons and errors is never stored, so it cannot be returned. Human-readable reasons come from the static [detection catalog](#57-detection-catalog). The contract `objective` is not returned. |
 
 ### 2.1 Pagination
@@ -120,6 +130,7 @@ Every error uses the same body:
 | 410 | `evidence_expired` | The run was sealed and then pruned (`audit_runs.lifecycle = EXPIRED`) |
 | 413 | `export_quota_exceeded` | The export exceeds `max_export_rows` or `max_export_bytes` from `PersistenceSettings` |
 | 503 | `store_unavailable` | The database is missing, locked past the busy timeout, or has the wrong schema version |
+| 501 | `not_implemented` | Deferred evidence endpoint in normal mode; example mode is explicit |
 
 Configuration-specific errors (same envelope; fixed messages, no submitted values or exception text):
 
@@ -170,6 +181,13 @@ frontend integration must use these authenticated PUTs (preferably through its t
 
 Priority for the hackathon build: **P0** is 1, 2, 4, 6, 7, 10 and 12. **P1** is the rest. Endpoint 17
 covers the "exportable audit logs" deliverable, so build it as soon as P0 works.
+
+### Current persisted-read scope
+
+Implemented: endpoints 1, 2, 3, 6, 15, 16, 17 and **session scope only** of endpoint 4.
+Configuration endpoints 18–21 remain real backend operations. Endpoints 5, 7–14 and 22 return
+501 in normal mode; run/case/agent trajectories also return 501. Future descriptions below
+remain target contracts, not claims of implemented aggregation. See §11 for current limits and demo.
 
 ## 4. Endpoints
 
@@ -364,14 +382,14 @@ The exportable audit log for one session, as NDJSON. Every line is one object wi
 Lines are written in this order:
 
 1. `session`: the `SessionDetail`
-2. `action`: each `Action.event` in `seq` order, intents included (`include_intents=true`)
+2. `action`: decision/completion events in `seq` order; separate `intent` records for durable pre-dispatch intents
 3. `detection`: each `DetectionEvent`
 4. `intervention`: each `Intervention`
 5. `verification`: the `Verification`, if one exists
 6. `export_footer`: `{"record_type": "export_footer", "rows": N, "sha256": "<hex of all prior lines>", "exported_at": "..."}`
 
-`Content-Disposition: attachment; filename="audit-<session_id>.ndjson"`. The export streams pages
-and holds one read snapshot. It enforces `PersistenceSettings.max_export_rows` and
+`Content-Disposition: attachment; filename="audit-<session_id>.ndjson"`. The current export buffers
+one bounded read snapshot; it does not stream pages. It enforces the store's persisted `PersistenceSettings.max_export_rows` and
 `max_export_bytes` and fails with `413` before it sends anything. Run-scoped exports with
 principal checks and retention holds remain on `AuditReader.export_jsonl`.
 
@@ -845,8 +863,9 @@ This is the stored `verification_results` projection unchanged, plus `verified_a
 }
 ```
 
-`evidence_stores` is the number of per-session stores in `--evidence-dir`, or `null` when no
-directory is configured. The stub already returns the real value for this field.
+`evidence_stores` is the real count of per-session stores in `--evidence-dir`. An unconfigured
+directory returns 503, not sample stats. Counts, average latency, outbox backlog and main database
+file sizes are queried from those stores; WAL side-file sizes are not included in `db_size_bytes`.
 
 This is the only endpoint that shows storage-level enums. It reports operator diagnostics and is
 not a domain view.
@@ -1048,7 +1067,7 @@ alerts are queried through their own `session_id` and `ts` indexes.
 | interventions | – | `list_policy_signals` with filters |
 | stats | `get_stats`, `pending_deliveries` | – |
 
-All new queries live in a new `persistence/query.py` (`ReadQueries`). It is read-only, takes its
+Implemented core queries live in `persistence/query.py` (`ReadQueries`). It is read-only, takes its
 own read-only connection, and every result goes through the existing `sanitize_*` functions, as
 the current readers do.
 
@@ -1125,3 +1144,72 @@ None of these changes alters Event Envelope v2.1 or the decision semantics.
   history, trajectories and metrics from this API.
 - [consumer-plane.md §9.2](consumer-plane.md#92-metrics): an explanation of how the in-process
   `/consumer/metrics` differs from the persisted usage metrics here.
+
+## 11. Persisted-read implementation and offline demo
+
+An existing empty evidence directory is healthy and returns zero stats/an empty session list.
+A missing/unconfigured directory returns 503 (health: `status: degraded`). Unknown sessions/actions
+return 404; expired-run drill-down returns 410. Health checks every configured evidence file's
+schema/event-table readability; it does not prove business success. `/health.read_only` refers
+to evidence, not configuration writes.
+
+Normal reads never call schema migrations, writer methods or `EventStore.initialize()`. They use
+`mode=ro`, `PRAGMA query_only=ON`, bound SQL parameters, a 1-second busy timeout and a 5-second
+SQLite query deadline. Scans are capped at 128 stores; loaded query results are capped at
+10,000 rows / 8 MiB of string data. Overflow fails closed with 503. Symlinked stores and
+incompatible schemas are rejected. These are local, bounded demo queries, not a scalable
+distributed read service.
+
+Pagination loads a bounded snapshot and uses scope/filter-bound keyset cursors. Changed filters
+or a removed anchor return 400 `invalid_cursor`. A response/export for one session is consistent
+inside its read transaction. Cross-session reads are per-file consistent, not globally atomic.
+
+### Projection limitations
+
+- No raw prompts, completions, tool results, finding summaries, auditor reasons or Task Contract
+  objectives are served. Existing sanitizers are reapplied on read.
+- Intents have no consumer sequence and cannot be converted to v2.1. Drill-down/export uses a
+  separate minimal sanitized intent projection with `schema_version: "2.0"`, `status: "pending"`
+  and `seq: null`; intents are excluded from trajectories and session action counts.
+- Detection descriptions/OWASP catalog lookups remain deferred. Readable descriptions and OWASP
+  values stay null/empty. Session detail/trajectories derive gateway and finding references;
+  export does not yet merge every legacy alert source.
+- Session risk comes from persisted trajectory-finding severity. Expected loss/probability stay
+  null because the current finding projection does not store them. Session state includes applied
+  halt/end events; detail/export includes persisted interventions.
+- Verification is read from the independently persisted verifier result, not agent text. Known
+  sessions without a result return 200 with null status/timestamp and no checks. A missing
+  verification timestamp falls back to a recorded session-end time or null; the fallback is not
+  claimed to be the exact verifier timestamp.
+- Session-summary usage includes executed/failed mediated model events, excludes intents and is
+  labeled estimated. It does not cover unmediated OpenCode provider calls. Dedicated usage and
+  aggregated metrics endpoints still return 501.
+- Export includes session detail, action/intent records, gateway/finding detections, interventions
+  and stored verification. The NDJSON footer hashes all preceding bytes. The persisted store
+  quotas are checked before sending any data; overflow returns 413.
+
+### Judge-runnable demo
+
+Run `scripts/run_rest_demo.sh --port 8790`. It creates a fresh isolated synthetic bank and two
+actual governed sessions: an allowed scripted onboarding workflow and a rejected out-of-scope
+registry lookup. It prints the evidence directory and session IDs. No model/provider is contacted
+and existing datasets are not overwritten. The demo uses the trusted scripted baseline policy,
+not an approval-requiring interactive preset.
+
+In another terminal:
+
+```bash
+BASE=http://127.0.0.1:8790/api/v1
+curl "$BASE/health"
+curl "$BASE/system/stats"
+curl "$BASE/sessions"
+# substitute the IDs printed by the demo:
+curl "$BASE/trajectories/session/BLOCKED_SESSION_ID"
+# substitute a blocked event_id from that timeline:
+curl "$BASE/actions/BLOCKED_EVENT_ID"
+curl "$BASE/sessions/ALLOWED_SESSION_ID/verification"
+curl -OJ "$BASE/export/sessions/ALLOWED_SESSION_ID"
+```
+
+The positive workflow is independently verified against persisted bank state. Rejected attempts
+appear in the timeline and export. This demonstrates actual evidence, not static example panels.

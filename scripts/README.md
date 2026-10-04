@@ -9,7 +9,8 @@ adapter tests; `opencode` 2.x for anything that starts OpenCode. Synthetic data 
 |---|---|
 | `run_opencode_intercepted.sh [--workspace DIR] [opencode flags]` | Terminal 2: starts `opencode --standalone` wired to whichever service terminal 1 started (`var/intercept.env`). Defaults to the run's temporary project; `--workspace` selects another existing project directory while retaining the run-specific adapter/agent config. |
 | `run_live_pipeline.sh [APP-0001] [--model p/m] [--port 8080] [--api-port 8790] [--cors-origin URL] [--no-api]` | **Full pipeline for an interactive OpenCode session.** Starts gateway → evidence store → consumers on a fresh synthetic bank, plus the read-only REST API for dashboards. Traces every step to `var/live-runs/<run>/control-layer.log` and waits. Ctrl+C finishes the session, verifies the outcome, saves artifacts and stops both processes. |
-| `run_rest_api.sh [--port 8790] [--cors-origin URL] [--evidence-dir DIR]` | The REST API on its own ([docs/rest.md](../docs/rest.md)), for dashboard work without a pipeline. Currently a stub that serves example data. No authentication; binds loopback only. Docs UI at `/api/v1/docs`. |
+| `run_rest_api.sh [--port 8790] [--cors-origin URL] [--evidence-dir DIR] [--example-mode]` | Read-only SQLite evidence API ([docs/rest.md](../docs/rest.md)). Deferred queries return 501; explicit `--example-mode` serves frontend fixtures. Binds loopback. Docs UI at `/api/v1/docs`. |
+| `run_rest_demo.sh [--port 8790] [--runs-dir var/rest-demos]` | Generates two actual governed synthetic sessions and independent verification, then serves their real SQLite evidence. No OpenCode/model/provider needed; prints IDs and curl commands. |
 | `run_demo.sh [APP-ID] [--fault F]` | Whole control layer offline with a scripted agent (no model, no network); prints the trace and the verdict. |
 | `run_pipeline.sh APP-0001 --model p/m` | Non-interactive: OpenCode works one application through the governed tools, then verification; artifacts in `var/pipeline-runs/`. |
 | `setup_opencode_pipeline.sh` | Installs the locked Python env and a pinned OpenCode 2.0.22 under `var/opencode-cli` (only needed without `opencode` on PATH). |
@@ -60,8 +61,9 @@ curl http://127.0.0.1:8790/api/v1/system/stats   # evidence_stores: real count
 ```
 
 If the API process dies, the control layer keeps enforcing; the pipeline prints a warning and
-only the dashboard view is lost. Until the read queries are implemented, every endpoint except
-`system/stats.evidence_stores` returns example data.
+only the dashboard view is lost. Health, session list/detail/verification, action drill-down,
+session trajectory and audit export now read actual SQLite state. Deferred metrics/detections
+return 501 unless explicitly started with `--example-mode`.
 
 ## Test
 

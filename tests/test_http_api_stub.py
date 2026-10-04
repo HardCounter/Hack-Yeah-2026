@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from persistence.http_api import create_app
 
 ORIGIN = "http://localhost:5173"
-client = TestClient(create_app(frozenset({ORIGIN})))
+client = TestClient(create_app(frozenset({ORIGIN}), example_mode=True))
 
 
 def get(path, method="GET"):
@@ -127,6 +127,6 @@ def test_stats_count_the_real_per_session_evidence_stores(tmp_path):
     (tmp_path / "ses_a.evidence.db").touch()
     (tmp_path / "ses_a.evidence.ledger.db").touch()
     (tmp_path / "ses_a.bank.db").touch()
-    local = TestClient(create_app(evidence_dir=tmp_path))
+    local = TestClient(create_app(evidence_dir=tmp_path, example_mode=True))
     assert local.get("/api/v1/system/stats").json()["evidence_stores"] == 1
     assert get("/api/v1/system/stats")[1]["evidence_stores"] is None
