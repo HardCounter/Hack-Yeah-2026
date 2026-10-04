@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 
 
@@ -79,3 +80,75 @@ def test_live_pipeline_help_and_busy_port_check():
         result = subprocess.run([sys_executable(), "-m", "simulation.live_pipeline", "--model", "p/m",
                                  "--port", str(port)], cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 2 and "in use" in result.stderr
+
+
+def test_intercepted_launcher_uses_selected_workspace_and_keeps_run_config(tmp_path):
+    fake_root = tmp_path / "repo"
+    scripts = fake_root / "scripts"
+    demo = fake_root / "var" / "demo"
+    workspace = tmp_path / "team workspace"
+    bin_dir = tmp_path / "bin"
+    scripts.mkdir(parents=True)
+    demo.mkdir(parents=True)
+    (demo / ".opencode").mkdir()
+    workspace.mkdir()
+    bin_dir.mkdir()
+    launcher = scripts / "run_opencode_intercepted.sh"
+    launcher.write_text((ROOT / "scripts/run_opencode_intercepted.sh").read_text(encoding="utf-8"),
+                        encoding="utf-8")
+    (demo / "opencode.json").write_text(
+        '{"plugins":[{"package": "/tmp/adapters/opencode"}]}\n', encoding="utf-8")
+    capture = tmp_path / "opencode-call.txt"
+    stub = bin_dir / "opencode"
+    stub.write_text(
+        '#!/bin/bash\n'
+        'printf "cwd=%s\\nconfig=%s\\nconfig_dir=%s\\ndisable_project=%s\\n" '
+        '"$PWD" "$OPENCODE_CONFIG" "$OPENCODE_CONFIG_DIR" "$OPENCODE_DISABLE_PROJECT_CONFIG" '
+        '> "$LAUNCH_CAPTURE"\n'
+        'printf "arg=<%s>\\n" "$@" >> "$LAUNCH_CAPTURE"\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+
+    with socket.socket() as receiver:
+        receiver.bind(("127.0.0.1", 0))
+        receiver.listen()
+        port = receiver.getsockname()[1]
+        (fake_root / "var" / "intercept.env").write_text(
+            f"INTERCEPT_TOKEN={'a' * 48}\nINTERCEPT_PORT={port}\nINTERCEPT_DEMO_DIR={demo}\n",
+            encoding="utf-8",
+        )
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}",
+               "LAUNCH_CAPTURE": str(capture)}
+        result = subprocess.run(
+            ["bash", str(launcher), "--print-logs", "--workspace", str(workspace)],
+            cwd=tmp_path, env=env, capture_output=True, text=True,
+        )
+
+    assert result.returncode == 0, result.stderr
+    recorded = capture.read_text(encoding="utf-8").splitlines()
+    assert recorded[:4] == [
+        f"cwd={workspace}", f"config={demo / 'opencode.json'}",
+        f"config_dir={demo / '.opencode'}", "disable_project=1",
+    ]
+    assert recorded[4:] == ["arg=<--standalone>", "arg=<--print-logs>"]
+    assert workspace.is_dir()
+
+
+def test_intercepted_launcher_rejects_missing_workspace(tmp_path):
+    fake_root = tmp_path / "repo"
+    scripts = fake_root / "scripts"
+    demo = fake_root / "var" / "demo"
+    scripts.mkdir(parents=True)
+    demo.mkdir(parents=True)
+    launcher = scripts / "run_opencode_intercepted.sh"
+    launcher.write_text((ROOT / "scripts/run_opencode_intercepted.sh").read_text(encoding="utf-8"),
+                        encoding="utf-8")
+    (fake_root / "var" / "intercept.env").write_text(
+        f"INTERCEPT_TOKEN={'a' * 48}\nINTERCEPT_PORT=1\nINTERCEPT_DEMO_DIR={demo}\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(["bash", str(launcher), "--workspace"], cwd=tmp_path,
+                            capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "--workspace requires a directory" in result.stderr

@@ -8,7 +8,7 @@ adapter tests; `opencode` 2.x for anything that starts OpenCode. Synthetic data 
 | Script | What it does |
 |---|---|
 | `run_live_pipeline.sh [APP-0001] [--model p/m] [--port 8080]` | **Full pipeline for an interactive OpenCode session.** Starts gateway → evidence store → consumers on a fresh synthetic bank, traces every step to `var/live-runs/<run>/control-layer.log`, and waits. Ctrl+C finishes the session, verifies the outcome and saves artifacts. |
-| `run_opencode_intercepted.sh [opencode flags]` | Terminal 2: starts `opencode --standalone` wired to whichever service terminal 1 started (`var/intercept.env`). |
+| `run_opencode_intercepted.sh [--workspace DIR] [opencode flags]` | Terminal 2: starts `opencode --standalone` wired to whichever service terminal 1 started (`var/intercept.env`). Defaults to the run's temporary project; `--workspace` selects another existing project directory while retaining the run-specific adapter/agent config. |
 | `run_demo.sh [APP-ID] [--fault F]` | Whole control layer offline with a scripted agent (no model, no network); prints the trace and the verdict. |
 | `run_pipeline.sh APP-0001 --model p/m` | Non-interactive: OpenCode works one application through the governed tools, then verification; artifacts in `var/pipeline-runs/`. |
 | `setup_opencode_pipeline.sh` | Installs the locked Python env and a pinned OpenCode 2.0.22 under `var/opencode-cli` (only needed without `opencode` on PATH). |
@@ -18,11 +18,15 @@ adapter tests; `opencode` 2.x for anything that starts OpenCode. Synthetic data 
 ### Trace a live OpenCode run
 
 ```bash
-scripts/run_live_pipeline.sh APP-0001                 # terminal 1 (prints the trace path)
-scripts/run_opencode_intercepted.sh                   # terminal 2, then in OpenCode:
-                                                      #   /intercept-run Process application APP-0001
+scripts/run_live_pipeline.sh APP-0001                       # terminal 1 (prints the trace path)
+scripts/run_opencode_intercepted.sh --workspace "some_path" # terminal 2, interceped opencode in workspace
+
+# or, in terminal 2, choose another existing project directory:
+scripts/run_opencode_intercepted.sh --workspace "$PWD/team-data"
 tail -f var/live-runs/APP-0001-*/control-layer.log    # terminal 3: one JSON line per step
 ```
+
+`--workspace` changes OpenCode's project root only. Workspace-local OpenCode config is ignored so the run-specific adapter/agent config remains active; local filesystem and shell tools remain disabled for the governed agent.
 
 Expected trace for each tool call:
 1. `intercept action.received`
