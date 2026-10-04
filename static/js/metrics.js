@@ -106,6 +106,7 @@
   }
   const jsonl = rows => rows.map(r => JSON.stringify(r)).join('\n') + '\n';
   const json = r => JSON.stringify(r, null, 2) + '\n';
+  App.downloadSession = s => download(`${s.id}.json`, json(sessionRecord(s)), 'application/json');
   const today = () => new Date().toISOString().slice(0, 10);
   $('#mExport').onclick = () => download(`audit-log-${today()}.jsonl`, jsonl(App.events.map(record)), 'application/x-ndjson');
 
@@ -145,7 +146,7 @@
   function taskView(id) {
     const v = VIEWS.tasks, s = id && App.sessions.find(x => x.id === id);
     if (s) {
-      head('#metrics/tasks', s.label, `Session ${s.id}`, 'Download this record (JSON)', () => download(`${s.id}.json`, json(sessionRecord(s)), 'application/json'));
+      head('#metrics/tasks', s.label, `Session ${s.id}`, 'Download this record (JSON)', () => App.downloadSession(s));
       return [App.sessionCard(s)];
     }
     if (id) return head('#metrics/tasks', 'Task not found', 'This session is not in the browser.'), [];

@@ -100,15 +100,25 @@
     return d;
   }
   App.sessionCard = card;
-  // Same card for a dot on the map and a row in the session table
+  // Same card for a dot on the map and a row in the session table. It stays open while the
+  // cursor or focus is on the target or inside the card, so its buttons can be used.
+  let hideTimer;
+  const keep = () => clearTimeout(hideTimer);
+  const hide = () => { keep(); hideTimer = setTimeout(() => pop.hidden = true, 250); };
+  pop.addEventListener('mouseenter', keep); pop.addEventListener('focusin', keep);
+  pop.addEventListener('mouseleave', hide); pop.addEventListener('focusout', hide);
+  addEventListener('hashchange', () => { keep(); pop.hidden = true; });  // e.g. after Open details
   function hoverCard(target, s) {
     const show = () => {
-      pop.replaceChildren(card(s)); pop.hidden = false;
+      keep();
+      const open = el('a', 'btn ghost', 'Open details'); open.href = `#metrics/tasks/${encodeURIComponent(s.id)}`;
+      const dl = el('button', 'btn ghost', 'Download (JSON)'); dl.type = 'button'; dl.onclick = () => App.downloadSession(s);
+      const bar = el('div', 'pop-actions'); bar.append(open, dl);
+      pop.replaceChildren(card(s), bar); pop.hidden = false;
       const r = target.getBoundingClientRect();  // runtime coordinates are measured, not design values
       pop.style.left = Math.max(0, Math.min(r.left + scrollX, innerWidth - pop.offsetWidth - 8)) + 'px';
       pop.style.top = (r.bottom + scrollY) + 'px';
     };
-    const hide = () => pop.hidden = true;
     target.addEventListener('mouseenter', show); target.addEventListener('focus', show);
     target.addEventListener('mouseleave', hide); target.addEventListener('blur', hide);
   }
