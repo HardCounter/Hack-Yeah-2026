@@ -119,7 +119,9 @@ class ReadQueries(UsageQueriesMixin):
             conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
             conn.execute("BEGIN")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version != CURRENT_SCHEMA_VERSION:
+            # Version 4 stores were written by a build that was live for a short time on 2026-10-04;
+            # they hold the same tables this reader uses, so they are served instead of failing every list.
+            if version not in (CURRENT_SCHEMA_VERSION, 4):
                 print(f"read API: store {path.name} has schema version {version}", file=sys.stderr, flush=True)
                 raise QueryError(503, "store_unavailable")
             yield conn
