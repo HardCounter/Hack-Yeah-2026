@@ -32,7 +32,6 @@ button { font: inherit; color: inherit; }
 .seal { color: var(--brass); margin-right: 0.3125rem; }
 .appbar-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem 1.25rem; font-size: .8125rem; color: var(--ink-2); }
 .appbar-meta b { color: var(--ink); font-weight: 600; }
-.env { border: thin solid var(--warn); color: var(--warn); padding: 0 0.375rem; border-radius: 0.125rem; font-weight: 600; font-variant-caps: all-small-caps; letter-spacing: .08em; }
 .dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--ink-3); margin-right: 0.375rem; }
 .dot.ok { background: var(--allow); } .dot.down { background: var(--block); }
 
@@ -184,7 +183,6 @@ tr.fresh td { animation: fresh 900ms ease-out; }
 .cell.fail { background: var(--block); border-color: var(--block); }
 .cell.pending { background: var(--paper-3); }
 .pop { position: absolute; z-index: 5; background: var(--paper); border: thin solid var(--ink); padding: 0.375rem 0.625rem; font: .8125rem/1.5 var(--mono); white-space: pre; pointer-events: none; margin-top: 0.375rem; }
-.cmd { display: flex; align-items: center; gap: 0.5rem; font: .8125rem var(--mono); background: var(--paper-2); border: thin solid var(--rule); padding: 0.375rem 0.625rem; }
 .timeline { list-style: none; margin: 0; padding: 0; counter-reset: s; }
 .timeline li { display: grid; grid-template-columns: 1.75rem 1fr auto; gap: 0 0.75rem; padding: 0.5rem 1rem; border-top: thin solid var(--rule); counter-increment: s; }
 .timeline li::before { content: counter(s); font: .8125rem var(--mono); color: var(--ink-3); }

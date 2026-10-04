@@ -70,11 +70,6 @@
     $('#runSuite').disabled = false; $('#runSuite').textContent = 'Run suite';
     render();
   };
-  $('#copyCmd').onclick = async () => {
-    try { await navigator.clipboard.writeText('uv run pytest'); $('#copyCmd').textContent = 'Copied'; }
-    catch { $('#copyCmd').textContent = 'Copy failed'; }
-    setTimeout(() => $('#copyCmd').textContent = 'Copy', 1500);
-  };
 
   /* Agent outcome replays */
   const ok = 'PASS';
