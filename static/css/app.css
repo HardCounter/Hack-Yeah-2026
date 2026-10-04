@@ -235,8 +235,6 @@ a.kpi:hover, a.kpi:focus-visible { background: var(--paper-2); } a.kpi:hover .la
 .timeline .check { grid-column: 2 / 4; font-size: .8125rem; color: var(--ink-3); }
 tr.bad td { background: color-mix(in srgb, var(--block) 7%, transparent); }
 
-footer { border-top: thin solid var(--rule); background: var(--paper); padding: 0.875rem 0; font-size: .8125rem; color: var(--ink-3); }
-footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem 1.5rem; }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
