@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "var" / "opencode-cli" / "node_modules" / ".bin" / "opencode"
 
 

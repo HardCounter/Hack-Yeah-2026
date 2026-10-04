@@ -46,7 +46,7 @@ Four files. No package-per-tool, no base classes, no plugin loader.
 - The LLM agent loop: uses `registry.openai_tools()` for its tool list, nothing more.
 
 ## Definition of done
-1. `uv run python data/generate.py && uv run python simulation/tools/test_tools.py` passes on a clean checkout.
+1. `uv run python data/generate.py && uv run python tests/support/test_tools.py` passes on a clean checkout.
 2. Every tool has at least one happy-path assertion and writes exactly one audit row per call.
 3. End-to-end check: run the APP-0001 pipeline through `registry.call()`, then
    `verify_onboarding(con, "APP-0001", calls_from_audit(con, session))` returns no failures; the

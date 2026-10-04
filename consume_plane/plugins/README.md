@@ -108,7 +108,7 @@ Adjustments are **denied by default**. A plugin may only send the actions listed
 
 ## 7. Test it
 
-Use the in-memory harness from `tests/consume_plane/conftest.py`:
+Use the in-memory harness from `tests/support/consume_plane/conftest.py`:
 
 ```python
 import asyncio

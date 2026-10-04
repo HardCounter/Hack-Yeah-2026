@@ -10,6 +10,8 @@ const fmtNum = n => Number(n).toLocaleString('en-GB').replace(/,/g, ' ');  // s
 /* Preset names are stored lowercase; show them capitalised, e.g. "Standard (edited)" */
 const label = name => name.replace(/^(lenient|standard|strict)/, w => w[0].toUpperCase() + w.slice(1));
 
+/* The read API's Decision enum (docs/rest.md §5.1) and the word the console shows for it */
+const VERDICT = { ALLOW: 'ALLOWED', BLOCK: 'BLOCKED', REDACT: 'REDACTED', REQUIRE_APPROVAL: 'HELD', ALERT: 'ALERT' };
 /* Decision words used across the console, mapped to colour classes */
 const TONE = { BLOCKED: 'block', REDACTED: 'warn', HELD: 'hold', ALLOWED: 'allow',
   ACTIVE: 'allow', BLOCK: 'block', REDACT: 'warn', ALERT: 'warn', FAIL: 'block', INCOMPLETE: 'warn', PASS: 'allow',
@@ -75,8 +77,6 @@ const Risk = {
 const App = {
   config: null,        // the active config document
   configName: null,
-  tokensUsed: 0,
-  events: [],          // audit log, newest first
   sessions: [],        // agent sessions (tasks) on the risk map
   listeners: {},
   on(evt, fn) { (this.listeners[evt] ||= []).push(fn); },
@@ -84,15 +84,8 @@ const App = {
 
   setActive(name, config, revision) {
     this.configName = name; this.config = config; this.configRevision = revision;
-    this.tokensUsed = 0;  // the session budget restarts with each config
     $$('.activeName').forEach(n => n.textContent = label(name));
     this.emit('config', config);
-  },
-  record(event) {
-    this.events.unshift(event);
-    this.tokensUsed += event.tokens || 0;
-    if (this.events.length > 500) this.events.pop();
-    this.emit('event', event);
   },
 
   // JSON request. A failure throws the server's error message (docs/rest.md §2.2) with the HTTP status.
@@ -106,6 +99,8 @@ const App = {
     return body;
   },
   api(path, opts) { return this.request('/api/v1/configs' + path, opts); },
+  // Read API for dashboards (docs/rest.md): history, trajectories and usage
+  read(path) { return this.request('/api/v1' + path, { cache: 'no-store' }); },
   // The active config is the one selected on the server, the same for every browser. Called again
   // on a timer and on tab changes, so a selection made elsewhere shows up in the header and metrics.
   async syncActive() {

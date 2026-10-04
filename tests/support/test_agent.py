@@ -1,6 +1,6 @@
 """Scripted-level scenarios (docs/use-cases.md): the deterministic driver plus planted faults, judged by the verifier.
 
-    uv run pytest simulation/test_agent.py
+    uv run pytest tests/support/test_agent.py
 
 The LLM driver is not tested here (non-deterministic).
 """
@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "simulation"))
 import agent  # noqa: E402
 import generate  # noqa: E402  (agent -> registry put data/ on sys.path)
 

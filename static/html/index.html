@@ -123,10 +123,11 @@
     <div class="page-head">
       <div>
         <h1 id="h-metrics">Metrics</h1>
+        <p class="cap muted" id="mSource" hidden>Example data: the read API is running in example mode and serves generated sessions, not recorded evidence.</p>
       </div>
       <div class="actions">
         <label class="cap muted">Show
-          <select id="mFilter"><option value="">All decisions</option><option>BLOCKED</option><option>REDACTED</option><option value="HELD">Held for approval</option><option>ALLOWED</option></select>
+          <select id="mFilter"><option value="">All decisions</option><option value="BLOCK">BLOCKED</option><option value="REDACT">REDACTED</option><option value="REQUIRE_APPROVAL">Held for approval</option><option value="ALERT">ALERT</option><option value="ALLOW">ALLOWED</option></select>
         </label>
         <button class="btn ghost" id="mExport" type="button">Export audit log (JSONL)</button>
       </div>
@@ -144,14 +145,14 @@
           </div>
         </div>
         <div class="panel">
-          <div class="panel-head"><h2>Controls</h2><span class="cap faint">Per control, since start</span></div>
+          <div class="panel-head"><h2>Controls</h2><span class="cap faint">Per auditor</span></div>
           <div class="scroll"><table>
             <thead><tr><th>Control</th><th class="n">Runs</th><th class="n">Acted</th><th class="n">p50</th><th class="n">p95</th></tr></thead>
             <tbody id="ctlTable"></tbody>
           </table></div>
         </div>
         <div class="panel">
-          <div class="panel-head"><h2>Gateway performance</h2><span class="cap faint">From the read API, last 24 h</span></div>
+          <div class="panel-head"><h2>Gateway performance</h2><span class="cap faint">From the read API</span></div>
           <div class="scroll"><table>
             <thead><tr><th>Path</th><th class="n">Runs</th><th class="n">p50</th><th class="n">p95</th><th class="n">p99</th></tr></thead>
             <tbody id="perfTable"></tbody>
@@ -176,7 +177,7 @@
           </dl>
         </div>
         <div class="panel">
-          <div class="panel-head"><h2>Session budget</h2><span class="cap faint mono" id="budTxt"></span></div>
+          <div class="panel-head"><h2>Latest session budget</h2><span class="cap faint mono" id="budTxt"></span></div>
           <div class="panel-body">
             <div class="meter" role="meter" aria-label="Session token budget" aria-valuemin="0" id="budMeter"><div class="fill" id="budFill"></div><div class="tick"><span>80%</span></div></div>
             <p class="cap muted" id="costTxt"></p>
@@ -186,9 +187,9 @@
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h2>Audit log</h2><span class="cap faint">Newest first · excerpts are sanitized</span></div>
+      <div class="panel-head"><h2>Audit log</h2><span class="cap faint">Newest first · request text is never stored</span></div>
       <div class="scroll"><table>
-        <thead><tr><th>Time</th><th>Decision</th><th>Rule</th><th>Excerpt</th></tr></thead>
+        <thead><tr><th>Time</th><th>Decision</th><th>Rule</th><th>Action</th><th>Session</th></tr></thead>
         <tbody id="audit"></tbody>
       </table></div>
     </div>

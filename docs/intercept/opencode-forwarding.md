@@ -142,7 +142,7 @@ and enforces nothing**:
   characters.
 - **Data warning:** it prints raw prompt text and tool arguments, so use synthetic data only.
 
-Tests: `intercept/test_receiver.py`.
+Tests: `tests/support/test_receiver.py`.
 
 `scripts/run_intercept_receiver.sh` creates a fresh token and writes it, with the port and the
 demo directory, to `var/intercept.env` (mode 600, git-ignored). It also writes

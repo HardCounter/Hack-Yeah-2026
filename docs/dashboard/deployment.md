@@ -130,7 +130,7 @@ Measured on the instance with `gpt-4.1-mini`: about 1-3 s to start a session, th
 - Sessions live in memory. A deploy or restart ends them; the page then starts a new one.
 - Not available: raw tool arguments and results (events are sanitized by design). Messages are passed
   to the agent but not stored by the web layer.
-- Tests (`tests/test_web_sessions.py`) use a fake backend, so they need no OpenCode and no API key.
+- Tests (`tests/support/test_web_sessions.py`) use a fake backend, so they need no OpenCode and no API key.
 
 ### Read API for dashboards (deployed as a stub)
 

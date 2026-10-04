@@ -1,6 +1,6 @@
 """Checks for simulation/tools (docs/plans/tools/01..04 and the README's Definition of done), all through registry.call().
 
-    uv run pytest simulation/tools/test_tools.py
+    uv run pytest tests/support/test_tools.py
 
 Builds one dataset per run; every test works on its own copy of bank.db.
 """
@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "simulation" / "tools"))
 import registry as R  # noqa: E402  (puts data/ on sys.path, registers all 16 tools)
 import generate  # noqa: E402
 from postconditions import calls_from_audit, verify_onboarding  # noqa: E402
@@ -396,7 +396,7 @@ def test_delete_client():
 
 
 def test_source_guard():
-    src = (Path(__file__).parent / "bait.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parents[2] / "simulation" / "tools" / "bait.py").read_text(encoding="utf-8")
     for bad in ("exec(", "eval(", "subprocess", "os.system", "import pickle", "urlopen", "requests", "socket", "http.client"):
         assert bad not in src, bad
 

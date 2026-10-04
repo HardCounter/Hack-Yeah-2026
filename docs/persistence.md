@@ -135,15 +135,15 @@ uv run --locked --offline pytest
 ```
 
 The persistence test suite includes:
-- `tests/test_persistence.py`: Core event store, outbox, and delivery operations.
-- `tests/test_persistence_failures.py`: Failure modes, corruption, and retry backoff.
-- `tests/test_persistence_schema.py`: Schema migrations, metadata, and constraints.
-- `tests/test_persistence_writer.py`: Run binding and sequential action indexing.
-- `tests/test_persistence_business.py`: Banking effect receipts and outbox replication.
-- `tests/test_persistence_lifecycle.py`: Engine lifecycle, consumer pause/resume/retire, and derived alerts.
-- `tests/test_persistence_maintenance.py`: Maintenance reports, pruning, quota enforcement, and backup/restore.
-- `tests/test_persistence_reader.py`: Scoped reader, keyset pagination, export quotas, and run reports.
-- `tests/test_persistence_integration.py`: Multiprocess crash boundary recovery matrix.
+- `tests/support/test_persistence.py`: Core event store, outbox, and delivery operations.
+- `tests/support/test_persistence_failures.py`: Failure modes, corruption, and retry backoff.
+- `tests/support/test_persistence_schema.py`: Schema migrations, metadata, and constraints.
+- `tests/support/test_persistence_writer.py`: Run binding and sequential action indexing.
+- `tests/support/test_persistence_business.py`: Banking effect receipts and outbox replication.
+- `tests/support/test_persistence_lifecycle.py`: Engine lifecycle, consumer pause/resume/retire, and derived alerts.
+- `tests/support/test_persistence_maintenance.py`: Maintenance reports, pruning, quota enforcement, and backup/restore.
+- `tests/support/test_persistence_reader.py`: Scoped reader, keyset pagination, export quotas, and run reports.
+- `tests/support/test_persistence_integration.py`: Multiprocess crash boundary recovery matrix.
 
 ## Persistence Demo CLI
 

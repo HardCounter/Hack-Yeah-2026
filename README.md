@@ -166,8 +166,8 @@ Details and a live-trace walkthrough: [scripts/README.md](scripts/README.md).
 | `scripts/run_live_pipeline.sh [APP-0001]` | Full governed pipeline traced to a file, waiting for an interactive OpenCode session (`scripts/run_opencode_intercepted.sh`) |
 | `scripts/test.sh [all\|python\|intercept\|persistence\|consume\|e2e\|adapter\|data] [pytest args]` | Runs all tests, or one layer's |
 | `scripts/run_demo.sh [APP-ID] [--fault F]` | Runs the whole control layer offline (scripted agent, no model) and prints the verdict |
-| `scripts/test_consume_plane.sh` | Runs the consume-plane tests (`tests/consume_plane`) |
-| `scripts/run_consume_plane.sh [events.jsonl [contracts.jsonl]]` | Replays a recorded run through the consume plane and prints the findings; e.g. `tests/consume_plane/fixtures/risky_onboarding.jsonl` |
+| `scripts/test_consume_plane.sh` | Runs the consume-plane tests (`tests/support/consume_plane`) |
+| `scripts/run_consume_plane.sh [events.jsonl [contracts.jsonl]]` | Replays a recorded run through the consume plane and prints the findings; e.g. `tests/support/consume_plane/fixtures/risky_onboarding.jsonl` |
 | `scripts/test_opencode_adapter.sh [--quiet]` | Runs the OpenCode adapter Node tests and prints every JSON request the adapter sends |
 | `scripts/check_opencode_pipeline.sh` | Starts real OpenCode with the adapter and passes when its handshake reaches Python (no prompt is sent) |
 | `scripts/run_intercept_receiver.sh` | Terminal 1: observe-only Python receiver that logs every adapter request |

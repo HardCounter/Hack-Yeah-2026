@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from intercept.policy.runs import Policy
 from intercept.service.server import Evidence, Gateway
-from intercept.test_policy import action, configuration
-from intercept.test_auditors import scanner
+from test_policy import action, configuration
+from test_auditors import scanner
 from intercept.policy.auditors import Pipeline
 
 

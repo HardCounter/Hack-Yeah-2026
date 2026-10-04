@@ -373,7 +373,7 @@ ai-control-layer/
 ├── tests/                    # Automated self-testing suite (pytest)
 │   ├── test_onboarding.py    # Planned KYC positive/negative and persisted-state tests
 │   ├── test_gateway.py       # Planned bait/gateway tests; no AML suite claimed
-│   └── (sim/tools/ tests)    # sim/tools/test_tools.py, data/test_postconditions.py
+│   └── (sim/tools/ tests)    # sim/tools/test_tools.py, tests/support/test_postconditions.py
 └── docker-compose.yml        # Zero-prep local startup
 ```
 

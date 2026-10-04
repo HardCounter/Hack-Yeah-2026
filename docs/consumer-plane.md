@@ -483,7 +483,7 @@ The three ways requested, in the order a developer meets them.
 
 **Current boundary:** repository `plugins/` belongs to Layer 1 interception. Configure a separate
 consumer directory for this illustrative SDK example; the executable replay fixture is
-`tests/consume_plane/fixtures/plugins/velocity_observer.py`. Production VelocityGuard runs before
+`tests/support/consume_plane/fixtures/plugins/velocity_observer.py`. Production VelocityGuard runs before
 dispatch, as documented in [intercept-plugins.md](intercept-plugins.md).
 
 ```text
@@ -840,7 +840,7 @@ consume_plane/
 
 plugins/                        # drop-in directory (Way 1); example: velocity_guard.py
 consume_plane.yaml
-tests/consume_plane/
+tests/support/consume_plane/
 ├── conftest.py                 # builders: make_action(), make_session(), fixture trajectories
 ├── test_decode.py
 ├── test_loader.py
@@ -895,7 +895,7 @@ All tests use the memory and JSONL adapters. They need no Layer 1, Layer 2, or m
 | Outcome verifier | ONB-01 session end gives `verified` | ONB-07 gives `postcondition.ONB-P2` failed; a missing DB gives `unverifiable`, not a pass |
 | Privacy | — | No finding or log line in the ONB-09 / ONB-16 runs contains the planted PESEL, IBAN, or key |
 
-Run command: `uv run pytest tests/consume_plane -q`.
+Run command: `uv run pytest tests/support/consume_plane -q`.
 
 ---
 

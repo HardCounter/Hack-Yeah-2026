@@ -36,11 +36,11 @@ def async_test(fn):
 
 
 def launch_crash(directory: Path, point: str) -> subprocess.CompletedProcess:
-    root = str(Path(__file__).resolve().parent.parent)
+    root = str(Path(__file__).resolve().parents[2])
     env = os.environ.copy()
     env["PYTHONPATH"] = root
     return subprocess.run(
-        [sys.executable, "tests/persistence_crash_child.py", str(directory), point],
+        [sys.executable, "tests/support/persistence_crash_child.py", str(directory), point],
         capture_output=True,
         timeout=15,
         text=True,

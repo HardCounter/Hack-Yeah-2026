@@ -14,7 +14,7 @@ import pytest
 import tracing
 from tracing import FileLogger, NullLogger, TerminalLogger, configure, get_logger, make_logger, set_logger
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)

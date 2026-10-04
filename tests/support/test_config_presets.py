@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 
-PRESET_DIR = Path(__file__).resolve().parents[1] / "config" / "presets"
+PRESET_DIR = Path(__file__).resolve().parents[2] / "config" / "presets"
 NAMES = ("lenient", "standard", "strict")
 
 

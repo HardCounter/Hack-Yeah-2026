@@ -10,7 +10,7 @@ import subprocess
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "simulation"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "simulation"))
 import agent
 import generate
 from contracts import ActionProposal, PolicyAdjustmentSignal
@@ -192,7 +192,7 @@ async def main():
     await store.close()
 asyncio.run(main())
 """
-    completed = subprocess.run([sys.executable, "-c", code, audit_path], cwd=Path(__file__).resolve().parents[1],
+    completed = subprocess.run([sys.executable, "-c", code, audit_path], cwd=Path(__file__).resolve().parents[2],
                                capture_output=True, text=True, timeout=10)
     assert completed.returncode == 0, completed.stderr
     with sqlite3.connect(audit_path) as con:

@@ -22,6 +22,6 @@ dev = [
 
 
 [tool.pytest.ini_options]
-testpaths = ["data", "sim", "simulation", "intercept", "tests"]
+testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"

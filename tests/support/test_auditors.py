@@ -6,7 +6,7 @@ from pathlib import Path
 from intercept.policy.auditors import Pipeline
 from intercept.policy.config import load
 from intercept.policy.runs import Policy
-from intercept.test_policy import action, configuration
+from test_policy import action, configuration
 
 
 def scanner(effect="REDACT"):

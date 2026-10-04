@@ -57,7 +57,7 @@ description, parameters: {type: object, properties, required, additionalProperti
 `names` filters to an agent's allowlist; the gateway decides the allowlist, not this module.
 
 ## Check (in `test_tools.py`)
-- Build a fresh dataset in a temp dir (`generate.build(tmp)`, as `data/test_postconditions.py` does).
+- Build a fresh dataset in a temp dir (`generate.build(tmp)`, as `tests/support/test_postconditions.py` does).
 - Unknown tool and an extra `agent` argument: error, zero audit rows.
 - A dummy read call writes exactly one row with the right `agent` and `session_id`.
 - A tool that raises `ToolError` after writing: its write is rolled back, the audit row with the

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "simulation"))
 import agent  # noqa: E402
 import generate  # noqa: E402

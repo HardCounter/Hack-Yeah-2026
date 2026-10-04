@@ -81,7 +81,7 @@ performance, and are not a cross-platform SLA.
 | `uv lock --check --offline` | Exit 0; resolved 7 locked packages |
 | `git diff --check` | Exit 0 |
 | Inline Python local-link and code-fence check | Changed Markdown links resolve and fences balance |
-| `uv run --locked --offline pytest tests/test_persistence.py::TestPersistenceBenchmark::test_concurrency_smoke_benchmark_500_events -q -s` | One measured run during review: 500 committed events in 260.29 ms (0.5206 ms/event average throughput), test passed |
+| `uv run --locked --offline pytest tests/support/test_persistence.py::TestPersistenceBenchmark::test_concurrency_smoke_benchmark_500_events -q -s` | One measured run during review: 500 committed events in 260.29 ms (0.5206 ms/event average throughput), test passed |
 
 The skipped check was `sim/tools/test_ollama.py`: Ollama was unreachable at
 `http://localhost:11434`. Linux/Windows CI was not executed locally. No private

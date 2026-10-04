@@ -5,7 +5,7 @@
 #   With no arguments it replays the bundled demo: 10 tool calls in 10 s, which trips the
 #   consumer handlers from consume_plane.yaml (plugins/ contains Layer 1 auditors).
 #   A sibling <name>.contracts.jsonl is used automatically when no contracts file is given.
-#   Risk demo: scripts/run_consume_plane.sh tests/consume_plane/fixtures/risky_onboarding.jsonl
+#   Risk demo: scripts/run_consume_plane.sh tests/support/consume_plane/fixtures/risky_onboarding.jsonl
 #
 # Environment:
 #   CONFIG=path       config file (default: consume_plane.yaml)
@@ -21,8 +21,8 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-DEMO_EVENTS=tests/consume_plane/fixtures/velocity_burst.jsonl
-DEMO_CONTRACTS=tests/consume_plane/fixtures/velocity_burst.contracts.jsonl
+DEMO_EVENTS=tests/support/consume_plane/fixtures/velocity_burst.jsonl
+DEMO_CONTRACTS=tests/support/consume_plane/fixtures/velocity_burst.contracts.jsonl
 EVENTS=${1:-$DEMO_EVENTS}
 CONTRACTS=${2:-}
 if [[ -z "$CONTRACTS" && "$EVENTS" == "$DEMO_EVENTS" ]]; then
@@ -38,7 +38,7 @@ for f in "$EVENTS" "$CONFIG" ${CONTRACTS:+"$CONTRACTS"}; do
 done
 
 # The JSONL sink appends; clear the bundled demos' previous findings so the output reflects this run only.
-if [[ "$EVENTS" == tests/consume_plane/fixtures/* ]]; then
+if [[ "$EVENTS" == tests/support/consume_plane/fixtures/* ]]; then
     rm -f runs/run_demo/findings.jsonl
 fi
 

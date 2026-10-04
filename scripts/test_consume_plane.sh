@@ -12,4 +12,4 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 uv sync --quiet
-exec uv run pytest tests/consume_plane -q "$@"
+exec uv run pytest tests/support/consume_plane -q "$@"

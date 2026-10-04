@@ -113,12 +113,12 @@ No upstream code is vendored; retain the dependency's license notices when distr
 
 `consume_plane.yaml` no longer discovers `plugins/` or registers VelocityGuard. Layer 3's
 trajectory risk, gateway violation analytics and independent outcome verifier remain separate.
-The consumer SDK example is now a **test fixture**, `tests/consume_plane/fixtures/plugins/velocity_observer.py`;
+The consumer SDK example is now a **test fixture**, `tests/support/consume_plane/fixtures/plugins/velocity_observer.py`;
 its after-event feedback never claims to prevent its triggering call.
 
 ```sh
 uv sync --locked
-uv run --locked pytest -q tests/test_intercept_plugins.py tests/test_configuration_api.py tests/consume_plane
+uv run --locked pytest -q tests/support/test_intercept_plugins.py tests/support/test_configuration_api.py tests/support/consume_plane
 ```
 
 Tests cover nested/key/name matches, invalid regexes, bounded adversarial inputs, disabled

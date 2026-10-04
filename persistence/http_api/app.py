@@ -169,6 +169,9 @@ async def list_sessions(request: Request, agent_id: OptId = None, case_id: OptId
                                        verification_status=verification_status, min_severity=min_severity,
                                        since=query_time(since), until=query_time(until))
     items = keep(ex.sessions(), "state", state)
+    for key, value in (("agent_id", agent_id), ("case_id", case_id), ("run_id", run_id)):
+        items = keep(items, key, value)
+    items = [s for s in items if (lo is None or s["started_at"] >= lo) and (hi is None or s["started_at"] < hi)]
     if verification_status is not None:
         items = keep(items, "verification_status", None if verification_status == "none" else verification_status)
     return page(at_least(items, "max_severity", min_severity), limit, cursor)
@@ -247,8 +250,9 @@ async def list_actions(request: Request, session_id: OptId = None, run_id: OptId
     side_effect_list = csv("side_effects", side_effects, SideEffect)
     filters = (("kind", kind_list), ("status", status_list),
                ("decision", decision_list), ("side_effect", side_effect_list),
-               ("name", name), ("action_id", action_id))
-    window(since, until)
+               ("name", name), ("action_id", action_id), ("run_id", run_id), ("case_id", case_id),
+               ("agent_id", agent_id))
+    lo, hi = window(since, until)
     if not request.app.state.example_mode:
         return await asyncio.to_thread(
             request.app.state.read_queries.actions, limit=limit, cursor=cursor,
@@ -256,9 +260,11 @@ async def list_actions(request: Request, session_id: OptId = None, run_id: OptId
             case_id=case_id, agent_id=agent_id, action_id=action_id, name=name,
             kinds=kind_list, statuses=status_list, decisions=decision_list,
             side_effects=side_effect_list, since=query_time(since), until=query_time(until))
-    items = ex.steps(session_id or ex.SESSION)
+    # Example mode: one session is listed in seq order, every session together newest first.
+    items = ex.steps(session_id) if session_id else ex.all_steps()
     for key, allowed in filters:
         items = keep(items, key, allowed)
+    items = [a for a in items if (lo is None or a["ts"] >= lo) and (hi is None or a["ts"] < hi)]
     return page(items, limit, cursor)
 
 
@@ -277,7 +283,9 @@ async def list_detections(session_id: OptId = None, run_id: OptId = None, case_i
                           limit: Limit = 100, cursor: Cursor = None):
     source_list = csv("sources", sources, Source)
     lo, hi = window(since, until)
-    items = keep(ex.detections(), "source", source_list)
+    items = keep(ex.detections(session_id), "source", source_list)
+    for key, value in (("run_id", run_id), ("case_id", case_id), ("agent_id", agent_id)):
+        items = keep(items, key, value)
     items = keep(items, "name", names.split(",") if names else None)
     items = keep(items, "trigger_event_id", trigger_event_id)
     items = at_least(items, "severity", min_severity)
@@ -301,7 +309,7 @@ async def get_catalog():
 async def usage_metrics(group_by: GroupBy = "agent", agent_id: OptId = None, case_id: OptId = None,
                         since: Since = None, until: Until = None, limit: Limit = 100):
     lo, hi = window(since, until, timedelta(hours=24))
-    report = ex.usage_report(group_by, lo, hi)
+    report = ex.usage_report(group_by, lo, hi, agent_id, case_id)
     report["buckets"] = report["buckets"][:limit]
     return report
 
@@ -311,14 +319,14 @@ async def security_metrics(agent_id: OptId = None, session_id: OptId = None,
                            since: Since = None, until: Until = None,
                            top: Annotated[int, Query(ge=1, le=100)] = 10):
     lo, hi = window(since, until, timedelta(hours=24))
-    return ex.security_overview(lo, hi, top)
+    return ex.security_overview(lo, hi, top, session_id, agent_id)
 
 
 @router.get("/metrics/performance")
 async def performance_metrics(agent_id: OptId = None, session_id: OptId = None,
                               since: Since = None, until: Until = None):
     lo, hi = window(since, until, timedelta(hours=24))
-    return ex.performance_overview(lo, hi)
+    return ex.performance_overview(lo, hi, session_id, agent_id)
 
 
 @router.get("/metrics/timeseries")
@@ -358,7 +366,7 @@ async def list_interventions(request: Request, session_id: OptId = None, source_
                                        source_plugin=source_plugin, actions=action_list,
                                        applied=applied, active=active,
                                        since=query_time(since), until=query_time(until))
-    items = keep([ex.intervention(session_id or ex.SESSION)], "action", action_list)
+    items = keep(keep(ex.interventions(session_id), "action", action_list), "source_plugin", source_plugin)
     if applied is not None:
         items = [i for i in items if i["applied"] is applied]
     if active is not None:
@@ -385,8 +393,8 @@ async def export_session(session_id: Id, request: Request):
                         headers={"Content-Disposition": f'attachment; filename="audit-{session_id}.ndjson"'})
     records = [{"record_type": "session", **ex.session_detail(session_id)}]
     records += [{"record_type": "action", **ex.action(s["event_id"])["event"]} for s in ex.steps(session_id)]
-    records += [{"record_type": "detection", **d} for d in ex.detections()]
-    records += [{"record_type": "intervention", **ex.intervention(session_id)}]
+    records += [{"record_type": "detection", **d} for d in ex.detections(session_id)]
+    records += [{"record_type": "intervention", **i} for i in ex.interventions(session_id)]
     records += [{"record_type": "verification", **ex.verification(session_id)}]
     lines = [json.dumps(r, sort_keys=True, separators=(",", ":")) + "\n" for r in records]
     digest = hashlib.sha256("".join(lines).encode()).hexdigest()

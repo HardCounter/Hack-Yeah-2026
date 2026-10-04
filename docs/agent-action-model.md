@@ -84,7 +84,7 @@ Scripts and docs are updated.
 - **`persistence/models.py`:** four enum parsers became one `_parse_enum`, and seven copies of
   `to_json`/`from_json` became one mixin, with no behaviour change (574 → 523 lines). Raw
   `status.value == "PENDING"` checks became `is_intent`.
-- **`tests/test_opencode_pipeline.py`:** the test now runs the same OpenCode binary its skip check
+- **`tests/support/test_opencode_pipeline.py`:** the test now runs the same OpenCode binary its skip check
   found. Before, it fell back to an uninstalled pinned path and failed when only `opencode` on PATH
   was available.
 

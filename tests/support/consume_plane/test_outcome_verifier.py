@@ -59,7 +59,7 @@ def make_contract(app_id="APP-0001", session_id="sess-verifier"):
 
 
 def seed_bank(path, *, app_id="APP-0001", status="rejected", created_name=None, with_trace=True):
-    data_dir = str(Path(__file__).resolve().parents[2] / "data")
+    data_dir = str(Path(__file__).resolve().parents[3] / "data")
     if data_dir not in sys.path:
         sys.path.insert(0, data_dir)
     from generate import build

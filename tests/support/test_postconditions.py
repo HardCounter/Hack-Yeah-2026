@@ -1,6 +1,6 @@
 """ONB-P1..P6 against the onboarding scenarios in docs/use-cases.md.
 
-    uv run pytest data/test_postconditions.py
+    uv run pytest tests/support/test_postconditions.py
 
 Builds a fresh dataset in a temp dir, then simulates each scenario's persisted outcome
 (clients row, application status) and gateway trace, and checks which postconditions fail.
@@ -13,7 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "data"))
 import generate  # noqa: E402
 from postconditions import verify_onboarding  # noqa: E402
 

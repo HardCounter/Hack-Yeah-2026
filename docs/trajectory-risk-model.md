@@ -1,8 +1,8 @@
 # Trajectory Risk Model (`trajectory-risk` plugin)
 
 **Status (2026-10-03):** implemented in `consume_plane/plugins/trajectory_risk.py`, tested in
-`tests/consume_plane/test_trajectory_risk.py`, and runnable with
-`scripts/run_consume_plane.sh tests/consume_plane/fixtures/risky_onboarding.jsonl`.
+`tests/support/consume_plane/test_trajectory_risk.py`, and runnable with
+`scripts/run_consume_plane.sh tests/support/consume_plane/fixtures/risky_onboarding.jsonl`.
 It is **deterministic**: no model call, no network, and the same trajectory always gets the same score.
 
 ## Formula

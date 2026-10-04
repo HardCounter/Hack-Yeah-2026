@@ -8,7 +8,7 @@ import socket
 import subprocess
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_all_scripts_have_valid_bash_syntax_and_are_executable():

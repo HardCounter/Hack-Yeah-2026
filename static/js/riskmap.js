@@ -8,8 +8,7 @@
   const ACTION = { LOW: '—', MEDIUM: 'Finding raised', HIGH: 'Require approval, 15 min', CRITICAL: 'Halt session, 30 min' };
 
   // Sessions come from the read API (docs/rest.md): every step is a tool call the gateway really decided on.
-  const VERDICT = { ALLOW: 'ALLOWED', BLOCK: 'BLOCKED', REDACT: 'REDACTED', REQUIRE_APPROVAL: 'HELD', ALERT: 'ALERT' };
-  const get = path => App.request('/api/v1' + path);
+  const get = path => App.read(path);
   async function loadSession(summary) {
     const id = encodeURIComponent(summary.session_id);
     const [detail, trajectory] = await Promise.all([get(`/sessions/${id}`),
@@ -127,7 +126,7 @@
     const show = () => {
       keep();
       const open = el('a', 'btn ghost', 'Open details'); open.href = `#metrics/tasks/${encodeURIComponent(s.id)}`;
-      const dl = el('button', 'btn ghost', 'Download (JSON)'); dl.type = 'button'; dl.onclick = () => App.downloadSession(s);
+      const dl = el('button', 'btn ghost', 'Audit export (NDJSON)'); dl.type = 'button'; dl.onclick = () => App.downloadSession(s);
       const bar = el('div', 'pop-actions'); bar.append(open, dl);
       pop.replaceChildren(card(s), bar); pop.hidden = false;
       const r = target.getBoundingClientRect();  // runtime coordinates are measured, not design values

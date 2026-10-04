@@ -4,6 +4,8 @@
 # Usage: scripts/test.sh [target] [extra pytest args]
 #   all          (default) every Python test + OpenCode adapter Node tests
 #   python       every Python test (uv run pytest)
+#   controls     tests/control_layer: the guardrail suite (tool calls and prompts through the gateway)
+#   support      tests/support: everything else (plumbing, audit store, config API, consume plane, web app, mock bank)
 #   intercept    Layer 1: policy, auditors, HTTP service, governed gateway and prompts
 #   persistence  Layer 2: store, outbox, writer/reader, v2.1 encoder
 #   consume      Layer 3: consume plane runtime and plugins
@@ -24,19 +26,23 @@ pytest() { echo "== pytest $*"; uv run --locked pytest -q "$@"; }
 case "$target" in
     all)         pytest "$@"; echo; scripts/test_opencode_adapter.sh --quiet ;;
     python)      pytest "$@" ;;
-    intercept)   pytest intercept tests/test_governed_gateway.py tests/test_governed_prompts.py \
-                        tests/test_integrated_http.py tests/test_integrated_llm.py "$@" ;;
-    persistence) pytest tests/test_persistence*.py tests/test_pipeline_support.py "$@" ;;
-    consume)     pytest tests/consume_plane "$@" ;;
-    e2e)         pytest tests/test_three_layer_e2e.py tests/test_integrated_regressions.py \
-                        tests/test_opencode_pipeline.py tests/test_pipeline_scripts.py "$@"
+    controls)    pytest tests/control_layer "$@" ;;
+    support)     pytest tests/support "$@" ;;
+    intercept)   pytest tests/support/test_policy.py tests/support/test_auditors.py tests/support/test_reason_families.py \
+                        tests/support/test_server.py tests/support/test_receiver.py tests/support/test_execution.py \
+                        tests/support/test_governed_gateway.py tests/support/test_governed_prompts.py \
+                        tests/support/test_intercept_plugins.py "$@" ;;
+    persistence) pytest tests/support/test_persistence*.py tests/support/test_pipeline_support.py "$@" ;;
+    consume)     pytest tests/support/consume_plane "$@" ;;
+    e2e)         pytest tests/support/test_three_layer_e2e.py tests/support/test_integrated_regressions.py \
+                        tests/support/test_opencode_pipeline.py tests/support/test_pipeline_scripts.py "$@"
                  if command -v opencode >/dev/null 2>&1 && command -v script >/dev/null 2>&1; then
                      echo; scripts/check_opencode_pipeline.sh
                  else
                      echo "skipped: live adapter handshake check (needs opencode and script on PATH)"
                  fi ;;
     adapter)     scripts/test_opencode_adapter.sh "$@" ;;
-    data)        pytest data simulation "$@" ;;
-    -h|--help)   sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+    data)        pytest tests/support/test_postconditions.py tests/support/test_agent.py tests/support/test_tools.py "$@" ;;
+    -h|--help)   sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
     *)           echo "error: unknown target '$target' (try --help)" >&2; exit 2 ;;
 esac

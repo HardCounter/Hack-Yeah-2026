@@ -8,7 +8,7 @@ from consume_plane.runtime.config import ConfigError, ConsumePlaneConfig, Plugin
 from consume_plane.runtime.loader import PluginLoadError
 from consume_plane.runtime.registry import load_registry
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 
 GOOD = """
 from consume_plane.sdk import Subscription

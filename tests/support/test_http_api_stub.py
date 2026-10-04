@@ -88,14 +88,25 @@ def test_writes_are_rejected():
 
 
 def test_cursor_pagination_walks_all_items_once():
-    seen, path = [], "/api/v1/actions?limit=3"
+    base = "/api/v1/actions?session_id=sess_a&limit=3"
+    seen, path = [], base
     while True:
         _, body = get(path)
         seen += [a["event_id"] for a in body["items"]]
         if not body["has_more"]:
             break
-        path = f"/api/v1/actions?limit=3&cursor={body['next_cursor']}"
-    assert len(seen) == len(set(seen)) == 10
+        path = f"{base}&cursor={body['next_cursor']}"
+    assert len(seen) == len(set(seen)) == len(get("/api/v1/actions?session_id=sess_a")[1]["items"]) > 3
+
+
+def test_aggregates_agree_with_the_lists(monkeypatch):
+    monkeypatch.setattr("persistence.http_api.examples.clock", lambda: 1_790_000_000)
+    window = "since=2026-01-01T00:00:00Z&until=2027-01-01T00:00:00Z"  # the frozen sessions, whatever today is
+    _, performance = get(f"/api/v1/metrics/performance?{window}")
+    _, security = get(f"/api/v1/metrics/security?{window}")
+    assert performance["actions_evaluated"] == sum(security["actions"]["by_decision"].values())
+    assert security["sessions"]["total"] == len(get("/api/v1/sessions")[1]["items"])
+    assert {"auditor", "method", "runs", "acted", "p50", "p95"} <= set(performance["by_auditor"][0])
 
 
 def test_export_is_ndjson_with_verifiable_footer():

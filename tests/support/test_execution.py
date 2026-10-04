@@ -10,9 +10,9 @@ import unittest
 from intercept.tools.execution import ToolExecutor
 from intercept.policy.runs import Policy
 from intercept.service.server import Evidence, Gateway
-from intercept import test_server
+import test_server
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "data"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "data"))
 import generate
 from postconditions import calls_from_audit, verify_onboarding
 

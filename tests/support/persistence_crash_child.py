@@ -15,7 +15,7 @@ import sqlite3
 import sys
 
 # Ensure repository root is on sys.path for direct subprocess invocation
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from persistence.business import (
     EffectReceipt,
