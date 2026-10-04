@@ -105,7 +105,7 @@ def run_pipeline(args):
     result = {'verification_status': 'VERIFICATION_INCOMPLETE', 'checks': [
         {'id': 'PIPELINE', 'status': 'INCOMPLETE', 'detail': 'PIPELINE_NOT_COMPLETED'}]}
     status = 1
-    work = Path(tempfile.mkdtemp(prefix='work-', dir=output))
+    work = Path(tempfile.mkdtemp(prefix='opencode-work-'))
     try:
         if args.bank_db:
             bank = Path(args.bank_db).resolve()

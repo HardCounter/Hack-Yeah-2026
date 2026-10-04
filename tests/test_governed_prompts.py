@@ -380,3 +380,27 @@ async def test_cancellation_waits_for_backend_and_persists_unknown_final_before_
     assert events[0]["interception_metadata"]["final_decision"] == "ALLOW"
     assert not session_lock.locked()
     await store.close()
+
+
+@async_test
+async def test_reloaded_gateway_counts_completed_call_tokens_against_budget(tmp_path):
+    store, persistence, gateway = await _runtime(tmp_path, tokens=250, max_output_tokens=128)
+
+    async def backend(model, messages, tools, max_output_tokens):
+        return {"content": "ok"}
+
+    # First call succeeds and consumes tokens
+    decision, response = await gateway.execute("llama3.2", [{"role": "user", "content": "hello"}], [], backend)
+    assert decision.decision == "ALLOW"
+    assert response == {"content": "ok"}
+
+    # Simulate fresh reloaded gateway instance on the same persistence store
+    contract = _contract(tokens=250)
+    reloaded_gateway = PromptGateway(persistence, contract, Pipeline([]), {"llama3.2"}, max_output_tokens=128)
+
+    # Next call must detect budget exhaustion from the persisted completed invocation
+    decision2, response2 = await reloaded_gateway.execute("llama3.2", [{"role": "user", "content": "hello again"}], [], backend)
+    assert decision2.decision == "BLOCK"
+    assert decision2.reason_code == "TOKEN_BUDGET_EXHAUSTED"
+    assert response2 == {"error": "TOKEN_BUDGET_EXHAUSTED"}
+    await store.close()

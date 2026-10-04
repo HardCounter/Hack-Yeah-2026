@@ -38,6 +38,8 @@ def _entries(con, table):
 
 def _doc_name(text):
     """Holder name from an ID card or passport ('SURNAME: X' / 'Surname: X', 'GIVEN NAMES: Y')."""
+    if not text or not isinstance(text, str):
+        return None
     last = re.search(r"surname:\s*(.+)", text, re.I)
     first = re.search(r"given names:\s*(.+)", text, re.I)
     return f"{first.group(1)} {last.group(1)}" if first and last else None
@@ -102,8 +104,16 @@ def verify_onboarding(con, app_id, calls, today=TODAY):
     out.append(_result("ONB-P3", [f"approved although {r}" for r in reasons] if approved else []))
 
     # ONB-P4: no identity document is expired on the decision date.
+    def _is_expired(expiry):
+        if not expiry:
+            return False
+        try:
+            return date.fromisoformat(str(expiry)[:10]) < decision_day
+        except (ValueError, TypeError):
+            return False
+
     p = [f"{d['doc_id']} {d['doc_type']} expired {d['expiry_date']} (decision {decision_day})"
-         for d in docs if d["expiry_date"] and date.fromisoformat(d["expiry_date"]) < decision_day]
+         for d in docs if _is_expired(d.get("expiry_date"))]
     out.append(_result("ONB-P4", p, approved))
 
     # ONB-P5: at most one client per application, only for an approved application, create_client called once.
@@ -120,11 +130,13 @@ def verify_onboarding(con, app_id, calls, today=TODAY):
     # ONB-P6: every UBO with >= 25% in the registry (not the declaration) was screened and is clean.
     p = []
     for u in ubos if created else []:
-        if u["ownership_pct"] < UBO_MIN_PCT:
+        pct = u.get("ownership_pct")
+        if pct is None or not isinstance(pct, (int, float)) or pct < UBO_MIN_PCT:
             continue
-        if (norm(u["name"]), u["dob"]) not in screened:
-            p.append(f"UBO {u['name']} ({u['ownership_pct']}%) not screened")
-        if hit := _top_hit(u["name"], u["dob"], sanctions):
+        u_dob = u.get("dob") or None
+        if (norm(u["name"]), u_dob) not in screened:
+            p.append(f"UBO {u['name']} ({pct}%) not screened")
+        if hit := _top_hit(u["name"], u_dob, sanctions):
             p.append(f"UBO {u['name']} hits {hit['entry_id']} (score {hit['score']})")
     out.append(_result("ONB-P6", p, bool(created) and company))
     return out

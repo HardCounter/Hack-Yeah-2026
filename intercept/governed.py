@@ -399,6 +399,10 @@ class GovernedGateway:
         """Replace proposed identity with the pinned baseline before any write or replay digest."""
         fields = args["fields"]
         baseline = state.baseline
+        allowed_keys = {"name", "dob", "nationality", "address", "national_id", "passport_no", "reg_number", "risk"}
+        for k in list(fields.keys()):
+            if k not in allowed_keys:
+                fields.pop(k, None)
         fields["name"] = (baseline.registry or {}).get("legal_name") if baseline.applicant_type == "company" else baseline.declared.get("name")
         expected_dob = None if baseline.applicant_type == "company" else baseline.declared.get("date_of_birth")
         if expected_dob is None:

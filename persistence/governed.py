@@ -335,6 +335,7 @@ class GovernedPersistence:
             def update():
                 conn = self.store._get_connection()
                 with conn:
+                    conn.execute("BEGIN IMMEDIATE")
                     changed = conn.execute(
                         "UPDATE policy_signals SET applied=1 WHERE signal_id=?", (signal_id,)
                     ).rowcount

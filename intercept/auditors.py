@@ -19,30 +19,12 @@ CLASSIFIED = {
 
 
 def _contains_literal(value, pattern):
-    folded_value, folded_pattern = value.casefold(), pattern.casefold()
-    if len(folded_value) != len(value):
-        return pattern in value
-    return folded_pattern in folded_value
+    return bool(re.search(re.escape(pattern), value, re.IGNORECASE))
 
 
 def _redact_literal(value, pattern):
-    folded_value, folded_pattern = value.casefold(), pattern.casefold()
-    if len(folded_value) != len(value) or len(folded_pattern) != len(pattern):
-        if pattern not in value:
-            return value, False
-        return value.replace(pattern, "[REDACTED]"), True
-    if folded_pattern not in folded_value:
-        return value, False
-    parts, start = [], 0
-    while True:
-        found = folded_value.find(folded_pattern, start)
-        if found < 0:
-            parts.append(value[start:])
-            break
-        parts.append(value[start:found])
-        parts.append("[REDACTED]")
-        start = found + len(folded_pattern)
-    return "".join(parts), True
+    new_value, count = re.subn(re.escape(pattern), "[REDACTED]", value, flags=re.IGNORECASE)
+    return new_value, count > 0
 
 
 def validate_specs(specs):

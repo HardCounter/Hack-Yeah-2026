@@ -94,18 +94,33 @@ class PromptGateway:
         if self._used_tokens is not None:
             return self._used_tokens
         used = 0
-        # Count durable dispatch intents so a process restart after model
-        # dispatch but before its result cannot recover the reserved budget.
+        # Count durable dispatch intents and completed calls so a process
+        # restart cannot recover the reserved or spent budget.
         store = getattr(self.persistence, "store", None)
         events = (await store.get_events_by_session(self.contract.session_id)
                   if store is not None else [])
+        by_action: dict[str, ActionEventEnvelope] = {}
         for event in events:
             if event.action_type != ActionType.LLM_INVOCATION:
                 continue
+            act_id = event.context.action_id or event.event_id
+            if act_id not in by_action or event.status != ActionStatus.PENDING:
+                by_action[act_id] = event
+
+        for event in by_action.values():
             if event.status == ActionStatus.PENDING:
                 reserved = event.context.reserved_usage.get("reserved_tokens", 0)
                 if type(reserved) is int and reserved >= 0:
                     used += reserved
+            elif event.status in (ActionStatus.EXECUTED, ActionStatus.FAILED, ActionStatus.REDACTED):
+                actual = event.context.actual_usage or {}
+                charged = actual.get("input_tokens", 0) + actual.get("output_tokens", 0)
+                if type(charged) is int and charged > 0:
+                    used += charged
+                else:
+                    reserved = event.context.reserved_usage.get("reserved_tokens", 0)
+                    if type(reserved) is int and reserved >= 0:
+                        used += reserved
         self._used_tokens = used
         return used
 

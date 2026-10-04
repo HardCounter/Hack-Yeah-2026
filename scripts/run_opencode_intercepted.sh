@@ -11,6 +11,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ENV_FILE=var/intercept.env
 
+REPO=$(pwd)
+if [[ -x "$REPO/var/opencode-cli/node_modules/.bin/opencode" ]]; then
+    export PATH="$REPO/var/opencode-cli/node_modules/.bin:$PATH"
+fi
+
 [[ -f "$ENV_FILE" ]] || { echo "error: $ENV_FILE not found; start scripts/run_intercept_receiver.sh first" >&2; exit 1; }
 command -v opencode >/dev/null 2>&1 || { echo "error: opencode is not on PATH" >&2; exit 1; }
 # shellcheck disable=SC1090

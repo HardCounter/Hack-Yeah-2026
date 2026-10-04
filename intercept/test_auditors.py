@@ -51,6 +51,14 @@ class AuditorTests(unittest.IsolatedAsyncioTestCase):
         specs = [{"id": "scanner", "type": "pattern_scanner", "config": {"patterns": ["ignore previous instructions"], "action": "BLOCK"}}]
         self.assertEqual((await Pipeline(specs).evaluate(a))[2], "BLOCK")
 
+    async def test_pattern_scanner_handles_unicode_length_changing_strings(self):
+        a = action()
+        a["arguments"]["text"] = "Schloss SECRET_KEY"
+        specs = [{"id": "scanner", "type": "pattern_scanner", "config": {"patterns": ["secret_key"], "action": "REDACT"}}]
+        checked, evidence, verdict, changed = await Pipeline(specs).evaluate(a)
+        self.assertEqual(checked["arguments"]["text"], "Schloss [REDACTED]")
+        self.assertTrue(changed)
+
     async def test_classified_scanner_redacts_pesel_and_keeps_the_original(self):
         a = action()
         a["arguments"]["text"] = "PESEL 44051401359"

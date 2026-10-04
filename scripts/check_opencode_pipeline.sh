@@ -12,6 +12,10 @@ REPO=$(pwd)
 unset VIRTUAL_ENV
 WAIT=${WAIT:-25}
 
+if [[ -x "$REPO/var/opencode-cli/node_modules/.bin/opencode" ]]; then
+    export PATH="$REPO/var/opencode-cli/node_modules/.bin:$PATH"
+fi
+
 for cmd in uv opencode script; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "error: $cmd is required" >&2; exit 1; }
 done
@@ -40,9 +44,15 @@ RX_PID=$!
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break; sleep 0.1; done
 
 echo "== starting OpenCode (private server, no prompt) in a throwaway project"
-( cd "$WORK/project" &&
-  script -qfc "opencode --standalone --print-logs --log-level info 2>'$WORK/opencode.log'" /dev/null \
-      </dev/null >/dev/null 2>&1 ) &
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  ( cd "$WORK/project" &&
+    script -q /dev/null sh -c "opencode --standalone --print-logs --log-level info 2>'$WORK/opencode.log'" \
+        </dev/null >/dev/null 2>&1 ) &
+else
+  ( cd "$WORK/project" &&
+    script -qfc "opencode --standalone --print-logs --log-level info 2>'$WORK/opencode.log'" /dev/null \
+        </dev/null >/dev/null 2>&1 ) &
+fi
 OC_PID=$!
 
 result=""

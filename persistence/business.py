@@ -158,7 +158,8 @@ def record_effect(con: sqlite3.Connection, receipt: EffectReceipt) -> None:
 
 async def replicate_effects(bank_path: Path, writer: BoundAuditWriter, limit: int = 50) -> int:
     """Replicate unacknowledged banking notices into the audit store idempotently."""
-    with sqlite3.connect(bank_path) as con:
+    con = sqlite3.connect(bank_path)
+    try:
         con.row_factory = sqlite3.Row
         ensure_business_schema(con)
         rows = con.execute(
@@ -189,11 +190,13 @@ async def replicate_effects(bank_path: Path, writer: BoundAuditWriter, limit: in
             )
             # Acknowledge in bank DB after audit commit
             now_ts = generate_utc_iso_timestamp()
-            con.execute(
-                "UPDATE business_audit_outbox SET acknowledged_at = ? WHERE source_event_id = ?",
-                (now_ts, row["source_event_id"]),
-            )
-            con.commit()
+            with con:
+                con.execute(
+                    "UPDATE business_audit_outbox SET acknowledged_at = ? WHERE source_event_id = ?",
+                    (now_ts, row["source_event_id"]),
+                )
             replicated += 1
 
         return replicated
+    finally:
+        con.close()
