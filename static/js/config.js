@@ -28,7 +28,7 @@
 
   const showOutputs = () => form.querySelectorAll('output[data-for]').forEach(o => {
     const v = Number(f[o.dataset.for].value);
-    o.textContent = o.dataset.for === 'block_threshold' ? v.toFixed(2) : fmtNum(v);
+    o.textContent = o.dataset.for === 'block_threshold' ? Math.round(v * 100) + '%' : fmtNum(v);
   });
   form.addEventListener('input', e => { showOutputs(); if (!['name', 'description'].includes(e.target.name)) markDirty(); });
   form.addEventListener('change', e => { if (e.target.type === 'checkbox') markDirty(); });

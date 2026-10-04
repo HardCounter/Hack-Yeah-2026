@@ -70,8 +70,8 @@
 
         <fieldset class="section">
           <h3>Prompt injection</h3>
-          <label class="slider"><span>AI check blocks at score ≥</span><input type="range" name="block_threshold" min="0.5" max="0.99" step="0.01"><output data-for="block_threshold"></output></label>
-          <p class="hint">Lower blocks more. Presets: lenient 0.95, standard 0.90, strict 0.80.</p>
+          <label class="slider"><span>Block a message when the AI is at least this sure it is an attack</span><input type="range" name="block_threshold" min="0.5" max="0.99" step="0.01"><output data-for="block_threshold"></output></label>
+          <p class="hint">An AI reads every message and estimates how likely it is to be an attempt to hijack the agent. At or above this level the message is blocked. Below it, a person reviews the message before it goes through. Lower blocks more. Presets: lenient 95%, standard 90%, strict 80%.</p>
           <div class="two">
             <label class="field"><span>Known attack phrases <small>one per line, literal match</small></span><textarea name="patterns" rows="6"></textarea></label>
             <label class="field"><span>On match</span><select name="patterns_action"><option value="BLOCK">Block</option><option value="REQUIRE_APPROVAL">Human approval</option><option value="ALERT">Alert only</option></select></label>
