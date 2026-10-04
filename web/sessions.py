@@ -96,6 +96,9 @@ class OpenCodeBackend:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[^\s]+", self.model):
             raise RuntimeError("OPENCODE_MODEL must be set as provider/model")
         self.bank = None
+        # One folder for every session's evidence store: the read API serves this directory.
+        self.runs = root / "bank-runs"
+        self.runs.mkdir(parents=True, exist_ok=True)
 
     def _build_bank(self):
         from simulation import agent  # noqa: F401  sets up the data import path
@@ -123,11 +126,12 @@ class OpenCodeBackend:
         env["PWD"] = str(project)
         env["OPENCODE_SERVER_PASSWORD"] = secrets.token_urlsafe(24)
         state = session.state
-        state.update(env=env, project=project, evidence=folder / "bank-runs" / f"{session.id}.evidence.db")
+        env["CONTROL_LOG"], env["CONTROL_LOG_FILE"] = "file", str(folder / "control-layer.log")
+        state.update(env=env, project=project, evidence=self.runs / f"{session.id}.evidence.db")
         state["gateway_log"] = open(folder / "gateway.log", "wb")
         state["gateway"] = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "intercept.service.local", "--bank-db", str(self.bank), "--application", APPLICATION,
-            "--contract-id", contract, "--runs-dir", str(folder / "bank-runs"), "--port", endpoint.rsplit(":", 1)[1],
+            "--contract-id", contract, "--runs-dir", str(self.runs), "--port", endpoint.rsplit(":", 1)[1],
             "--catalog-all", cwd=REPO, env=env, stdout=state["gateway_log"], stderr=asyncio.subprocess.STDOUT,
             start_new_session=True)
         port = free_port()
@@ -275,7 +279,8 @@ async def shutdown():
         await _manager.shutdown()
 
 
-router = APIRouter(prefix="/api/v1")
+# /api/v1 belongs to the read API (docs/rest.md), served by its own process behind the same host.
+router = APIRouter(prefix="/opencode-wrapper/api")
 
 
 @router.get("/info")

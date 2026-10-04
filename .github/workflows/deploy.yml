@@ -46,6 +46,9 @@ jobs:
           git checkout -B deploy origin/deploy
           export GIT_SHA=$(git rev-parse --short HEAD)
           docker compose up -d --build
+          # A changed Caddyfile is a bind mount, so `up` does not apply it. An invalid file fails here
+          # and Caddy keeps serving the previous config.
+          docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile
           # fresh synthetic bank on every deploy (deterministic, seed 2026)
           docker compose exec -T app python data/generate.py
           REMOTE
@@ -55,7 +58,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           for i in $(seq 1 30); do
-            if curl -fsS "https://$DEPLOY_HOST/healthz"; then echo; exit 0; fi
+            if curl -fsS "https://$DEPLOY_HOST/healthz" && curl -fsS "https://$DEPLOY_HOST/api/v1/health"; then echo; exit 0; fi
             sleep 5
           done
           echo "health check failed" >&2
@@ -67,4 +70,4 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           ssh -i ~/.ssh/id_deploy "ubuntu@$DEPLOY_HOST" \
-            'cd /opt/app && docker compose logs --tail 200 app caddy'
+            'cd /opt/app && docker compose logs --tail 200 app api caddy'

@@ -1,6 +1,16 @@
 {$SITE_HOST} {
-	reverse_proxy app:8000 {
-		# keep Server-Sent Events streaming instead of buffering them
-		flush_interval -1
+	# Read API for dashboards (docs/rest.md). The config endpoints stay in the web app.
+	@readapi {
+		path /api/v1 /api/v1/*
+		not path /api/v1/configs /api/v1/configs/*
+	}
+	handle @readapi {
+		reverse_proxy api:8790
+	}
+	handle {
+		reverse_proxy app:8000 {
+			# keep streamed responses flowing instead of buffering them
+			flush_interval -1
+		}
 	}
 }
