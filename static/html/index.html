@@ -199,21 +199,23 @@
         </table></div>
       </div>
 
-      <div class="panel">
-        <div class="panel-head"><h2>Agent outcome checks</h2><span class="cap faint">Recorded replays on synthetic data</span></div>
-        <ul class="picker" id="scenarios"></ul>
-      </div>
-    </div>
+      <div class="grid" style="min-width: 0">
+        <div class="panel">
+          <div class="panel-head"><h2>Agent outcome checks</h2><span class="cap faint">Recorded replays on synthetic data</span></div>
+          <ul class="picker" id="scenarios"></ul>
+        </div>
 
-    <div class="panel" aria-live="polite" id="scenOut" style="margin-top: 1.25rem" hidden>
-      <div class="panel-head"><h2>Outcome check details</h2></div>
-      <div class="verdict" id="sVerdict"><div class="word" id="sWord"></div><p class="reason" id="sReason"></p></div>
-      <div class="scroll"><table>
-        <thead><tr><th>Field</th><th>Approved</th><th>Actually saved</th><th>Check</th></tr></thead>
-        <tbody id="evidence"></tbody>
-      </table></div>
-      <div class="panel-head"><h2>Run steps</h2></div>
-      <ol class="timeline" id="timeline"></ol>
+        <div class="panel" aria-live="polite" id="scenOut" hidden>
+          <div class="panel-head"><h2>Outcome check details</h2></div>
+          <div class="verdict" id="sVerdict"><div class="word" id="sWord"></div><p class="reason" id="sReason"></p></div>
+          <div class="scroll"><table>
+            <thead><tr><th>Field</th><th>Approved</th><th>Actually saved</th><th>Check</th></tr></thead>
+            <tbody id="evidence"></tbody>
+          </table></div>
+          <div class="panel-head"><h2>Run steps</h2></div>
+          <ol class="timeline" id="timeline"></ol>
+        </div>
+      </div>
     </div>
   </section>
 </main>
