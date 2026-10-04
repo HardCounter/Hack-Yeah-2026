@@ -1,29 +1,27 @@
-/* Tests: self-test suite results by area, plus recorded agent outcome replays. Results are sample data. */
+/* Tests: the guardrail suite, run on the server (web/suite.py), plus recorded agent outcome replays (sample data). */
 (() => {
+  // Area codes come from @pytest.mark.area in tests/control_layer; a code missing here is listed under its own name.
   const AREAS = [
-    ['PII', 'Personal data', 'PESEL and IBAN never reach the model', 9, 'REDACT'],
-    ['SEC', 'Secrets', 'API keys and private keys are blocked or redacted', 6, 'BLOCK'],
-    ['INJ', 'Prompt injection', 'Direct and indirect overrides are blocked', 8, 'BLOCK'],
-    ['BUD', 'Budget', 'Token and cost limits hold, including concurrent requests', 5, 'BLOCK'],
-    ['EXP', 'Exploit signatures', 'Unsafe deserialization and model supply-chain attacks', 6, 'BLOCK'],
-    ['TRJ', 'Agent trajectory', 'Out-of-scope tool calls are denied', 5, 'BLOCK'],
-    ['ONB', 'Saved outcome', 'An independent check catches a false "done"', 5, 'FAIL'],
-    ['CFG', 'Config reload', 'Edits apply without a restart; running sessions stay pinned', 4, 'PASS'],
-    ['LEG', 'Legitimate traffic', 'Normal requests pass (false-positive check)', 40, 'ALLOW'],
+    ['PII', 'Personal data', 'PESEL and IBAN never reach the model or leave by email'],
+    ['SEC', 'Secrets', 'API keys and private keys are blocked or redacted'],
+    ['INJ', 'Prompt injection', 'Direct and indirect overrides are blocked'],
+    ['EXP', 'Exploit signatures', 'Malicious code, unsafe model files and blocklisted hosts'],
+    ['BUD', 'Budget and rate', 'Tool-call, token and rate limits hold'],
+    ['ACC', 'Access and scope', 'A wrong identity, tool or case is denied'],
+    ['ACT', 'Action guards', 'No client is created unless every check passed'],
+    ['CFG', 'Policy and feedback', 'Presets, pinned sessions, halt and strict mode'],
+    ['LEG', 'Legitimate traffic', 'Clean requests go through'],
   ];
-  const KNOWN_FAILURES = { 'EXP-05': 'ALLOW', 'LEG-17': 'BLOCK' };  // shown so a failing case is visible in the demo
+  let run = { status: 'not_run', cases: [] }, failure = null, timer = null;
 
-  const cases = AREAS.flatMap(([pre, , , n, expected]) => Array.from({ length: n }, (_, i) => {
-    const id = `${pre}-${String(i + 1).padStart(2, '0')}`;
-    return { id, pre, expected, actual: KNOWN_FAILURES[id] || expected, state: 'done', ms: Math.round(rand(2, 40)) };
-  }));
-  let lastRun = new Date(Date.now() - rand(5, 40) * 60e3), running = false;
-
+  // A case has no expected result: it shows the control layer's final decision, with every call behind it on hover.
+  const word = c => c.state === 'pending' ? 'QUEUED' : c.state === 'not_run' ? 'NOT RUN' : VERDICT[c.status] || 'NO DECISION';
   const pop = $('#pop');
-  function cell(c) {
-    const ok = c.actual === c.expected;
-    const b = el('button', 'cell ' + (c.state === 'pending' ? 'pending' : ok ? 'pass' : 'fail')); b.type = 'button';
-    const text = c.state === 'pending' ? `${c.id}  queued` : `${c.id}  ${ok ? 'pass' : 'FAIL'}\nexpected  ${c.expected}\nactual    ${c.actual}\ntime      ${c.ms} ms`;
+  function status(c) {
+    const b = badge(word(c)); b.tabIndex = 0;
+    const calls = c.steps.map((s, i) => `${String(i + 1).padStart(2, '0')} ${s.kind} ${s.name}  ${VERDICT[s.decision] || s.decision}${s.reason ? '  ' + s.reason : ''}`);
+    const text = [c.title, ...(calls.length ? calls : [c.state === 'done' ? 'no control-layer decision was made' : word(c).toLowerCase()]),
+      ...(c.ms != null ? [`${fmtNum(c.ms)} ms`] : [])].join('\n');
     b.setAttribute('aria-label', text.replace(/\s+/g, ' '));
     const show = () => {
       pop.textContent = text; pop.hidden = false;
@@ -36,40 +34,50 @@
     b.addEventListener('mouseleave', hide); b.addEventListener('blur', hide);
     return b;
   }
-
-  function render() {
-    const done = cases.filter(c => c.state === 'done');
-    const failed = done.filter(c => c.actual !== c.expected);
-    const legit = cases.filter(c => c.pre === 'LEG' && c.state === 'done');
-    const fp = legit.filter(c => c.actual !== c.expected).length;
-    const k = (label, value, sub, tone) => { const d = el('div', 'kpi'); d.append(el('span', 'label', label), el('span', 'value' + (tone ? ' v-' + tone : ''), value), el('span', 'sub', sub)); return d; };
-    $('#tKpis').replaceChildren(
-      k('Cases', fmtNum(cases.length), `${AREAS.length} areas`),
-      k('Passed', fmtNum(done.length - failed.length), running ? 'running…' : `${Math.round((done.length - failed.length) / cases.length * 100)}%`, 'allow'),
-      k('Failed', fmtNum(failed.length), failed.map(c => c.id).join(', ') || 'none', failed.length ? 'block' : null),
-      k('False positives', fmtNum(fp), `on ${legit.length} legitimate requests`, fp ? 'warn' : null),
-      k('Duration', (done.reduce((s, c) => s + c.ms, 0) / 1000).toFixed(1) + ' s', 'no API key needed'),
-      k('Last run', running ? 'now' : fmtTime(lastRun), running ? 'in progress' : 'Europe/Warsaw'),
-    );
-    $('#families').replaceChildren(...AREAS.map(([pre, name, proves]) => {
-      const mine = cases.filter(c => c.pre === pre), ok = mine.filter(c => c.state === 'done' && c.actual === c.expected).length;
-      const tr = el('tr'), cells = el('div', 'cells'); cells.append(...mine.map(cell));
-      const c = el('td'); c.append(cells);
-      tr.append(el('td', null, name), el('td', 'cap muted', proves),
-        el('td', 'n mono cap' + (ok < mine.length && !running ? ' v-block' : ''), `${ok}/${mine.length}`), c);
-      return tr;
-    }));
+  // One case: its final decision, its name and a button that runs only this case.
+  function caseRow(c, running) {
+    const row = el('div', 'case'), go = el('button', 'run', '▶'); go.type = 'button';
+    go.title = 'Run this case'; go.setAttribute('aria-label', `Run ${c.title}`);
+    go.disabled = running; go.onclick = () => refresh(true, c.id);
+    row.append(status(c), el('span', 'name', c.title), go);
+    return row;
   }
 
-  $('#runSuite').onclick = async () => {
-    if (running) return;
-    running = true; $('#runSuite').disabled = true; $('#runSuite').textContent = 'Running…';
-    cases.forEach(c => c.state = 'pending'); render();
-    for (const c of cases) { await sleep(25); c.state = 'done'; c.ms = Math.round(rand(2, 40)); if (cases.indexOf(c) % 6 === 0) render(); }
-    running = false; lastRun = new Date();
-    $('#runSuite').disabled = false; $('#runSuite').textContent = 'Run suite';
+  function render() {
+    const cases = run.cases, running = run.status === 'running';
+    const done = cases.filter(c => c.state === 'done'), never = !done.length && !running;
+    const count = w => done.filter(c => word(c) === w).length, alerts = count('ALERT');
+    const k = (label, value, sub, tone) => { const d = el('div', 'kpi'); d.append(el('span', 'label', label), el('span', 'value' + (tone ? ' v-' + tone : ''), value), el('span', 'sub', sub)); return d; };
+    const tile = (label, w, tone) => k(label, never ? '–' : fmtNum(count(w)), never ? '' : 'final decision', count(w) ? tone : null);
+    $('#tKpis').replaceChildren(
+      k('Cases', cases.length ? fmtNum(cases.length) : '–', never ? 'not run yet' : running ? 'running…' : `${done.length} run`),
+      k('Allowed', never ? '–' : fmtNum(count('ALLOWED')), never ? '' : alerts ? `plus ${alerts} with an alert` : 'final decision', count('ALLOWED') ? 'allow' : null),
+      tile('Blocked', 'BLOCKED', 'block'), tile('Redacted', 'REDACTED', 'warn'), tile('Held', 'HELD', 'hold'),
+      failure || run.error ? k('Last run', 'error', failure || run.error, 'block')
+        : k('Last run', running ? 'now' : run.finished_at ? fmtTime(new Date(run.finished_at)) : '–',
+            run.config ? `${run.duration_ms != null ? (run.duration_ms / 1000).toFixed(1) + ' s · ' : ''}config ${label(run.config.name)}` : 'press Run suite'),
+    );
+    const extra = [...new Set(cases.map(c => c.area))].filter(a => !AREAS.some(([code]) => code === a)).map(a => [a, a, '']);
+    $('#families').replaceChildren(...[...AREAS, ...extra].map(([code, name, proves]) => {
+      const tr = el('tr'), c = el('td'); c.append(...cases.filter(m => m.area === code).map(m => caseRow(m, running)));
+      const area = el('td', null, name); area.append(el('span', 'sub cap muted', proves));
+      tr.append(area, c);
+      return tr;
+    }));
+    $('#runSuite').disabled = running; $('#runSuite').textContent = running ? 'Running…' : 'Run suite';
+  }
+
+  // The server keeps one latest run for every browser; poll it while it is going so cases fill in as they
+  // finish. start posts a new run: the whole suite, or only the case with the given id.
+  async function refresh(start, caseId) {
+    clearTimeout(timer);
+    const post = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(caseId ? { case: caseId } : {}) };
+    try { run = await App.request('/api/suite/runs' + (start === true ? '' : '/latest'), start === true ? post : { cache: 'no-store' }); failure = null; }
+    catch (e) { failure = e.message; }
     render();
-  };
+    if (run.status === 'running' && !failure) timer = setTimeout(refresh, 700);
+  }
+  $('#runSuite').onclick = () => refresh(true);
 
   /* Agent outcome replays */
   const ok = 'PASS';
@@ -121,5 +129,5 @@
   });
 
   render();
-  App.on('tab', t => { if (t === 'tests' && $('#scenOut').hidden) replay(0); });
+  App.on('tab', t => { if (t !== 'tests') return; refresh(); if ($('#scenOut').hidden) replay(0); });
 })();

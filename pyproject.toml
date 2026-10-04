@@ -25,3 +25,4 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
+markers = ["area(code): guardrail area the case is listed under on the dashboard Tests tab"]
