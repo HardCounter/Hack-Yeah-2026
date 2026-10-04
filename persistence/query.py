@@ -23,9 +23,9 @@ from persistence.schema import CURRENT_SCHEMA_VERSION
 from persistence.settings import PersistenceSettings
 from persistence.vocabulary import DECISION_FOR_VERDICT, WIRE_STATUS, is_intent
 
-MAX_STORES = 128
-MAX_ROWS = 10000
-MAX_READ_BYTES = 8 * 1024 * 1024
+MAX_STORES = 2000  # one store per chat session and none are pruned; 128 was reached within a day of traffic
+MAX_ROWS = 100000
+MAX_READ_BYTES = 64 * 1024 * 1024
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 SEVERITIES = ("info", "low", "medium", "high", "critical")
 DECISION_SEVERITY = {"BLOCK": "high", "REQUIRE_APPROVAL": "medium", "ALERT": "medium", "REDACT": "low"}
