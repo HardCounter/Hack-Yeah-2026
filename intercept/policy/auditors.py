@@ -22,9 +22,44 @@ def _contains_literal(value, pattern):
     return pattern.casefold() in value.casefold()
 
 
-def _redact_literal(value, pattern):
-    new_value, count = re.subn(re.escape(pattern), "[REDACTED]", value, flags=re.IGNORECASE)
-    return new_value, count > 0
+def _find_casefold_spans(value: str, pattern: str) -> list[tuple[int, int]]:
+    folded_pattern = pattern.casefold()
+    if not folded_pattern:
+        return []
+    char_map: list[int] = []
+    folded_chars: list[str] = []
+    for orig_idx, char in enumerate(value):
+        folded_char = char.casefold()
+        for _ in folded_char:
+            char_map.append(orig_idx)
+        folded_chars.append(folded_char)
+    folded_value = "".join(folded_chars)
+    spans: list[tuple[int, int]] = []
+    start = 0
+    pattern_len = len(folded_pattern)
+    while True:
+        idx = folded_value.find(folded_pattern, start)
+        if idx == -1:
+            break
+        orig_start = char_map[idx]
+        orig_end = char_map[idx + pattern_len - 1] + 1
+        spans.append((orig_start, orig_end))
+        start = idx + pattern_len
+    return spans
+
+
+def _redact_literal(value: str, pattern: str) -> tuple[str, bool]:
+    spans = _find_casefold_spans(value, pattern)
+    if not spans:
+        return value, False
+    parts = []
+    last_end = 0
+    for start, end in spans:
+        parts.append(value[last_end:start])
+        parts.append("[REDACTED]")
+        last_end = end
+    parts.append(value[last_end:])
+    return "".join(parts), True
 
 
 
