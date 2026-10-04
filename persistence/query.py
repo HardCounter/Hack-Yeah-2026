@@ -12,7 +12,9 @@ import json
 from pathlib import Path
 import re
 import sqlite3
+import sys
 import time
+import traceback
 
 from persistence.adapters.consumer_v21 import to_consumer_v21
 from persistence.models import ActionEventEnvelope, ActionStatus, ActionType
@@ -116,11 +118,17 @@ class ReadQueries(UsageQueriesMixin):
             deadline = time.monotonic() + 5
             conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
             conn.execute("BEGIN")
-            if conn.execute("PRAGMA user_version").fetchone()[0] != CURRENT_SCHEMA_VERSION:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version != CURRENT_SCHEMA_VERSION:
+                print(f"read API: store {path.name} has schema version {version}", file=sys.stderr, flush=True)
                 raise QueryError(503, "store_unavailable")
             yield conn
         except (sqlite3.Error, OSError, ValueError, TypeError, KeyError, AttributeError, IndexError,
-                RecursionError, OverflowError, StopIteration):
+                RecursionError, OverflowError, StopIteration) as exc:
+            # Say why in the server log (type and code location only, never the data).
+            frames = traceback.extract_tb(exc.__traceback__)
+            where = ", ".join(f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in frames[-3:])
+            print(f"read API: store {path.name} unreadable: {type(exc).__name__} at {where}", file=sys.stderr, flush=True)
             raise QueryError(503, "store_unavailable") from None
         finally:
             if conn is not None:
