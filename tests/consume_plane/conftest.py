@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from consume_plane.adapters.memory import MemoryEventSource, MemoryFeedbackChannel, MemorySink, MemoryTrajectoryReader
-from consume_plane.model.decode import decode_event
+from contracts.wire import decode_event
 from consume_plane.runtime.config import ConsumePlaneConfig, FeedbackConfig, PluginEntry
 from consume_plane.runtime.feedback import FeedbackController
 from consume_plane.runtime.ledger import Ledger

@@ -28,6 +28,17 @@ def parse_utc_iso_timestamp(ts: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+class _JsonMixin:
+    """`to_json`/`from_json` for models that define `to_dict`/`from_dict` (interchange, not sanitized export)."""
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @classmethod
+    def from_json(cls, json_str: str):
+        return cls.from_dict(json.loads(json_str))
+
+
 class ActionType(str, Enum):
     """Classification of an observed action in the control layer."""
     TOOL_CALL = "TOOL_CALL"
@@ -75,63 +86,50 @@ class ActionStatus(str, Enum):
     SKIPPED = "SKIPPED"
 
 
-def _parse_auditor_verdict(val: Any) -> AuditorVerdict:
-    if isinstance(val, AuditorVerdict):
+def _parse_enum(enum_cls, val: Any, label: str, synonyms: Optional[Dict[str, Any]] = None):
+    """Parse a storage enum from its value (case-insensitive) or a known synonym; fail closed."""
+    if isinstance(val, enum_cls):
         return val
-    s = str(val).strip().upper()
-    synonyms = {
-        "ALLOW": AuditorVerdict.ALLOWED,
-        "ALLOWED": AuditorVerdict.ALLOWED,
-        "WARN": AuditorVerdict.WARNED,
-        "WARNED": AuditorVerdict.WARNED,
-        "ALERT": AuditorVerdict.WARNED,
-        "BLOCK": AuditorVerdict.BLOCKED,
-        "BLOCKED": AuditorVerdict.BLOCKED,
-        "REDACT": AuditorVerdict.REDACTED,
-        "REDACTED": AuditorVerdict.REDACTED,
-        "ESCALATE": AuditorVerdict.ESCALATED,
-        "ESCALATED": AuditorVerdict.ESCALATED,
-        "REQUIRE_APPROVAL": AuditorVerdict.ESCALATED,
-        "APPROVE": AuditorVerdict.ESCALATED,
-        "ERROR": AuditorVerdict.ERROR,
-    }
-    if s not in synonyms:
-        raise ValueError("Invalid auditor verdict")
-    return synonyms[s]
+    key = str(val).strip().upper()
+    if synonyms and key in synonyms:
+        return synonyms[key]
+    try:
+        return enum_cls(key)
+    except ValueError:
+        raise ValueError(f"Invalid {label}") from None
+
+
+# Decision words accepted as auditor verdicts (canonical gateway decisions and legacy verbs).
+_VERDICT_SYNONYMS = {
+    "ALLOW": AuditorVerdict.ALLOWED,
+    "WARN": AuditorVerdict.WARNED,
+    "ALERT": AuditorVerdict.WARNED,
+    "BLOCK": AuditorVerdict.BLOCKED,
+    "REDACT": AuditorVerdict.REDACTED,
+    "ESCALATE": AuditorVerdict.ESCALATED,
+    "REQUIRE_APPROVAL": AuditorVerdict.ESCALATED,
+    "APPROVE": AuditorVerdict.ESCALATED,
+}
+
+
+def _parse_auditor_verdict(val: Any) -> AuditorVerdict:
+    return _parse_enum(AuditorVerdict, val, "auditor verdict", _VERDICT_SYNONYMS)
 
 
 def _parse_action_type(val: Any) -> ActionType:
-    if isinstance(val, ActionType):
-        return val
-    s = str(val).strip().upper()
-    try:
-        return ActionType(s)
-    except ValueError:
-        raise ValueError("Invalid action type") from None
+    return _parse_enum(ActionType, val, "action type")
 
 
 def _parse_severity(val: Any) -> Severity:
-    if isinstance(val, Severity):
-        return val
-    s = str(val).strip().upper()
-    try:
-        return Severity(s)
-    except ValueError:
-        raise ValueError("Invalid severity") from None
+    return _parse_enum(Severity, val, "severity")
 
 
 def _parse_action_status(val: Any) -> ActionStatus:
-    if isinstance(val, ActionStatus):
-        return val
-    s = str(val).strip().upper()
-    try:
-        return ActionStatus(s)
-    except ValueError:
-        raise ValueError("Invalid action status") from None
+    return _parse_enum(ActionStatus, val, "action status")
 
 
 @dataclass
-class AuditorDecision:
+class AuditorDecision(_JsonMixin):
     """Decision details from an individual policy auditor."""
     auditor_name: str
     verdict: AuditorVerdict
@@ -161,16 +159,9 @@ class AuditorDecision:
             rule=data.get("rule"),
         )
 
-    def to_json(self, indent: Optional[int] = None) -> str:
-        return json.dumps(self.to_dict(), indent=indent)
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "AuditorDecision":
-        return cls.from_dict(json.loads(json_str))
-
 
 @dataclass
-class InterceptionMetadata:
+class InterceptionMetadata(_JsonMixin):
     """Composite interception metadata across all auditors."""
     verdict: AuditorVerdict
     auditor_decisions: List[AuditorDecision] = field(default_factory=list)
@@ -207,16 +198,9 @@ class InterceptionMetadata:
             sanitized_fields=list(data.get("sanitized_fields", [])),
         )
 
-    def to_json(self, indent: Optional[int] = None) -> str:
-        return json.dumps(self.to_dict(), indent=indent)
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "InterceptionMetadata":
-        return cls.from_dict(json.loads(json_str))
-
 
 @dataclass
-class ActionDetails:
+class ActionDetails(_JsonMixin):
     """Details of the action proposed or executed."""
     name: str
     parameters: Dict[str, Any] = field(default_factory=dict)
@@ -257,13 +241,6 @@ class ActionDetails:
             transport=data.get("transport"),
             wire_details=data.get("wire_details", {}) or {},
         )
-
-    def to_json(self, indent: Optional[int] = None) -> str:
-        return json.dumps(self.to_dict(), indent=indent)
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "ActionDetails":
-        return cls.from_dict(json.loads(json_str))
 
 
 @dataclass
@@ -325,7 +302,7 @@ class RunBinding:
 
 
 @dataclass
-class ActionEventEnvelope:
+class ActionEventEnvelope(_JsonMixin):
     """Canonical envelope for all persisted action events."""
     trace_id: str
     session_id: str
@@ -396,16 +373,9 @@ class ActionEventEnvelope:
             seq=data.get("seq"),
         )
 
-    def to_json(self, indent: Optional[int] = None) -> str:
-        return json.dumps(self.to_dict(), indent=indent)
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "ActionEventEnvelope":
-        return cls.from_dict(json.loads(json_str))
-
 
 @dataclass
-class AlertEvent:
+class AlertEvent(_JsonMixin):
     """Security alert emitted during policy interception or consumer risk evaluation."""
     severity: Severity
     rule: str
@@ -444,13 +414,6 @@ class AlertEvent:
             evidence=data.get("evidence", {}) or {},
         )
 
-    def to_json(self, indent: Optional[int] = None) -> str:
-        return json.dumps(self.to_dict(), indent=indent)
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "AlertEvent":
-        return cls.from_dict(json.loads(json_str))
-
 
 @dataclass(frozen=True)
 class ConsumerResult:
@@ -471,7 +434,7 @@ class ConsumerResult:
 
 
 @dataclass
-class AuditActionRecord:
+class AuditActionRecord(_JsonMixin):
     """Audit record capturing an executed tool call or side-effecting operation."""
     run_id: str
     session_id: str
@@ -513,16 +476,9 @@ class AuditActionRecord:
             details=data.get("details", {}) or {},
         )
 
-    def to_json(self, indent: Optional[int] = None) -> str:
-        return json.dumps(self.to_dict(), indent=indent)
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "AuditActionRecord":
-        return cls.from_dict(json.loads(json_str))
-
 
 @dataclass
-class DeadLetterEnvelope:
+class DeadLetterEnvelope(_JsonMixin):
     """Envelope for events that repeatedly failed consumer delivery."""
     event: Union[ActionEventEnvelope, Dict[str, Any]]
     consumer_name: str
@@ -565,10 +521,3 @@ class DeadLetterEnvelope:
             error_message=data.get("error_message", ""),
             retry_count=int(data.get("retry_count", 0)),
         )
-
-    def to_json(self, indent: Optional[int] = None) -> str:
-        return json.dumps(self.to_dict(), indent=indent)
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "DeadLetterEnvelope":
-        return cls.from_dict(json.loads(json_str))

@@ -62,13 +62,13 @@ def validate_specs(specs):
             if set(c) != {"allowed_tools"} or not isinstance(c["allowed_tools"], list) or any(not isinstance(x, str) for x in c["allowed_tools"]):
                 raise ValueError("invalid allowlist")
         elif spec["type"] == "pattern_scanner":
-            if set(c) != {"patterns", "action"} or c["action"] not in ("BLOCK", "REDACT", "ALERT") or not isinstance(c["patterns"], list):
+            if set(c) != {"patterns", "action"} or c["action"] not in ("BLOCK", "REDACT", "REQUIRE_APPROVAL", "ALERT") or not isinstance(c["patterns"], list):
                 raise ValueError("invalid scanner")
             # Literal signatures, not untrusted regexes with catastrophic backtracking.
             if any(not isinstance(x, str) or not 1 <= len(x) <= 256 for x in c["patterns"]):
                 raise ValueError("invalid literal signature")
         elif spec["type"] == "classified_scanner":
-            if set(c) != {"classes", "action"} or c["action"] not in ("BLOCK", "REDACT", "ALERT"):
+            if set(c) != {"classes", "action"} or c["action"] not in ("BLOCK", "REDACT", "REQUIRE_APPROVAL", "ALERT"):
                 raise ValueError("invalid classified scanner")
             if not isinstance(c["classes"], list) or not c["classes"] or any(x not in CLASSIFIED for x in c["classes"]):
                 raise ValueError("unknown privacy or secret class")

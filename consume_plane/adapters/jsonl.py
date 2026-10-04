@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 from typing import Any, Sequence
 
-from ..model.contract import TaskContract
-from ..model.decode import DecodeError, decode_event
+from contracts.task_contract import TaskContract
+from contracts.wire import DecodeError, decode_event
 from ..model.outputs import Finding
 from .memory import MemoryEventSource, MemoryTrajectoryReader
 

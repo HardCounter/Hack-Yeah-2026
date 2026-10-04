@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Callable, Sequence
 
 from .. import __version__
-from ..model.actions import AgentAction
+from contracts.action import AgentAction
 from ..model.outputs import Finding, FindingDraft, finding_id
 from ..ports.event_source import Delivery, EventSource, source_is_idle
 from ..ports.sinks import FindingSink
@@ -19,6 +19,7 @@ from .feedback import FeedbackController
 from .ledger import Ledger
 from .metrics import Metrics
 from .registry import LoadedPlugin, Registry
+from tracing import get_logger
 
 log = logging.getLogger("consume_plane.manager")
 SELF_NAME = "consume-plane"
@@ -109,6 +110,7 @@ class ConsumerManager:
         outcomes = await asyncio.gather(*(self._run_one(p, a) for p in pending))
 
         retry: list[str] = []
+        dead: list[str] = []
         for p, (buffer, error, duration_ms) in zip(pending, outcomes):
             if error is None:
                 try:
@@ -126,6 +128,7 @@ class ConsumerManager:
                 self.ledger.mark_dead(a.event_id, a.session_id, p.name, p.version, attempts, error)
                 self.metrics.inc("consumer_plugin_dead_letters_total", plugin=p.name)
                 await self._report_plugin_failure(p, a, attempts, error)
+                dead.append(p.name)
             else:
                 retry.append(f"{p.name}: {error}")
 
@@ -136,6 +139,10 @@ class ConsumerManager:
         else:
             await self.source.ack(d.delivery_id)
             self.metrics.inc("consumer_events_total", outcome="acked")
+        get_logger().log("consume", "event.processed", session=a.session_id, event_id=a.event_id, seq=a.seq,
+                         kind=a.kind, status=a.status, plugins=len(pending),
+                         outcome="nacked" if retry else "acked", retry=",".join(r.split(":")[0] for r in retry) or None,
+                         dead=",".join(dead) or None, attempt=d.attempt if d.attempt > 1 else None)
         self.metrics.set("consumer_lag_seconds", (self.clock() - a.ts).total_seconds())
 
     async def _run_one(self, p: LoadedPlugin, a: AgentAction) -> tuple[OutputBuffer, str | None, float]:
@@ -182,10 +189,15 @@ class ConsumerManager:
         findings = [self._finalize(p.name, p.version, p.method, a, draft, i) for i, draft in enumerate(buffer.findings)]
         if findings:
             await self._write_findings(findings)
+            for f in findings:
+                get_logger().log("consume", "finding", session=a.session_id, event_id=a.event_id, plugin=p.name,
+                                 rule=f.rule_id, severity=f.severity)
         for name, value, labels in buffer.metrics:
             self.metrics.set(name, value, **{**labels, "plugin": p.name})
         for proposal in buffer.proposals:
             decision = await self.feedback.submit(proposal, plugin=p.name, method=p.method, action=a)
+            get_logger().log("consume", "feedback.proposed", session=a.session_id, event_id=a.event_id, plugin=p.name,
+                             adjustment=proposal.action, outcome=decision.reason)
             self.metrics.inc("consumer_feedback_total", plugin=p.name, outcome=decision.reason)
 
     async def _report_plugin_failure(self, p: LoadedPlugin, a: AgentAction, attempts: int, error: str) -> None:

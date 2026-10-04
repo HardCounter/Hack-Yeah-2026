@@ -5,8 +5,8 @@ import asyncio
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, TypeVar
 
-from ..model.actions import ActionKind, AgentAction, ContentRef
-from ..model.contract import TaskContract
+from contracts.action import ActionKind, AgentAction, ContentRef
+from contracts.task_contract import TaskContract
 from ..model.outputs import SEVERITIES, AdjustmentProposal, FindingDraft
 from ..ports.trajectory import Trajectory, TrajectoryReader
 from .registry import LoadedPlugin

@@ -1,55 +1,21 @@
 """Normalize internal persistence evidence into consumer Event Envelope v2.1.
 
-The persistence schema remains an internal storage format. This adapter is the
-only place that translates its legacy uppercase vocabularies to the v2.1 wire
-contract; unknown states fail closed.
+The persistence schema remains an internal storage format. The translation tables
+live in persistence/vocabulary.py (shared with the Layer 1 event builder); this
+module shapes the v2.1 dict. Unknown states fail closed.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from persistence.models import ActionEventEnvelope, ActionStatus, ActionType, AuditorVerdict
+from contracts.action import AgentAction, kind_for_action_type as consumer_kind  # noqa: F401  (compat name)
+from contracts.wire import decode_event
+from persistence.models import ActionEventEnvelope, ActionType
+from persistence.vocabulary import DECISION_FOR_VERDICT, WIRE_ACTION_TYPE, WIRE_STATUS
 
-
-_ACTION_TYPES = {
-    ActionType.TOOL_CALL: "tool_call",
-    ActionType.LLM_INVOCATION: "llm_call",
-    ActionType.MCP_TOOL: "mcp_tool",
-    ActionType.EGRESS_HTTP: "egress_http",
-    ActionType.SESSION: "session",
-    ActionType.APPROVAL: "approval",
-    ActionType.CONTROL: "control",
-}
-_STATUSES = {
-    ActionStatus.EXECUTED: "completed",
-    ActionStatus.BLOCKED: "blocked",
-    ActionStatus.REDACTED: "redacted",
-    ActionStatus.FAILED: "failed",
-    ActionStatus.ESCALATED: "pending_approval",
-}
-_DECISIONS = {
-    AuditorVerdict.ALLOWED: "ALLOW",
-    AuditorVerdict.BLOCKED: "BLOCK",
-    AuditorVerdict.REDACTED: "REDACT",
-    AuditorVerdict.ESCALATED: "REQUIRE_APPROVAL",
-    AuditorVerdict.WARNED: "ALERT",
-}
-_KIND_BY_TYPE = {
-    "llm_call": "prompt", "tool_call": "tool_use", "mcp_tool": "tool_use",
-    "egress_http": "egress", "session": "session", "approval": "approval",
-    "control": "control",
-}
-
-
-def consumer_kind(action_type: str) -> str:
-    """Map the canonical wire action type to the decoder's plugin kind."""
-    return _KIND_BY_TYPE.get(action_type, action_type)
-
-
-def _required(mapping: dict, value: Any, label: str) -> Any:
-    if value is None:
-        raise ValueError(f"Cannot emit v2.1 event: missing {label}")
-    return mapping.get(value) if mapping else value
+_ACTION_TYPES = WIRE_ACTION_TYPE
+_STATUSES = WIRE_STATUS
+_DECISIONS = DECISION_FOR_VERDICT
 
 
 def to_consumer_v21(event: ActionEventEnvelope) -> dict[str, Any]:
@@ -156,3 +122,12 @@ def to_consumer_v21(event: ActionEventEnvelope) -> dict[str, Any]:
             "interception_overhead_ms": meta.total_latency_ms,
         }
     return result
+
+
+def to_agent_action(event: ActionEventEnvelope) -> AgentAction:
+    """Layer 2 -> Layer 3 in one step: storage envelope -> Event Envelope v2.1 -> canonical AgentAction.
+
+    Going through the wire dict keeps one contract: what in-process consumers see is exactly what an
+    out-of-process consumer would decode.
+    """
+    return decode_event(to_consumer_v21(event))

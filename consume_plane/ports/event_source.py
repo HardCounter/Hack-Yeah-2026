@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, Sequence
 
-from ..model.actions import AgentAction
+from contracts.action import AgentAction
 
 
 @dataclass(frozen=True)

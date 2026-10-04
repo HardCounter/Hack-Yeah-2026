@@ -9,8 +9,10 @@
 `persistence/` implements local evidence storage and analytics delivery. It does
 not intercept agents, enforce policy, authorize approvals, reserve budgets, or
 verify banking outcomes. Only trusted gateway/orchestrator code may invoke this
-API or register in-process callbacks. It has no public or model-facing endpoint.
-Do not expose these methods as agent tools. Identifiers and `AuditContext` must
+API or register in-process callbacks. The write API has no public or model-facing
+endpoint. Dashboards read evidence through a separate read-only HTTP API (planned,
+[rest.md](rest.md)) that opens the store in read-only mode and never imports this
+write path. Do not expose these methods as agent tools. Identifiers and `AuditContext` must
 come from the trusted orchestrator, not model arguments or correlation headers.
 
 ## Two ingestion paths
@@ -116,7 +118,9 @@ worker/store alive so an operator can restore the cause and retry `stop()`.
 `get_stats()` exposes counts, latency, backlog, volatile rejections, live-feed
 drops/filter errors and worker error class. `prune_before(UTC_timestamp)` applies
 an explicit trusted retention cutoff and preserves events with pending jobs.
-There is no automatic scheduler or public export/admin endpoint. Deployment must
+There is no automatic scheduler and no admin or retention endpoint. The planned
+read API ([rest.md](rest.md)) adds a read-only per-session NDJSON export within the
+same export quotas; principal-scoped run export stays on `AuditReader`. Deployment must
 choose retention limits, authorize pruning/exports, restrict filesystem access,
 and monitor file growth. Pending capacity alone does not bound the database.
 Reads/exports also project legacy records onto the allowlist, but old bytes from

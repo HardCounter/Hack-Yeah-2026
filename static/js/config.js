@@ -6,8 +6,8 @@
   const THRESHOLDS = ['block_threshold', 'approve_threshold', 'alert_threshold'];  // highest first
   const AUDITORS = {
     signature: { id: 'signature-scanner', type: 'pattern_scanner', config: { patterns: [], action: 'BLOCK' } },
-    privacy: { id: 'privacy-scanner', type: 'classified_scanner', config: { classes: ['pesel', 'iban'], action: 'REDACT' } },
-    secret: { id: 'secret-scanner', type: 'classified_scanner', config: { classes: ['aws_access_key', 'private_key', 'api_key'], action: 'REDACT' } },
+    privacy: { id: 'privacy-scanner', type: 'classified_scanner', config: { classes: ['pesel', 'iban'], action: 'REQUIRE_APPROVAL' } },
+    secret: { id: 'secret-scanner', type: 'classified_scanner', config: { classes: ['aws_access_key', 'private_key', 'api_key'], action: 'REQUIRE_APPROVAL' } },
   };
   const auditor = (c, key) => c.auditors.find(a => a.id === AUDITORS[key].id) || structuredClone(AUDITORS[key]);
 
@@ -42,7 +42,7 @@
       if (j > i && +f[n].value > v) f[n].value = v;
     });
   }
-  form.addEventListener('input', e => { orderThresholds(e.target.name); showOutputs(); if (!['name', 'token', 'description'].includes(e.target.name)) markDirty(); });
+  form.addEventListener('input', e => { orderThresholds(e.target.name); showOutputs(); if (!['name', 'description'].includes(e.target.name)) markDirty(); });
   form.addEventListener('change', e => { if (e.target.type === 'checkbox') markDirty(); });
 
   function renderTools(c) {
@@ -170,7 +170,7 @@
     try {
       await App.api('/' + encodeURIComponent(name), {
         method: 'PUT', body: JSON.stringify(c),
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + f.token.value },
+        headers: { 'Content-Type': 'application/json' },
       });
       fill(name, c);
       await refreshList();

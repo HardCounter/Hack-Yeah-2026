@@ -19,10 +19,19 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "var" / "opencode-cli" / "node_modules" / ".bin" / "opencode"
 
 
-def _opencode_available() -> bool:
+def _opencode_bin() -> str | None:
+    """OPENCODE_BIN, else the pinned CLI, else `opencode` on PATH; the tests run the one found here."""
     override = os.environ.get("OPENCODE_BIN")
-    return bool((Path(override).expanduser().is_file() and os.access(Path(override).expanduser(), os.X_OK))
-                if override else (CLI.is_file() and os.access(CLI, os.X_OK) or shutil.which("opencode")))
+    if override:
+        path = Path(override).expanduser()
+        return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+    if CLI.is_file() and os.access(CLI, os.X_OK):
+        return str(CLI)
+    return shutil.which("opencode")
+
+
+def _opencode_available() -> bool:
+    return _opencode_bin() is not None
 
 
 pytestmark = pytest.mark.skipif(not _opencode_available(), reason="OpenCode CLI unavailable; install pinned CLI or set OPENCODE_BIN")
@@ -143,7 +152,7 @@ def _run_opencode(tmp_path: Path, model: _FixtureModel, *, failure=False):
     }}}, sort_keys=True), encoding="utf-8")
     runs = tmp_path / "runs"
     env = os.environ.copy()
-    env["OPENCODE_BIN"] = env.get("OPENCODE_BIN", str(CLI))
+    env["OPENCODE_BIN"] = _opencode_bin()
     # OpenAI-compatible clients require an API key even for a local fixture;
     # keep this synthetic value process-local and never emit it in diagnostics.
     env["OPENAI_API_KEY"] = "local-fixture-key-never-valid-outside-loopback"

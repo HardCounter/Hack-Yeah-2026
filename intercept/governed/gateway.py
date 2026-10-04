@@ -15,15 +15,18 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from contracts import ActionProposal, GatewayDecision, PolicyAdjustmentSignal, TaskContract
-from persistence import (
-    ActionDetails, ActionEventEnvelope, ActionStatus, ActionType, AuditContext,
-    AuditorDecision, AuditorVerdict, InterceptionMetadata, generate_utc_iso_timestamp,
-)
+from persistence import generate_utc_iso_timestamp
+from persistence.events import build_action_event
 from persistence.business import (
-    EffectReceipt, compute_command_digest, ensure_business_schema, record_effect, replicate_effects,
+    EffectReceipt, compute_command_digest, record_effect, replicate_effects,
 )
 from persistence.writer import BoundAuditWriter
-from .adapters import InProcessFeedbackChannel, RegistryAdapter, RegistryCallCancelled
+from intercept.governed import GovernedError
+from tracing import get_logger
+from intercept.governed.baseline import (
+    Baseline, ensure_governed_schema, load_baseline, norm_name, persist_baseline, screening_source_version,
+)
+from intercept.governed.registry import InProcessFeedbackChannel, RegistryAdapter, RegistryCallCancelled
 
 IDENTITY_HINTS = frozenset({
     "agent", "agent_id", "session_id", "run_id", "contract_id", "principal_id",
@@ -48,28 +51,12 @@ LIVE_DENIALS = frozenset({
 })
 
 
-class GovernedError(ValueError):
-    """Invalid trusted binding or action shape."""
-
-
-@dataclass
-class _Baseline:
-    app_id: str
-    applicant_type: str
-    declared: dict[str, Any]
-    status: str
-    documents: dict[str, dict[str, Any]]
-    registry: dict[str, Any] | None
-    subjects: dict[tuple[str, str | None], dict[str, Any]]
-    screening_source_version: str
-
-
 @dataclass
 class _Run:
     contract: TaskContract
     ctx: Any
     database: Path
-    baseline: _Baseline
+    baseline: Baseline
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     started: bool = True
     finished: bool = False
@@ -179,7 +166,7 @@ class GovernedGateway:
         # contract names them, and deterministic controls still run before execution.
 
         database = Path(ctx.db).resolve()
-        baseline = await asyncio.to_thread(self._load_baseline, database, contract)
+        baseline = await asyncio.to_thread(load_baseline, database, contract)
         existing = self._runs.get(contract.session_id)
         if existing:
             if existing.contract.to_dict() != contract.to_dict():
@@ -200,106 +187,13 @@ class GovernedGateway:
         self._runs[contract.session_id] = state
         # Install uniqueness/receipt schema in the synthetic run copy. This is not
         # done by the standalone low-level registry fixture path.
-        await asyncio.to_thread(self._ensure_business_schema, database)
-        await asyncio.to_thread(self._persist_baseline, database, contract, baseline)
+        await asyncio.to_thread(ensure_governed_schema, database)
+        await asyncio.to_thread(persist_baseline, database, contract, baseline)
         await self.persistence.persist_contract(contract)
         await self._persist_lifecycle(state, "session_started", "STARTED")
-
-    @staticmethod
-    def _ensure_business_schema(database: Path) -> None:
-        with sqlite3.connect(database, timeout=5) as con:
-            con.execute("BEGIN IMMEDIATE")
-            ensure_business_schema(con)
-            columns = {row[1] for row in con.execute("PRAGMA table_info(audit_actions)")}
-            if "action_id" not in columns:
-                con.execute("ALTER TABLE audit_actions ADD COLUMN action_id TEXT")
-            con.execute("""CREATE TABLE IF NOT EXISTS governed_baselines (
-                session_id TEXT PRIMARY KEY, run_id TEXT NOT NULL UNIQUE, contract_id TEXT NOT NULL,
-                case_id TEXT NOT NULL, baseline_json TEXT NOT NULL, captured_at TEXT NOT NULL)""")
-            con.execute("""CREATE TABLE IF NOT EXISTS governed_screening_evidence (
-                session_id TEXT NOT NULL, run_id TEXT NOT NULL, action_id TEXT NOT NULL,
-                subject_hash TEXT NOT NULL, source_version TEXT NOT NULL, occurred_at TEXT NOT NULL,
-                hit_count INTEGER NOT NULL, max_score REAL NOT NULL, decision TEXT NOT NULL,
-                PRIMARY KEY(session_id, action_id))""")
-
-    @staticmethod
-    def _persist_baseline(database: Path, contract: TaskContract, baseline: _Baseline) -> None:
-        value = {
-            "application_id": baseline.app_id, "applicant_type": baseline.applicant_type,
-            "status": baseline.status, "declared": baseline.declared,
-            "documents": sorted(baseline.documents.values(), key=lambda item: item["doc_id"]),
-            "registry": baseline.registry,
-            "screening_source_version": baseline.screening_source_version,
-        }
-        raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
-        with sqlite3.connect(database, timeout=5) as con:
-            con.execute("BEGIN IMMEDIATE")
-            row = con.execute("SELECT run_id,contract_id,case_id,baseline_json FROM governed_baselines WHERE session_id=?",
-                              (contract.session_id,)).fetchone()
-            expected = (contract.run_id, contract.contract_id, contract.case_id, raw)
-            if row and tuple(row) != expected:
-                raise GovernedError("immutable governed baseline conflicts with prior capture")
-            if not row:
-                con.execute("INSERT INTO governed_baselines VALUES(?,?,?,?,?,?)",
-                            (contract.session_id, contract.run_id, contract.contract_id, contract.case_id,
-                             raw, generate_utc_iso_timestamp()))
-
-    def _load_baseline(self, database: Path, contract: TaskContract) -> _Baseline:
-        app_id = contract.case_id
-        if app_id not in contract.target_ids:
-            raise GovernedError("case is outside the TaskContract target scope")
-        with sqlite3.connect(database, timeout=5) as con:
-            con.row_factory = sqlite3.Row
-            row = con.execute(
-                "SELECT applicant_type, status, declared FROM onboarding_applications WHERE application_id=?",
-                (app_id,),
-            ).fetchone()
-            if row is None:
-                raise GovernedError("TaskContract case does not exist in the pinned bank state")
-            declared = json.loads(row["declared"])
-            documents = {
-                d["doc_id"]: dict(d) for d in con.execute(
-                    "SELECT doc_id, doc_type, expiry_date FROM documents WHERE application_id=?", (app_id,)
-                )
-            }
-            registry = None
-            if row["applicant_type"] == "company":
-                reg_number = declared.get("reg_number")
-                reg = con.execute(
-                    "SELECT legal_name,status,ubos FROM company_registry WHERE reg_number=?", (reg_number,)
-                ).fetchone()
-                if reg:
-                    registry = {"legal_name": reg["legal_name"], "status": reg["status"],
-                                "ubos": json.loads(reg["ubos"] or "[]")}
-            expected_name = declared.get("legal_name") if row["applicant_type"] == "company" else declared.get("name")
-            expected_dob = None if row["applicant_type"] == "company" else declared.get("date_of_birth")
-            subjects: dict[tuple[str, str | None], dict[str, Any]] = {}
-            if expected_name:
-                subjects[(self._norm(expected_name), expected_dob)] = {"kind": "applicant", "name": expected_name, "dob": expected_dob}
-            if registry and registry.get("legal_name"):
-                subjects[(self._norm(registry["legal_name"]), None)] = {
-                    "kind": "applicant", "name": registry["legal_name"], "dob": None,
-                }
-            if registry:
-                for ubo in registry["ubos"]:
-                    if ubo.get("ownership_pct", 0) >= 25 and ubo.get("name"):
-                        subjects[(self._norm(ubo["name"]), ubo.get("dob"))] = {"kind": "ubo", "name": ubo["name"], "dob": ubo.get("dob")}
-            return _Baseline(app_id, row["applicant_type"], declared, row["status"], documents,
-                             registry, subjects, self._screening_source_version(con))
-
-    @staticmethod
-    def _screening_source_version(con: sqlite3.Connection) -> str:
-        rows = []
-        for table in ("sanctions_list", "pep_list"):
-            rows.append((table, [tuple(row) for row in con.execute(f"SELECT * FROM {table} ORDER BY 1")]))
-        return hashlib.sha256(json.dumps(rows, sort_keys=True, default=str).encode()).hexdigest()
-
-    @staticmethod
-    def _norm(name: Any) -> str:
-        if not isinstance(name, str):
-            return ""
-        from rules import norm
-        return norm(name)
+        get_logger().log("intercept", "session.started", session=contract.session_id, run=contract.run_id,
+                         contract=contract.contract_id, case=contract.case_id, agent=contract.agent_id,
+                         policy=contract.policy_version[:12])
 
     @staticmethod
     def _identity_hint(value: Any) -> bool:
@@ -367,7 +261,7 @@ class GovernedGateway:
             if not expected or args.get("reg_number") != expected:
                 return "REGISTRY_OUT_OF_SCOPE"
         if tool == "screen_sanctions":
-            key = (self._norm(args.get("name")), args.get("dob") or None)
+            key = (norm_name(args.get("name")), args.get("dob") or None)
             if key not in baseline.subjects:
                 return "SCREEN_SUBJECT_OUT_OF_SCOPE"
             expected_country = baseline.declared.get("nationality")
@@ -379,7 +273,7 @@ class GovernedGateway:
                 return "INVALID_CREATE_FIELDS"
             expected_name = (baseline.registry or {}).get("legal_name") if baseline.applicant_type == "company" else baseline.declared.get("name")
             expected_dob = None if baseline.applicant_type == "company" else baseline.declared.get("date_of_birth")
-            if self._norm(fields.get("name")) != self._norm(expected_name) or fields.get("dob") != expected_dob:
+            if norm_name(fields.get("name")) != norm_name(expected_name) or fields.get("dob") != expected_dob:
                 return "APPROVED_IDENTITY_MISMATCH"
             if baseline.applicant_type == "company" and fields.get("reg_number") not in (None, baseline.declared.get("reg_number")):
                 return "REGISTRY_OUT_OF_SCOPE"
@@ -493,6 +387,24 @@ class GovernedGateway:
         return None
 
     async def execute(self, proposal: ActionProposal, *, fault_injected: bool = False) -> tuple[GatewayDecision, Any]:
+        """Decide (and, when allowed, dispatch) one tool call; every outcome is traced."""
+        trace = get_logger()
+        trace.log("intercept", "action.received", session=proposal.session_id, action=proposal.action_id,
+                  kind=proposal.kind, tool=proposal.tool, fault_injected=fault_injected or None)
+        try:
+            decision, result = await self._execute(proposal, fault_injected=fault_injected)
+        except Exception as exc:
+            trace.log("intercept", "action.error", session=proposal.session_id, action=proposal.action_id,
+                      tool=proposal.tool, error=type(exc).__name__)
+            raise
+        allowed = decision.decision in ("ALLOW", "ALERT", "REDACT")
+        trace.log("intercept", "action.decided", session=proposal.session_id, action=proposal.action_id,
+                  tool=proposal.tool, decision=decision.decision, reason=decision.reason_code,
+                  tool_error=(allowed and isinstance(result, Mapping) and "error" in result) or None,
+                  overhead_ms=round(decision.interception_overhead_ms, 2))
+        return decision, result
+
+    async def _execute(self, proposal: ActionProposal, *, fault_injected: bool = False) -> tuple[GatewayDecision, Any]:
         if not isinstance(proposal, ActionProposal):
             raise TypeError("proposal must be contracts.ActionProposal")
         if type(fault_injected) is not bool:
@@ -647,7 +559,7 @@ class GovernedGateway:
                 if tool == "compute_risk" and reason is None:
                     reason = self._check_risk_inputs(state, call_args)
                 if tool == "screen_sanctions" and reason is None:
-                    if self._screening_source_version(con) != state.baseline.screening_source_version:
+                    if screening_source_version(con) != state.baseline.screening_source_version:
                         reason = "SCREENING_SOURCE_CHANGED"
                 if reason:
                     raise self.registry.ToolError(reason)
@@ -809,7 +721,7 @@ class GovernedGateway:
         """Keep general registry audit rows to opaque references and safe facts."""
         clean_args = self._safe_parameters(state, name, args)
         if name == "screen_sanctions":
-            key = (self._norm(args.get("name")), args.get("dob") or None)
+            key = (norm_name(args.get("name")), args.get("dob") or None)
             trusted = state.baseline.subjects[key]
             # The protected bank audit needs the exact assessed identity for
             # deterministic postcondition recomputation; L1 receives only app_id.
@@ -844,7 +756,7 @@ class GovernedGateway:
     def _record_screening(self, con: sqlite3.Connection, state: _Run,
                           proposal: ActionProposal, args: dict[str, Any], result: dict[str, Any],
                           audit_ts: str) -> None:
-        key = (self._norm(args.get("name")), args.get("dob") or None)
+        key = (norm_name(args.get("name")), args.get("dob") or None)
         trusted = state.baseline.subjects[key]
         subject_hash = hashlib.sha256((str(trusted["name"]).strip().casefold() + "|" + str(trusted.get("dob"))).encode()).hexdigest()
         source_version = state.baseline.screening_source_version
@@ -868,7 +780,7 @@ class GovernedGateway:
         elif tool == "check_registry":
             state.registry_read = result.get("found") is True
         elif tool == "screen_sanctions":
-            key = (self._norm(args.get("name")), args.get("dob") or None)
+            key = (norm_name(args.get("name")), args.get("dob") or None)
             state.screened[key] = list(result.get("hits") or [])
         elif tool == "compute_risk":
             state.risk = result.get("risk")
@@ -900,7 +812,7 @@ class GovernedGateway:
         if isinstance(args.get("doc_id"), str) and args["doc_id"] in state.baseline.documents:
             out["doc_id"] = args["doc_id"]
         if tool == "screen_sanctions":
-            subject = (self._norm(args.get("name")), args.get("dob") or None)
+            subject = (norm_name(args.get("name")), args.get("dob") or None)
             if subject in state.baseline.subjects:
                 out["app_id"] = state.baseline.app_id
         return out
@@ -913,70 +825,33 @@ class GovernedGateway:
                               final_decision: str | None = None,
                               event_id: str | None = None,
                               effect_receipt_id: str | None = None) -> str:
-        status_enum = ActionStatus({
-            "ALLOW": "EXECUTED", "ALERT": "EXECUTED", "REDACT": "REDACTED",
-            "BLOCK": "BLOCKED", "REQUIRE_APPROVAL": "ESCALATED",
-        }.get(status, status))
-        verdict = {
-            "ALLOW": AuditorVerdict.ALLOWED, "ALERT": AuditorVerdict.WARNED,
-            "REDACT": AuditorVerdict.REDACTED, "BLOCK": AuditorVerdict.BLOCKED,
-            "REQUIRE_APPROVAL": AuditorVerdict.ESCALATED,
-            "PENDING": AuditorVerdict.ALLOWED, "EXECUTED": AuditorVerdict.ALLOWED,
-            # Execution failure is a result status, not a new authorization verdict.
-            "FAILED": AuditorVerdict.ALLOWED,
-        }[final_decision or status]
-        auditor_decisions = []
-        for row in auditor_rows:
-            mapped = {"ALLOW": AuditorVerdict.ALLOWED, "BLOCK": AuditorVerdict.BLOCKED,
-                      "REDACT": AuditorVerdict.REDACTED, "REQUIRE_APPROVAL": AuditorVerdict.ESCALATED,
-                      "ALERT": AuditorVerdict.WARNED}.get(row.get("decision"))
-            if mapped is not None:
-                auditor_decisions.append(AuditorDecision(
-                    auditor_name=str(row.get("auditor", "unknown")), verdict=mapped,
-                    latency_ms=float(row.get("latency_ms", 0)), rule=str(row.get("code", "")) or None,
-                ))
-        meta = InterceptionMetadata(verdict=verdict, auditor_decisions=auditor_decisions,
-                                    policy_version=state.contract.policy_version,
-                                    total_latency_ms=max(0.0, latency_ms),
-                                    fault_injected=fault_injected)
+        """Persist one tool-call (or session lifecycle) record. `status` is a gateway decision or a
+        storage execution state; `final_decision` is the authorization outcome when they differ."""
         name = lifecycle_name or proposal.tool
-        details = ActionDetails(
-            name=name,
-            parameters=self._safe_parameters(state, name, args),
-            result=None,
-            side_effect=(proposal.side_effect if proposal.tool else "read"),
-            transport=proposal.transport if proposal.transport in ("inproc", "mcp", "http") else "inproc",
-            wire_details=({"phase": "started" if lifecycle_name == "session_started" else "ended",
-                           "contract_id": state.contract.contract_id,
-                           "policy_version": state.contract.policy_version,
-                           **({"end_reason": "completed"} if lifecycle_name == "session_ended" else {})}
-                          if lifecycle_name else
-                          ({"phase": "intent", "change": reason[:64] if reason else ""} if intent else
-                           {"phase": "result", "change": reason[:64] if reason else ""})),
-        )
-        event_id = event_id or str(uuid.uuid4())
-        candidate = ActionEventEnvelope(
-            event_id=event_id, trace_id=state.contract.run_id or "",
-            session_id=state.contract.session_id, case_id=state.contract.case_id,
-            agent_id=state.contract.agent_id,
-            action_type=ActionType.SESSION if lifecycle_name else ActionType.TOOL_CALL,
-            status=status_enum, action_details=details, interception_metadata=meta,
-            context=AuditContext(contract_id=state.contract.contract_id,
-                                 run_id=state.contract.run_id, action_id=proposal.action_id,
-                                 principal_id=state.contract.principal_id,
-                                 policy_hash=state.contract.policy_hash,
-                                 feed_version=state.contract.feed_version,
-                                 effect_receipt_id=effect_receipt_id,
-                                 reason_code=reason[:64] if reason else None,
-                                 actual_usage={"latency_ms": max(0.0, backend_ms)},
-                                 intervention_id=None),
+        if lifecycle_name:
+            wire = {"phase": "started" if lifecycle_name == "session_started" else "ended",
+                    "contract_id": state.contract.contract_id,
+                    "policy_version": state.contract.policy_version,
+                    **({"end_reason": "completed"} if lifecycle_name == "session_ended" else {})}
+        else:
+            wire = {"phase": "intent" if intent else "result", "change": reason[:64] if reason else ""}
+        candidate = build_action_event(
+            contract=state.contract,
+            action_type="session" if lifecycle_name else "tool_call",
+            action_id=proposal.action_id, name=name, status=status, decision=final_decision,
+            intent=intent, parameters=self._safe_parameters(state, name, args),
+            side_effect=proposal.side_effect if proposal.tool else "read",
+            transport=proposal.transport, wire_details=wire, auditor_rows=auditor_rows,
+            latency_ms=latency_ms, fault_injected=fault_injected, reason_code=reason,
+            actual_usage={"latency_ms": max(0.0, backend_ms)},
+            effect_receipt_id=effect_receipt_id, event_id=event_id,
         )
         if intent:
             await self.persistence.intent(candidate)
         else:
             await self.persistence.append(candidate)
-        state.event_ids.add(event_id)
-        return event_id
+        state.event_ids.add(candidate.event_id)
+        return candidate.event_id
 
     async def _persist_lifecycle(self, state: _Run, name: str, reason: str) -> str:
         synthetic = ActionProposal(action_id=f"{name}_{state.contract.run_id}",
@@ -999,6 +874,7 @@ class GovernedGateway:
             await self.recover_effects(session_id)
             state.finished = True
             await self._persist_lifecycle(state, "session_ended", "FINISHED")
+            get_logger().log("intercept", "session.finished", session=session_id, run=state.contract.run_id)
             seal = getattr(self.persistence, "seal_run", None)
             if seal is not None:
                 await seal(state.contract.run_id)
@@ -1085,6 +961,8 @@ class GovernedGateway:
             # applied. If cancellation follows the marker commit, same-process
             # enforcement is already active; retry is still deterministic.
             await self.persistence.mark_signal_applied(signal.signal_id)
+        get_logger().log("intercept", "feedback.applied", session=event_session, signal=signal.signal_id,
+                         adjustment=action, plugin=signal.source_plugin, trigger=signal.trigger_event_id)
 
     async def _persist_control(self, state: _Run, signal: PolicyAdjustmentSignal) -> None:
         digest = hashlib.sha256(signal.signal_id.encode()).hexdigest()
@@ -1098,18 +976,11 @@ class GovernedGateway:
         action = ActionProposal(action_id=f"signal_{digest[:24]}", session_id=state.contract.session_id,
                                agent_id=state.contract.agent_id, tool="feedback_signal", side_effect="read",
                                transport="inproc", arguments={})
-        candidate = ActionEventEnvelope(
-            event_id=control_event_id, trace_id=state.contract.run_id, session_id=state.contract.session_id,
-            case_id=state.contract.case_id, agent_id=state.contract.agent_id, action_type=ActionType.CONTROL,
-            status=ActionStatus.EXECUTED,
-            action_details=ActionDetails(name="feedback_signal", parameters={}, result=None,
-                side_effect="read", transport="inproc", wire_details={"change": "adjustment_applied",
-                "signal_id": signal.signal_id, "policy_version": state.contract.policy_version}),
-            interception_metadata=InterceptionMetadata(verdict=AuditorVerdict.WARNED,
-                policy_version=state.contract.policy_version),
-            context=AuditContext(contract_id=state.contract.contract_id, run_id=state.contract.run_id,
-                action_id=action.action_id, principal_id=state.contract.principal_id,
-                policy_hash=state.contract.policy_hash, feed_version=state.contract.feed_version,
-                intervention_id=signal.signal_id, reason_code="POLICY_ADJUSTMENT"),
+        candidate = build_action_event(
+            contract=state.contract, action_type="control", action_id=action.action_id,
+            name="feedback_signal", status="completed", decision="ALERT",
+            wire_details={"change": "adjustment_applied", "signal_id": signal.signal_id,
+                          "policy_version": state.contract.policy_version},
+            reason_code="POLICY_ADJUSTMENT", intervention_id=signal.signal_id, event_id=control_event_id,
         )
         await self.persistence.append(candidate)

@@ -9,7 +9,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from ..model.actions import AgentAction
+from contracts.action import AgentAction
 from ..model.outputs import (
     ADJUSTMENT_ORDER,
     SEMANTIC_ALLOWED_ADJUSTMENTS,

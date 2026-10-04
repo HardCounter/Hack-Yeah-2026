@@ -3,7 +3,7 @@ import argparse
 import json
 from pathlib import Path
 import yaml
-from .config import load
+from intercept.policy.config import load
 
 
 def main():
@@ -15,7 +15,7 @@ def main():
     parser.add_argument("--model", required=True, help="an installed/configured provider/model identifier")
     parser.add_argument("--budget", type=int, default=20)
     args = parser.parse_args()
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     destination = args.directory.resolve()
     policy_dir = args.policy_directory.resolve()
     if destination == root or root in destination.parents or destination.exists():

@@ -7,10 +7,10 @@ import sqlite3
 import sys
 import tempfile
 import unittest
-from .execution import ToolExecutor
-from .policy import Policy
-from .server import Evidence, Gateway
-from . import test_server
+from intercept.tools.execution import ToolExecutor
+from intercept.policy.runs import Policy
+from intercept.service.server import Evidence, Gateway
+from intercept import test_server
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "data"))
 import generate

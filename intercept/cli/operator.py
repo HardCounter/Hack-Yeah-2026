@@ -3,7 +3,7 @@ import argparse
 import json
 import os
 import urllib.request
-from .auditors import NoRedirect
+from intercept.policy.auditors import NoRedirect
 
 
 def main():

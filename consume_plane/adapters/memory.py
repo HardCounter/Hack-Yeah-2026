@@ -5,8 +5,8 @@ import asyncio
 from collections import deque
 from typing import Iterable, Sequence
 
-from ..model.actions import ActionKind, AgentAction, ContentRef
-from ..model.contract import TaskContract
+from contracts.action import ActionKind, AgentAction, ContentRef
+from contracts.task_contract import TaskContract
 from ..model.outputs import Finding, PolicyAdjustmentSignal
 from ..ports.event_source import Delivery
 

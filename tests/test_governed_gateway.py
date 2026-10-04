@@ -58,7 +58,7 @@ def test_pipeline_output_redaction_is_reported_and_raw_result_is_not_persisted(s
     with sqlite3.connect(s.ctx.db) as con:
         name = json.loads(con.execute("SELECT declared FROM onboarding_applications WHERE application_id=?",
                                       (s.app_id,)).fetchone()[0])["name"]
-    s.runtime.gateway.pipeline = __import__("intercept.auditors", fromlist=["Pipeline"]).Pipeline([
+    s.runtime.gateway.pipeline = __import__("intercept.policy.auditors", fromlist=["Pipeline"]).Pipeline([
         {"id": "redact-person", "type": "pattern_scanner",
          "config": {"patterns": [name], "action": "REDACT"}}
     ])

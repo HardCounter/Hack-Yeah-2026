@@ -9,14 +9,12 @@ import asyncio
 import time
 from typing import Any, Iterable, Sequence
 
-from contracts import VerificationResult
-from persistence.adapters import to_consumer_v21
-from persistence.models import ActionStatus
+from contracts import AgentAction, ContentRef, DecodeError, TaskContract, VerificationResult
+from contracts.action import ActionKind
+from persistence.adapters import to_agent_action
 from persistence.models import ActionEventEnvelope
+from persistence.vocabulary import is_intent
 
-from ..model.actions import ActionKind, AgentAction, ContentRef
-from ..model.contract import TaskContract
-from ..model.decode import DecodeError, decode_event
 from ..model.outputs import Finding
 from ..ports.event_source import Delivery
 from ..ports.trajectory import TrajectoryReader
@@ -70,11 +68,9 @@ class PersistenceEventSource:
                 await asyncio.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
                 continue
             event, name, attempts, lease_id = claim
-            # The adapter owns the v2.1 translation; the consume-plane decoder
-            # remains the single parser for all event consumers.
+            # One conversion for every consumer: storage -> Event Envelope v2.1 -> AgentAction.
             try:
-                wire_event = to_consumer_v21(event)
-                action = decode_event(wire_event)
+                action = to_agent_action(event)
             except (DecodeError, TypeError, ValueError) as exc:
                 self.decode_errors.append(f"{event.event_id}: {type(exc).__name__}")
                 await self.store.finish_delivery(
@@ -124,21 +120,18 @@ class PersistenceTrajectoryReader:
         self.governed = governed
         self.store = getattr(governed, "store", governed)
 
-    def _wire(self, event: ActionEventEnvelope) -> dict[str, Any]:
-        return to_consumer_v21(event)
-
     async def get(self, event_id: str) -> AgentAction | None:
         event = await self.store.get_event(event_id)
-        if event is None or event.status == ActionStatus.PENDING:
+        if event is None or is_intent(event):
             return None
-        return decode_event(self._wire(event))
+        return to_agent_action(event)
 
     async def session(self, session_id: str, *, up_to_seq: int | None = None,
                       kinds: Iterable[ActionKind] | None = None,
                       limit: int | None = None) -> Sequence[AgentAction]:
         events = await self.store.get_events_by_session(session_id)
-        actions = [decode_event(self._wire(event)) for event in events
-                   if event.status != ActionStatus.PENDING and event.seq is not None]
+        actions = [to_agent_action(event) for event in events
+                   if not is_intent(event) and event.seq is not None]
         if up_to_seq is not None:
             actions = [a for a in actions if a.seq <= up_to_seq]
         if kinds is not None:

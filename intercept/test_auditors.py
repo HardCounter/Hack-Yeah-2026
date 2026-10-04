@@ -3,10 +3,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from .auditors import Pipeline
-from .config import load
-from .policy import Policy
-from .test_policy import action, configuration
+from intercept.policy.auditors import Pipeline
+from intercept.policy.config import load
+from intercept.policy.runs import Policy
+from intercept.test_policy import action, configuration
 
 
 def scanner(effect="REDACT"):

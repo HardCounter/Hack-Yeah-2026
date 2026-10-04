@@ -5,10 +5,11 @@ import hmac
 import json
 import os
 from pathlib import Path
-from .policy import Policy
-from .auditors import Pipeline
-from .config import load
-from .execution import ToolExecutor
+from intercept.policy.runs import Policy
+from intercept.policy.auditors import Pipeline
+from intercept.policy.config import load
+from intercept.tools.execution import ToolExecutor
+from tracing import get_logger
 
 
 class Evidence:
@@ -75,7 +76,25 @@ class Gateway:
                 if "transfer-encoding" in headers or protocol != "HTTP/1.1":
                     raise ValueError("unsupported framing")
                 expected_token = self.admin_token if path == "/v1/runs/bind" else self.token
-                if expected_token is None or not hmac.compare_digest(headers.get("authorization", ""), "Bearer " + expected_token):
+                if path == "/v1/adapter/hello" and method == "POST":
+                    # OpenCode adapter startup handshake: trace only, grants nothing. A failed setup has no
+                    # token, so its report is accepted unauthenticated but only status/reason are recorded.
+                    size = int(headers.get("content-length", "0"))
+                    if not 0 < size <= 16384:
+                        raise ValueError("handshake body size")
+                    hello = json.loads(await reader.readexactly(size))
+                    hello = hello if isinstance(hello, dict) else {}
+                    if hmac.compare_digest(headers.get("authorization", ""), "Bearer " + self.token):
+                        hooks = hello.get("hooks") if isinstance(hello.get("hooks"), list) else []
+                        get_logger().log("intercept", "adapter.connected", adapter=str(hello.get("adapter")),
+                                         hooks=",".join(str(h) for h in hooks), prompts=str(hello.get("prompts")),
+                                         directory=str(hello.get("directory")))
+                        status, result = 200, {"ok": True}
+                    else:
+                        get_logger().log("intercept", "adapter.failed", status=str(hello.get("status")),
+                                         reason=str(hello.get("reason", "")))
+                        status, result = 401, {"code": "UNAUTHORIZED"}
+                elif expected_token is None or not hmac.compare_digest(headers.get("authorization", ""), "Bearer " + expected_token):
                     status, result = 401, {"code": "UNAUTHORIZED"}
                 elif method != "POST" or path not in ("/v1/actions/evaluate", "/v1/actions/outcome", "/v1/tools/execute", "/v1/tools/catalog", "/v1/runs/bind", "/v1/session/finish"):
                     status, result = 404, {"code": "NOT_FOUND"}

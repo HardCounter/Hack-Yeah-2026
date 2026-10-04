@@ -78,7 +78,7 @@ const App = {
 };
 
 /* Tabs: hash routing so the back button and shared links work */
-const TABS = ['config', 'metrics', 'tests'];  // Prompt it is a link to /opencode-wrapper/
+const TABS = ['config', 'metrics', 'tests'];  // PROMPT AGENT YOURSELF is a link to /opencode-wrapper/
 function route() {
   const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'metrics';
   $$('[data-view]').forEach(s => s.hidden = s.id !== 'v-' + tab);

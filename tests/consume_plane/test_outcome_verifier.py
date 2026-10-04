@@ -14,7 +14,7 @@ import hashlib
 from contracts import Budget, TaskContract
 from consume_plane.adapters.memory import MemoryTrajectoryReader
 from consume_plane.plugins.outcome_verifier import OutcomeVerifier
-from consume_plane.model.decode import decode_event
+from contracts.wire import decode_event
 from persistence import EventStore
 
 

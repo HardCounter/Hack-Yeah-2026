@@ -74,7 +74,7 @@
           "pesel",
           "iban"
         ],
-        "action": "REDACT"
+        "action": "REQUIRE_APPROVAL"
       }
     },
     {

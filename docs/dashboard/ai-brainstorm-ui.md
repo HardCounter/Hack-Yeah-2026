@@ -112,7 +112,7 @@ layers get connected.
 
 ### Available from the gateway today
 
-Source: the gateway's audit events (`intercept/server.py`), one per evaluated tool call.
+Source: the gateway's audit events (`intercept/service/server.py`), one per evaluated tool call.
 
 | # | Metric | Definition | Source field |
 |---|---|---|---|

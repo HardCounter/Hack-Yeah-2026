@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from intercept.auditors import Pipeline
+from intercept.policy.auditors import Pipeline
 from web.main import app
 
 client = TestClient(app)
@@ -28,38 +28,26 @@ def test_presets_are_listed_and_valid(monkeypatch, tmp_path):
         Pipeline(preset["auditors"])  # the gateway accepts every preset
 
 
-def test_saving_needs_admin_token(monkeypatch, tmp_path):
-    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    config = client.get("/api/v1/configs/strict").json()
-    monkeypatch.delenv("ADMIN_TOKEN", raising=False)
-    assert client.put("/api/v1/configs/mine", json=config).status_code == 503
-    monkeypatch.setenv("ADMIN_TOKEN", "s3cret")
-    assert client.put("/api/v1/configs/mine", json=config, headers={"Authorization": "Bearer wrong"}).status_code == 401
-    assert not list(tmp_path.iterdir())
-
-
 def test_save_round_trip_and_rejections(monkeypatch, tmp_path):
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
-    monkeypatch.setenv("ADMIN_TOKEN", "s3cret")
-    auth = {"Authorization": "Bearer s3cret"}
     config = client.get("/api/v1/configs/strict").json()
     config["budget"]["tokens"] = 1234
 
-    assert client.put("/api/v1/configs/my-policy", json=config, headers=auth).status_code == 200
+    assert client.put("/api/v1/configs/my-policy", json=config).status_code == 200
     assert client.get("/api/v1/configs/my-policy").json()["budget"]["tokens"] == 1234
     assert {"name": "my-policy", "preset": False, "description": config["description"]} in client.get("/api/v1/configs").json()
 
-    assert client.put("/api/v1/configs/strict", json=config, headers=auth).status_code == 409  # presets are read-only
-    assert client.put("/api/v1/configs/..%2Fevil", json=config, headers=auth).status_code >= 400  # never reaches the save code
-    assert client.put("/api/v1/configs/Bad Name", json=config, headers=auth).status_code == 422
-    assert client.put("/api/v1/configs/Strict", json=config, headers=auth).status_code == 409  # preset names in any case
+    assert client.put("/api/v1/configs/strict", json=config).status_code == 409  # presets are read-only
+    assert client.put("/api/v1/configs/..%2Fevil", json=config).status_code >= 400  # never reaches the save code
+    assert client.put("/api/v1/configs/Bad Name", json=config).status_code == 422
+    assert client.put("/api/v1/configs/Strict", json=config).status_code == 409  # preset names in any case
     unordered = {**config, "semantic_guard": {**config["semantic_guard"], "approve_threshold": 0.99}}
-    assert client.put("/api/v1/configs/bad", json=unordered, headers=auth).status_code == 422  # approve above block
+    assert client.put("/api/v1/configs/bad", json=unordered).status_code == 422  # approve above block
     bad = {**config, "require_approval": ["delete_everything"]}
-    assert client.put("/api/v1/configs/bad", json=bad, headers=auth).status_code == 422
+    assert client.put("/api/v1/configs/bad", json=bad).status_code == 422
     bad = {**config, "auditors": [{"id": "x", "type": "webhook", "config": {}}]}
-    assert client.put("/api/v1/configs/bad", json=bad, headers=auth).status_code == 422
-    assert client.put("/api/v1/configs/My-Policy2", json=config, headers=auth).status_code == 200  # uppercase allowed
+    assert client.put("/api/v1/configs/bad", json=bad).status_code == 422
+    assert client.put("/api/v1/configs/My-Policy2", json=config).status_code == 200  # uppercase allowed
     assert sorted(p.name for p in tmp_path.iterdir()) == ["My-Policy2.json", "my-policy.json"]
 
 

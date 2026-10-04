@@ -1,10 +1,10 @@
-"""Decode wire envelope v2.1 (docs/consumer-plane-event-envelope.md) into AgentAction."""
+"""Event Envelope v2.1 (docs/consumer-plane-event-envelope.md) -> canonical AgentAction."""
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Mapping
 
-from .actions import (
+from .action import (
     STATUSES,
     AgentAction,
     ApprovalPayload,
@@ -19,19 +19,11 @@ from .actions import (
     ToolUsePayload,
     UnknownPayload,
     Usage,
+    kind_for_action_type,
 )
 
 SUPPORTED_SCHEMA_VERSIONS = frozenset({"2.1"})
 
-ACTION_TYPE_TO_KIND = {
-    "llm_call": "prompt",
-    "tool_call": "tool_use",
-    "mcp_tool": "tool_use",
-    "egress_http": "egress",
-    "session": "session",
-    "approval": "approval",
-    "control": "control",
-}
 
 
 class DecodeError(ValueError):
@@ -152,7 +144,7 @@ def decode_event(raw: Mapping[str, Any]) -> AgentAction:
     if version not in SUPPORTED_SCHEMA_VERSIONS:
         raise DecodeError(f"event: unsupported schema_version {version!r}")
     action_type = _req(raw, "action_type")
-    kind = ACTION_TYPE_TO_KIND.get(action_type, action_type)
+    kind = kind_for_action_type(action_type)
     status = _req(raw, "status")
     if status not in STATUSES:
         raise DecodeError(f"event: bad status {status!r}")
@@ -180,5 +172,6 @@ def decode_event(raw: Mapping[str, Any]) -> AgentAction:
         gateway=_gateway(raw.get("interception_metadata")),
         usage=_usage(raw.get("metrics")),
         fault_injected=bool(raw.get("fault_injected", False)),
+        action_id=raw.get("action_id"),
         raw=raw,
     )

@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "simulation"))
 import agent
 import generate
 from contracts import ActionProposal, PolicyAdjustmentSignal
-from consume_plane.model.decode import decode_event
+from contracts.wire import decode_event
 
 
 @pytest.fixture(scope="module")

@@ -1,7 +1,7 @@
 """Deterministic tests; no provider/model, credentials, or customer systems."""
 import concurrent.futures
 import unittest
-from .policy import Policy
+from intercept.policy.runs import Policy
 
 
 def configuration(budget=2):

@@ -5,8 +5,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Iterable, Literal, Mapping, Protocol, TypeVar
 
-from ..model.actions import ActionKind, ActionStatus, AgentAction, ContentRef
-from ..model.contract import TaskContract
+from contracts.action import ActionKind, ActionStatus, AgentAction, ContentRef
+from contracts.task_contract import TaskContract
 from ..model.outputs import AdjustmentProposal, FindingDraft
 from .trajectory import Trajectory
 

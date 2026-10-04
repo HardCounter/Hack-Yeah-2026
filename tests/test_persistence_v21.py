@@ -7,7 +7,7 @@ from functools import wraps
 import pytest
 
 from contracts import Budget, TaskContract
-from consume_plane.model.decode import decode_event
+from contracts.wire import decode_event
 from persistence.governed import GovernedPersistence
 from persistence.models import (
     ActionDetails, ActionEventEnvelope, ActionStatus, ActionType, AuditContext,

@@ -635,6 +635,11 @@ gauges per `(name, labels)`. The aggregator is exposed through `/consumer/metric
 streamed to the dashboard. Label cardinality is capped per metric (default 1,000 series), and
 excess series are dropped and counted.
 
+These gauges are in-process and not persisted, so they reset on restart. Durable usage, budget
+and security metrics derived from stored evidence are served by the read API
+([rest.md](rest.md), `/api/v1/metrics/*` and `/api/v1/sessions/{id}/usage`). Risk findings
+persisted by this plane appear there as detection events.
+
 ### 9.3 Policy adjustment proposals and the Feedback Controller
 
 Plugins **propose**; the Feedback Controller **decides** whether a `PolicyAdjustmentSignal`

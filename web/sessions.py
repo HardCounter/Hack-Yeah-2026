@@ -86,7 +86,7 @@ def _kill(process):
 
 
 class OpenCodeBackend:
-    """Real sessions: intercept.local as the gateway and `opencode serve` as the agent server."""
+    """Real sessions: intercept.service.local as the gateway and `opencode serve` as the agent server."""
 
     def __init__(self, root):
         from simulation.opencode_runner import opencode_binary
@@ -126,7 +126,7 @@ class OpenCodeBackend:
         state.update(env=env, project=project, evidence=folder / "bank-runs" / f"{session.id}.evidence.db")
         state["gateway_log"] = open(folder / "gateway.log", "wb")
         state["gateway"] = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "intercept.local", "--bank-db", str(self.bank), "--application", APPLICATION,
+            sys.executable, "-m", "intercept.service.local", "--bank-db", str(self.bank), "--application", APPLICATION,
             "--contract-id", contract, "--runs-dir", str(folder / "bank-runs"), "--port", endpoint.rsplit(":", 1)[1],
             "--catalog-all", cwd=REPO, env=env, stdout=state["gateway_log"], stderr=asyncio.subprocess.STDOUT,
             start_new_session=True)

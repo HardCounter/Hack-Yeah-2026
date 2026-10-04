@@ -18,17 +18,16 @@
   <div class="wrap lh">
     <a class="wordmark" href="#metrics"><span class="seal" aria-hidden="true">◆</span>AI Control Layer</a>
     <div class="appbar-meta">
-      <span class="env" title="Synthetic bank data. No real customer data is processed.">Demo</span>
       <span>Active config <b class="activeName">…</b></span>
       <span id="gateway"><span class="dot" aria-hidden="true"></span>Checking gateway…</span>
       <span>Build <code id="build">…</code></span>
     </div>
   </div>
   <nav class="wrap tabs" aria-label="Sections">
-    <a href="/opencode-wrapper/"><span class="n">1</span><span class="t">Prompt it</span><span class="d">Send a prompt to OpenCode</span></a>
-    <a href="#config"><span class="n">2</span><span class="t">Config</span><span class="d">Configure your agentic tools</span></a>
-    <a href="#metrics"><span class="n">3</span><span class="t">Metrics</span><span class="d">Decisions, cost, latency and audit log</span></a>
-    <a href="#tests"><span class="n">4</span><span class="t">Tests</span><span class="d">Self-test suite and agent checks</span></a>
+    <a href="/opencode-wrapper/"><span class="t">PROMPT AGENT YOURSELF</span></a>
+    <a href="#config"><span class="t">Config - configure your agentic tools</span></a>
+    <a href="#metrics"><span class="t">Metrics</span></a>
+    <a href="#tests"><span class="t">Tests</span></a>
   </nav>
 </header>
 
@@ -70,22 +69,21 @@
 
         <fieldset class="section">
           <h3>Prompt injection</h3>
-          <p class="hint">How sure the AI check must be that a message is an attack. Each level must be at or below the one above it; below the last one the message passes.</p>
-          <label class="slider"><span>Block when the AI is at least this sure</span><input type="range" name="block_threshold" min="0.7" max="0.99" step="0.01"><output data-for="block_threshold"></output></label>
+          <label class="slider"><span>Block a message when the AI is at least this sure it is an attack</span><input type="range" name="block_threshold" min="0.7" max="0.99" step="0.01"><output data-for="block_threshold"></output></label>
           <p class="hint">Presets: lenient 95%, standard 90%, strict 80%.</p>
           <label class="slider"><span>Hold for human approval from</span><input type="range" name="approve_threshold" min="0.5" max="0.99" step="0.01"><output data-for="approve_threshold"></output></label>
           <label class="slider"><span>Alert only from</span><input type="range" name="alert_threshold" min="0.3" max="0.99" step="0.01"><output data-for="alert_threshold"></output></label>
           <div class="two">
             <label class="field"><span>Known attack phrases <small>one per line, literal match</small></span><textarea name="patterns" rows="6"></textarea></label>
-            <label class="field"><span>On match</span><select name="patterns_action"><option value="BLOCK">Block</option><option value="REDACT">Redact</option><option value="ALERT">Alert only</option></select></label>
+            <label class="field"><span>On match</span><select name="patterns_action"><option value="BLOCK">Block</option><option value="REQUIRE_APPROVAL">Human approval</option><option value="ALERT">Alert only</option></select></label>
           </div>
         </fieldset>
 
         <fieldset class="section">
           <h3>Sensitive data</h3>
           <div class="two">
-            <label class="field"><span>Personal data <small>PESEL, IBAN</small></span><select name="privacy_action"><option value="REDACT">Redact</option><option value="BLOCK">Block</option><option value="ALERT">Alert only</option></select></label>
-            <label class="field"><span>Secrets <small>API keys, private keys</small></span><select name="secret_action"><option value="REDACT">Redact</option><option value="BLOCK">Block</option><option value="ALERT">Alert only</option></select></label>
+            <label class="field"><span>Personal data <small>PESEL, IBAN</small></span><select name="privacy_action"><option value="REQUIRE_APPROVAL">Human approval</option><option value="BLOCK">Block</option><option value="ALERT">Alert only</option></select></label>
+            <label class="field"><span>Secrets <small>API keys, private keys</small></span><select name="secret_action"><option value="REQUIRE_APPROVAL">Human approval</option><option value="BLOCK">Block</option><option value="ALERT">Alert only</option></select></label>
           </div>
         </fieldset>
 
@@ -101,7 +99,6 @@
           <h3>Save as a new config</h3>
           <div class="two">
             <label class="field"><span>Name <small>letters, digits, - and _</small></span><input type="text" name="name" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,39}" maxlength="40" placeholder="e.g. strict-eu"></label>
-            <label class="field"><span>Admin token <small>required to save on the server</small></span><input type="password" name="token" autocomplete="off"></label>
           </div>
           <label class="field"><span>Description</span><input type="text" name="description" maxlength="200"></label>
           <div class="actions">
@@ -187,7 +184,6 @@
         <h1 id="h-tests">Tests</h1>
       </div>
       <div class="actions">
-        <span class="cmd"><code>uv run pytest</code><button class="btn ghost sm" id="copyCmd" type="button">Copy</button></span>
         <button class="btn" id="runSuite" type="button">Run suite</button>
       </div>
     </div>
@@ -222,7 +218,7 @@
 
 <footer>
   <div class="wrap">
-    <span>Demo environment. Metrics and test results are simulated in the browser; configs are read from and saved to the server. Prompt it runs the real OpenCode agent.</span>
+    <span>Demo environment. Metrics and test results are simulated in the browser; configs are read from and saved to the server. PROMPT AGENT YOURSELF runs the real OpenCode agent.</span>
     <span>Times in Europe/Warsaw</span>
   </div>
 </footer>

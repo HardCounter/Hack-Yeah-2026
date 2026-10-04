@@ -4,15 +4,15 @@
 hook events (`adapters/opencode/forward.test.mjs`, run with `scripts/test_opencode_adapter.sh`).
 **Real OpenCode v2.0.22 loads the adapter and its startup handshake reaches Python**
 (`scripts/check_opencode_pipeline.sh`). That the hooks fire during a real conversation is not yet
-verified. The enforcing gateway (`intercept/server.py`) has **no `/v1/prompts/evaluate`
-endpoint yet**. Only the observe-only receiver (`intercept/receiver.py`) accepts prompts.
+verified. The enforcing gateway (`intercept/service/server.py`) has **no `/v1/prompts/evaluate`
+endpoint yet**. Only the observe-only receiver (`intercept/service/receiver.py`) accepts prompts.
 
 ## Changes to the adapter (2026-10-03)
 
 | Change | Why |
 |---|---|
 | **Prompt forwarding added**: `session.hook` for `prompt`, `context`, `compaction`, `generate`, `title`; opt-in through `options.prompts` | The adapter forwarded only tool use. Prompts and model requests are agent actions too |
-| **Tool hooks unchanged** (`execute.before` / `execute.after`, always registered); tool bodies keep their exact key sets | `intercept/policy.py` validates exact keys; adding `agent` / `messageID` would break it |
+| **Tool hooks unchanged** (`execute.before` / `execute.after`, always registered); tool bodies keep their exact key sets | `intercept/policy/runs.py` validates exact keys; adding `agent` / `messageID` would break it |
 | **Endpoint check relaxed** from exactly `http://127.0.0.1:8080` to any `http://<127.0.0.1\|localhost\|[::1]>:<port>` | Tests and the receiver need other ports. Non-loopback origins are still refused |
 | **No runtime `import { Plugin } from "@opencode/plugin"`**; the module exports the `{id, setup}` object directly | In 2.0.22 `Plugin.define` returns its argument unchanged, and OpenCode does **not** install a local plugin's dependencies, so the import made loading fail without `npm install` |
 | **`setup` split** into a thin `setup` and an `install(ctx, endpoint, token)` function that registers the hooks and returns their names | So setup can report what it registered, or why it failed |
@@ -101,7 +101,7 @@ The hook payloads below come from that package's published type definitions
 ### Tool requests (unchanged)
 
 `{session_id, call_id, tool, arguments}` and `{session_id, call_id, tool, status}`, with exactly
-these keys, because `intercept/policy.py` validates exact key sets. The hook's `agent` and
+these keys, because `intercept/policy/runs.py` validates exact key sets. The hook's `agent` and
 `messageID` are therefore **not** forwarded for tools yet.
 
 ## Not verified / open
@@ -124,7 +124,7 @@ scripts/run_intercept_receiver.sh       # terminal 1: observe-only Python receiv
 scripts/run_opencode_intercepted.sh     # terminal 2: OpenCode wired to that receiver
 ```
 
-### Observe-only receiver (`intercept/receiver.py`)
+### Observe-only receiver (`intercept/service/receiver.py`)
 
 This is a diagnostic server, separate from the enforcing gateway. It **logs and ALLOWS every request
 and enforces nothing**:

@@ -4,7 +4,7 @@ Use it to validate, by hand, that a live OpenCode session reaches the Python sid
 adapter's requests match the shapes the enforcing Gateway (server.py) accepts. Each request is
 checked against those shapes and the result is printed, but the reply is always ALLOW.
 
-    INTERCEPT_TOKEN=... uv run python -m intercept.receiver --port 8080
+    INTERCEPT_TOKEN=... uv run python -m intercept.service.receiver --port 8080
 """
 import argparse
 import asyncio
@@ -15,10 +15,10 @@ import os
 import sys
 from datetime import datetime
 
-from .policy import IDENTIFIER, Policy
+from intercept.policy.runs import IDENTIFIER, Policy
 
 # Stable marker so the adapter's 64-hex policy_version check passes; it identifies this mode, not a policy.
-RECEIVER_VERSION = hashlib.sha256(b"intercept.receiver observe-only").hexdigest()
+RECEIVER_VERSION = hashlib.sha256(b"intercept.service.receiver observe-only").hexdigest()
 GATEWAY_BODY_LIMIT = 65536  # what server.py accepts; larger bodies are logged with a warning
 BODY_LIMIT = 4 * 1024 * 1024
 PROMPT_TYPES = ("prompt", "llm_request")
@@ -187,7 +187,7 @@ async def serve(port, host="127.0.0.1", compact=False, color=True):
     receiver = Receiver(os.environ.get("INTERCEPT_TOKEN", ""), compact=compact, color=color)
     server = await asyncio.start_server(receiver.handle, host, port, limit=16384)
     c = receiver.c
-    print(f"{c(BOLD)}intercept.receiver listening on http://{host}:{port}{c(RESET)}\n"
+    print(f"{c(BOLD)}intercept.service.receiver listening on http://{host}:{port}{c(RESET)}\n"
           f"{c(YELLOW)}OBSERVE-ONLY: every request is logged and ALLOWED; nothing is enforced.\n"
           f"Raw prompt text and tool arguments are printed: use synthetic data only.{c(RESET)}\n"
           f"Waiting for the OpenCode adapter: 'ADAPTER CONNECTED' appears when OpenCode loads it.", flush=True)

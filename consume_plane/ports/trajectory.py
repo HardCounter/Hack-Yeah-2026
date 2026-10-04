@@ -4,8 +4,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable, Iterable, Iterator, Protocol, Sequence, overload
 
-from ..model.actions import ActionKind, AgentAction, ContentRef, Usage
-from ..model.contract import TaskContract
+from contracts.action import ActionKind, AgentAction, ContentRef, Usage
+from contracts.task_contract import TaskContract
 
 
 class TrajectoryReader(Protocol):

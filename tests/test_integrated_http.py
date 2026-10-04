@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 import shutil
 
-from intercept.local import LocalService
-from intercept.server import Gateway
+from intercept.service.local import LocalService
+from intercept.service.server import Gateway
 
 
 def test_authenticated_http_adapter_persists_and_prevents_denied_tool(tmp_path):

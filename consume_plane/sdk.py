@@ -2,7 +2,7 @@
 
     from consume_plane.sdk import Subscription, FindingDraft, AdjustmentProposal
 """
-from .model.actions import (
+from contracts.action import (
     ActionKind,
     ActionStatus,
     AgentAction,
@@ -17,7 +17,7 @@ from .model.actions import (
     UnknownPayload,
     Usage,
 )
-from .model.contract import Budget, TaskContract
+from contracts.task_contract import Budget, TaskContract
 from .model.outputs import AdjustmentProposal, FindingDraft
 from .ports.plugin import ConsumerPlugin, PluginContext, SetupContext, Subscription
 from .ports.trajectory import Trajectory
