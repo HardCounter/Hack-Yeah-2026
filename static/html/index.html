@@ -121,6 +121,7 @@
 
   <!-- METRICS -->
   <section id="v-metrics" data-view hidden aria-labelledby="h-metrics">
+   <div id="mMain">
     <div class="page-head">
       <div>
         <h1 id="h-metrics">Metrics</h1>
@@ -183,6 +184,20 @@
           <tbody id="audit"></tbody>
         </table></div>
       </div>
+    </div>
+   </div>
+
+    <!-- Drill-down: one record type (#metrics/<view>) or one record (#metrics/<view>/<id>) -->
+    <div id="mDrill" hidden>
+      <div class="page-head">
+        <div>
+          <a class="back cap" id="dBack" href="#metrics">← Back</a>
+          <h1 id="dTitle"></h1>
+          <p class="cap muted" id="dSub"></p>
+        </div>
+        <div class="actions"><button class="btn ghost" id="dExport" type="button"></button></div>
+      </div>
+      <div class="panel" id="dBody"></div>
     </div>
   </section>
 

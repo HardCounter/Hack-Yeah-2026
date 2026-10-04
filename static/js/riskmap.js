@@ -96,13 +96,14 @@
       return tr;
     }));
     const cap = el('p', 'cap muted', `${s.steps} steps (actions taken)`);
-    pop.className = `pop lvl-${lvl}`;
-    pop.replaceChildren(head, facts, cap, t);
+    const d = el('div', `session-card lvl-${lvl}`); d.append(head, facts, cap, t);
+    return d;
   }
+  App.sessionCard = card;
   // Same card for a dot on the map and a row in the session table
   function hoverCard(target, s) {
     const show = () => {
-      card(s); pop.hidden = false;
+      pop.replaceChildren(card(s)); pop.hidden = false;
       const r = target.getBoundingClientRect();  // runtime coordinates are measured, not design values
       pop.style.left = Math.max(0, Math.min(r.left + scrollX, innerWidth - pop.offsetWidth - 8)) + 'px';
       pop.style.top = (r.bottom + scrollY) + 'px';

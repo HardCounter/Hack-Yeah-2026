@@ -52,7 +52,7 @@ const App = {
   sessions: [],        // agent sessions (tasks) on the risk map
   listeners: {},
   on(evt, fn) { (this.listeners[evt] ||= []).push(fn); },
-  emit(evt, data) { (this.listeners[evt] || []).forEach(fn => fn(data)); },
+  emit(evt, ...data) { (this.listeners[evt] || []).forEach(fn => fn(...data)); },
 
   setActive(name, config) {
     this.configName = name; this.config = config;
@@ -80,11 +80,12 @@ const App = {
 /* Tabs: hash routing so the back button and shared links work */
 const TABS = ['config', 'metrics', 'tests'];  // PROMPT AGENT YOURSELF is a link to /opencode-wrapper/
 function route() {
-  const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'metrics';
+  const [first, ...rest] = location.hash.slice(1).split('/');  // e.g. #metrics/blocked/42
+  const tab = TABS.includes(first) ? first : 'metrics';
   $$('[data-view]').forEach(s => s.hidden = s.id !== 'v-' + tab);
   $$('.tabs a').forEach(a => a.hash === '#' + tab ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   document.title = `${$('#v-' + tab + ' h1').textContent} · AI Control Layer`;
-  App.emit('tab', tab);
+  App.emit('tab', tab, rest.map(decodeURIComponent));
 }
 addEventListener('hashchange', route);
 
