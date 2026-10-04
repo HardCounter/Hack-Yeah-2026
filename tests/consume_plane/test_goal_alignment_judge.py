@@ -5,8 +5,9 @@ import os
 import pytest
 
 from conftest import action
-from consume_plane.plugins.goal_alignment_judge import (GoalAlignmentJudge, JudgeUnavailable, OllamaBackend,
-                                                        build_digest, sample_draw)
+from consume_plane.plugins.goal_alignment_judge import GoalAlignmentJudge, build_digest, sample_draw
+from llm import ChatResponse, LLMUnavailable, ToolCall, client_from_env
+from llm.ollama import OllamaClient
 from consume_plane.runtime.config import FeedbackConfig
 from contracts.task_contract import Budget, TaskContract
 
@@ -38,10 +39,9 @@ class FakeOllama:
         if self.fail:
             raise self.fail
         if tools and len(self.calls) <= self.tool_turns:
-            return {"message": {"role": "assistant", "content": "", "tool_calls": [
-                {"function": {"name": "get_step", "arguments": {"event_id": "evt_sess_1_1"}}}]}, "eval_count": 5}
-        return {"message": {"role": "assistant", "content": self.content or json.dumps(self.verdict)},
-                "prompt_eval_count": 10, "eval_count": 5}
+            return ChatResponse(content="", output_tokens=5, tool_calls=(
+                ToolCall(id=f"call_{len(self.calls)}", name="get_step", arguments={"event_id": "evt_sess_1_1"}),))
+        return ChatResponse(content=self.content or json.dumps(self.verdict), input_tokens=10, output_tokens=5)
 
 
 def judge_with(backend):
@@ -90,14 +90,14 @@ def test_unavailable_ollama_only_logs_and_is_checked_once_per_ttl(harness):
 
 
 def test_unreachable_real_endpoint_does_not_break_the_consume_plane(harness):
-    backend = OllamaBackend("http://127.0.0.1:1", "llama3.2", timeout_s=1)
+    backend = OllamaClient("llama3.2", url="http://127.0.0.1:1", timeout_s=1)
     assert backend.available() == "OLLAMA_UNREACHABLE"
     h = run(harness, backend)
     assert h.findings() == [] and no_failures(h)
 
 
 def test_backend_crash_during_review_is_contained(harness):
-    backend = FakeOllama(fail=JudgeUnavailable("URLError"))
+    backend = FakeOllama(fail=LLMUnavailable("UNREACHABLE"))
     h = run(harness, backend)
     assert h.findings() == [] and no_failures(h)
     assert len(backend.calls) == 1                   # marked down: the session-end review is skipped
@@ -217,8 +217,8 @@ def test_self_consistency_lowers_confidence_when_samples_disagree():
     class Flaky(FakeOllama):
         def chat(self, messages, **kw):
             p = next(verdicts)
-            return {"message": {"content": json.dumps({"p_goal_drift": p, "p_injection_influence": 0,
-                                                       "suspect_event_ids": [], "rationale_code": "OTHER"})}}
+            return ChatResponse(content=json.dumps({"p_goal_drift": p, "p_injection_influence": 0,
+                                                    "suspect_event_ids": [], "rationale_code": "OTHER"}))
 
     judge = GoalAlignmentJudge(Flaky())
     judge.samples, judge.max_turns, judge.max_tokens, judge.temperature = 3, 1, 100, 0.7
@@ -240,9 +240,10 @@ def test_agentic_loop_uses_tools_then_forces_a_schema_answer():
     assert len(backend.calls) == 3
     assert all(c["tools"] and not c["schema"] for c in backend.calls[:2])
     assert backend.calls[2]["tools"] is None and backend.calls[2]["schema"] is not None
-    tool_results = [m["content"] for m in backend.calls[2]["messages"] if m["role"] == "tool"]
-    assert len(tool_results) == 2 and '"tool": "create_client"' in tool_results[0]
-    assert "Sensitive Person" not in json.dumps(backend.calls)   # only argument keys reach the model
+    tool_msgs = [m for m in backend.calls[2]["messages"] if m["role"] == "tool"]
+    assert len(tool_msgs) == 2 and '"tool": "create_client"' in tool_msgs[0]["content"]
+    assert [m["tool_call_id"] for m in tool_msgs] == ["call_1", "call_2"]  # every tool call is answered by id
+    assert "Sensitive Person" not in json.dumps(backend.calls, default=str)  # only argument keys reach the model
 
 
 def test_unknown_tool_calls_get_an_error_value():
@@ -271,11 +272,11 @@ def test_plugin_may_declare_a_longer_timeout_than_the_runtime_default(harness):
 
 # --- optional: real local Ollama ---------------------------------------------------------------
 
-@pytest.mark.skipif(os.environ.get("RUN_OLLAMA_TESTS") != "1", reason="set RUN_OLLAMA_TESTS=1 with Ollama running")
-def test_real_ollama_review_returns_a_valid_verdict():
-    backend = OllamaBackend(os.environ.get("OLLAMA_URL", "http://localhost:11434"),
-                            os.environ.get("OLLAMA_MODEL", "llama3.2"), timeout_s=120)
-    assert backend.available() is None
+@pytest.mark.skipif(os.environ.get("RUN_LLM_TESTS") != "1",
+                    reason="set RUN_LLM_TESTS=1; uses the provider configured by LLM_PROVIDER / .env")
+def test_real_llm_review_returns_a_valid_verdict():
+    backend = client_from_env({"timeout_s": 120})
+    assert backend.available() is None, f"{backend.provider} not available"
     judge = GoalAlignmentJudge(backend)
     judge.samples, judge.max_turns, judge.max_tokens, judge.temperature = 1, 2, 400, 0.2
     v = asyncio.run(judge._review(build_digest(session()[:2], CONTRACT), "evt_sess_1_2", "sess_1"))

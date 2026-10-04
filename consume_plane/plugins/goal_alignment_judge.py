@@ -1,8 +1,10 @@
-"""Goal-alignment judge: a sampled, agentic LLM review of the trajectory on a local Ollama model.
+"""Goal-alignment judge: a sampled, agentic LLM review of the trajectory.
 
-Specification: docs/probabilistic-evaluation.md section 3. This implementation covers the Ollama
-backend, the bounded tool-using review loop, self-consistency scoring and Bernoulli sampling of
-reviews. It never blocks: findings and REQUIRE_APPROVAL_FOR proposals only (semantic plugin rules).
+Specification: docs/probabilistic-evaluation.md section 3. The model is reached through the `llm`
+abstraction layer: OpenAI or a local Ollama model, chosen from the environment (.env) or the plugin
+config (`provider`, `model`, `url`). This implementation covers the bounded tool-using review loop,
+self-consistency scoring and Bernoulli sampling of reviews. It never blocks: findings and
+REQUIRE_APPROVAL_FOR proposals only (semantic plugin rules).
 
 Cost and availability rules:
 - Reviews run for triggering events only, and then only with probability `sample_rate` (the
@@ -11,8 +13,8 @@ Cost and availability rules:
 - Mid-session reviews run in the background, so a slow model never stalls the consume plane; their
   result is reported on the session's next event. The session-end review waits, but never longer
   than `final_timeout_s`.
-- If Ollama is unreachable, the model is missing or a call fails, the judge logs, marks the backend
-  unavailable for `availability_ttl_s`, and returns normally. It never raises into the runtime.
+- If the provider is unreachable, the API key or model is missing, or a call fails, the judge logs,
+  marks the backend unavailable for `availability_ttl_s`, and returns normally. It never raises into the runtime.
 
 OWASP mapping: LLM01 (indirect prompt injection), LLM06 (excessive agency), agentic ASI01 (goal hijack).
 """
@@ -21,15 +23,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import re
 import statistics
 import time
-import urllib.request
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from consume_plane.sdk import AdjustmentProposal, FindingDraft, Subscription
+from llm import LLMUnavailable, client_from_env
 from tracing import get_logger
 
 ID_RE = re.compile(r"^[A-Z]{3}-\d{4}$")
@@ -69,50 +70,6 @@ TOOLS = [
         "name": "count_tool", "description": "Number of calls and outcome histogram for one tool.",
         "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}},
 ]
-
-
-class JudgeUnavailable(Exception):
-    """Backend unreachable or returned something unusable. Never escapes the plugin."""
-
-
-class OllamaBackend:
-    """Minimal stdlib client for Ollama's native chat API."""
-
-    def __init__(self, url: str, model: str, timeout_s: float):
-        self.url = url.rstrip("/")
-        self.model = model
-        self.timeout_s = timeout_s
-
-    def _post(self, path: str, body: Mapping[str, Any] | None = None, timeout: float | None = None) -> dict:
-        data = None if body is None else json.dumps(body).encode()
-        req = urllib.request.Request(self.url + path, data, {"Content-Type": "application/json"})
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        try:
-            with opener.open(req, timeout=timeout or self.timeout_s) as response:
-                return json.loads(response.read(4 * 1024 * 1024))
-        except Exception as e:  # URLError, timeout, bad JSON: all mean "not usable now"
-            raise JudgeUnavailable(f"{type(e).__name__}") from e
-
-    def available(self) -> str | None:
-        """None when usable, otherwise a short reason code."""
-        try:
-            tags = self._post("/api/tags", timeout=min(self.timeout_s, 3.0))
-        except JudgeUnavailable:
-            return "OLLAMA_UNREACHABLE"
-        names = {m.get("name", "") for m in tags.get("models", [])}
-        if self.model not in names and f"{self.model}:latest" not in names:
-            return "MODEL_NOT_PULLED"
-        return None
-
-    def chat(self, messages: list[dict], *, tools: list[dict] | None = None,
-             schema: Mapping[str, Any] | None = None, temperature: float = 0.7, max_tokens: int = 400) -> dict:
-        body: dict[str, Any] = {"model": self.model, "messages": messages, "stream": False, "think": False,
-                                "options": {"temperature": temperature, "num_predict": max_tokens}}
-        if tools:
-            body["tools"] = tools
-        if schema:
-            body["format"] = schema
-        return self._post("/api/chat", body)
 
 
 @dataclass
@@ -186,10 +143,9 @@ class GoalAlignmentJudge:
 
     async def setup(self, ctx):
         c = ctx.config
-        if self.backend is None:
-            self.backend = OllamaBackend(c.get("url") or os.environ.get("OLLAMA_URL", "http://localhost:11434"),
-                                         c.get("model") or os.environ.get("OLLAMA_MODEL", "llama3.2"),
-                                         float(c.get("request_timeout_s", 60)))
+        if self.backend is None:  # provider/model/url in config override LLM_* from the environment / .env
+            self.backend = client_from_env({"provider": c.get("provider"), "model": c.get("model"),
+                                            "url": c.get("url"), "timeout_s": c.get("request_timeout_s")})
         self.sample_rate = float(c.get("sample_rate", 0.3))
         self.final_sample_rate = float(c.get("final_sample_rate", 1.0))
         self.seed = str(c.get("seed", "judge"))
@@ -324,7 +280,7 @@ class GoalAlignmentJudge:
                 tokens += used
                 if parsed is not None:
                     results.append(parsed)
-        except JudgeUnavailable as e:
+        except LLMUnavailable as e:
             self._mark_down(str(e), sid)
             return None
         except Exception as e:
@@ -362,19 +318,19 @@ class GoalAlignmentJudge:
                 messages.append({"role": "user", "content": FINAL_ASK})
             reply = self.backend.chat(messages, tools=None if last else TOOLS, schema=VERDICT_SCHEMA if last else None,
                                       temperature=self.temperature, max_tokens=self.max_tokens)
-            tokens += int(reply.get("prompt_eval_count", 0)) + int(reply.get("eval_count", 0))
-            message = reply.get("message") or {}
-            calls = message.get("tool_calls") or []
-            if not calls:
-                parsed = _parse_verdict(message.get("content", ""), set(steps))
+            tokens += reply.input_tokens + reply.output_tokens
+            if not reply.tool_calls:
+                parsed = _parse_verdict(reply.content, set(steps))
                 if parsed is not None or last:
                     return parsed, tokens
-                messages += [message, {"role": "user", "content": "Answer only with the JSON verdict."}]
+                messages += [reply.as_message(), {"role": "user", "content": "Answer only with the JSON verdict."}]
                 continue
-            messages.append(message)
-            for call in calls[:4]:
-                fn = call.get("function") or {}
-                messages.append({"role": "tool", "content": self._run_tool(fn.get("name"), fn.get("arguments"), steps)})
+            # Answer every call we keep: OpenAI rejects an assistant turn with unanswered tool calls.
+            calls = reply.tool_calls[:4]
+            messages.append({"role": "assistant", "content": reply.content, "tool_calls": list(calls)})
+            for call in calls:
+                messages.append({"role": "tool", "tool_call_id": call.id, "name": call.name,
+                                 "content": self._run_tool(call.name, call.arguments, steps)})
         return None, tokens
 
     @staticmethod
@@ -411,7 +367,8 @@ class GoalAlignmentJudge:
             evidence_event_ids=tuple(dict.fromkeys((v.reviewed_event_id, *v.suspects))),
             confidence=round(v.confidence, 4),
             details={"score": round(v.score, 4), "confidence": round(v.confidence, 4), "samples": v.samples,
-                     "rationale_code": v.rationale, "model": getattr(self.backend, "model", None),
+                     "rationale_code": v.rationale, "provider": getattr(self.backend, "provider", None),
+                     "model": getattr(self.backend, "model", None),
                      "reviewed_event_id": v.reviewed_event_id},
         ))
         if band == 2:

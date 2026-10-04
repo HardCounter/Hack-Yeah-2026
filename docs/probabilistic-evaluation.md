@@ -382,7 +382,7 @@ fail-open: a provider outage must not halt every session, while the inline layer
 ### 3.10 Implementation status (`consume_plane/plugins/goal_alignment_judge.py`)
 
 **Implemented:**
-- the Ollama backend with an availability check (§3.8);
+- model access through the `llm` package (`llm/`): `OpenAIClient` (Chat Completions; tools; strict `json_schema` output; any OpenAI-compatible server via `OPENAI_BASE_URL`) and `OllamaClient` (native API). `llm.client_from_env()` picks one from `LLM_PROVIDER`, `LLM_MODEL` and `OPENAI_API_KEY` in the environment or the repository `.env`; the plugin's `provider`, `model` and `url` config override those. Both clients have an availability check (§3.8): OpenAI reports `API_KEY_MISSING`, `AUTH_FAILED`, `MODEL_NOT_FOUND` or `OPENAI_UNREACHABLE`, Ollama reports `OLLAMA_UNREACHABLE` or `MODEL_NOT_PULLED`;
 - the digest (§3.3);
 - the agentic loop with `get_step` and `count_tool`; the final turn is forced to answer through Ollama's JSON-schema `format`;
 - self-consistency, confidence and bands (§3.5);
@@ -397,15 +397,15 @@ fail-open: a provider outage must not halt every session, while the inline layer
 - **Failure containment.** An unreachable Ollama, a model that isn't pulled, transport errors and invalid output are logged (`judge.unavailable` / `judge.error`). The backend is then skipped for `availability_ttl_s`, and `handle` returns normally, so events never fail, retry or dead-letter because of the judge.
 
 **Not implemented yet:**
-- the `anthropic` and `stub` backends (tests use a fake backend);
+- an Anthropic client and the offline `stub` backend (tests use a fake client and a fake OpenAI server);
 - `get_content_excerpt`;
 - per-day cost budgets;
 - `LOWER_TRUST` evidence, which waits for §4.
 
 **Enabling it:**
-- Simulation: `GOAL_JUDGE=1`, plus optionally `GOAL_JUDGE_MODEL` and `GOAL_JUDGE_SAMPLE_RATE`.
+- Simulation: `GOAL_JUDGE=1`, plus optionally `GOAL_JUDGE_PROVIDER`, `GOAL_JUDGE_MODEL` and `GOAL_JUDGE_SAMPLE_RATE`. Without overrides it uses `LLM_PROVIDER` / `LLM_MODEL` (see `.env.example`).
 - Standalone daemon: `plugins.goal-alignment-judge.enabled` in `consume_plane.yaml`.
-- Real-model test: `RUN_OLLAMA_TESTS=1 OLLAMA_MODEL=<model> scripts/test.sh consume`.
+- Live tests against the configured provider: `RUN_LLM_TESTS=1 scripts/test.sh python -k "live or real"`.
 
 ---
 

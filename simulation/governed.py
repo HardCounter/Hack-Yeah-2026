@@ -124,11 +124,12 @@ class GovernedRuntime:
         plugins = {"trajectory-risk": PluginEntry(name="trajectory-risk", config=self.consumer_config["trajectory_risk"])}
         extra_plugins = [TrajectoryRisk]
         feedback = dict(self.consumer_config["feedback"])
-        # Opt-in semantic judge on a local Ollama model (docs/probabilistic-evaluation.md section 3).
-        # It is sampled, runs in the background and only logs when Ollama is unavailable.
+        # Opt-in semantic judge (docs/probabilistic-evaluation.md section 3). The model comes from the llm
+        # layer (OpenAI or Ollama, per LLM_PROVIDER / .env); GOAL_JUDGE_PROVIDER / _MODEL override it.
+        # It is sampled, runs in the background and only logs when the provider is unavailable.
         if os.environ.get("GOAL_JUDGE") == "1":
             from consume_plane.plugins.goal_alignment_judge import GoalAlignmentJudge
-            judge_config = {"model": os.environ.get("GOAL_JUDGE_MODEL") or os.environ.get("OLLAMA_MODEL", "llama3.2"),
+            judge_config = {"provider": os.environ.get("GOAL_JUDGE_PROVIDER"), "model": os.environ.get("GOAL_JUDGE_MODEL"),
                             "sample_rate": float(os.environ.get("GOAL_JUDGE_SAMPLE_RATE", "0.3"))}
             plugins[GoalAlignmentJudge.name] = PluginEntry(name=GoalAlignmentJudge.name, config=judge_config)
             extra_plugins.append(GoalAlignmentJudge)
