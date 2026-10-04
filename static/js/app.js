@@ -8,6 +8,7 @@ const sleep = ms => new Promise(r => setTimeout(r, reduced ? 0 : ms));
 const fmtTime = d => d.toLocaleTimeString('en-GB', { timeZone: 'Europe/Warsaw' });
 const fmtNum = n => Number(n).toLocaleString('en-GB').replace(/,/g, ' ');  // space as thousands separator
 /* Preset names are stored lowercase; show them capitalised, e.g. "Standard (edited)" */
+const ms = v => v == null ? '—' : (v < 1 ? v.toFixed(2) : v < 10 ? v.toFixed(1) : Math.round(v)) + ' ms';
 const label = name => name.replace(/^(lenient|standard|strict)/, w => w[0].toUpperCase() + w.slice(1));
 
 /* The read API's Decision enum (docs/rest.md §5.1) and the word the console shows for it */
@@ -16,8 +17,12 @@ const VERDICT = { ALLOW: 'ALLOWED', BLOCK: 'BLOCKED', REDACT: 'REDACTED', REQUIR
 const TONE = { BLOCKED: 'block', REDACTED: 'warn', HELD: 'hold', ALLOWED: 'allow',
   ACTIVE: 'allow', BLOCK: 'block', REDACT: 'warn', ALERT: 'warn', FAIL: 'block', INCOMPLETE: 'warn', PASS: 'allow',
   LOW: 'allow', MEDIUM: 'warn', HIGH: 'block', CRITICAL: 'crit',
-  'FAILED POSTCONDITIONS': 'block', 'VERIFICATION INCOMPLETE': 'warn', 'VERIFIED SUCCESS': 'allow' };
+  'FAILED POSTCONDITIONS': 'block', 'VERIFICATION INCOMPLETE': 'warn', 'VERIFIED SUCCESS': 'allow',
+  // control-plane plugin decisions (docs/rest.md §5.17), shown with spaces for underscores
+  'NO CHANGE': 'allow', 'LEVEL RAISED': 'warn', 'VERDICT ALIGNED': 'allow', 'VERDICT ALERT': 'warn', 'VERDICT APPROVAL REQUIRED': 'hold',
+  'REVIEW FAILED': 'block', 'PLUGIN FAILED': 'block', 'PLUGIN GAVE UP': 'block', DECIDED: 'allow', FAILED: 'warn', 'DEAD LETTERED': 'block' };
 const badge = word => el('span', 'badge ' + (TONE[word] || 'neutral'), word);
+const code = c => (c || '—').replace(/_/g, ' ');  // NO_CHANGE -> NO CHANGE
 
 /* Risk = likelihood x impact, the same model as the backend's trajectory-risk plugin
    (consume_plane/plugins/trajectory_risk.py, docs/trajectory-risk-model.md). Keep the numbers in sync. */
@@ -61,6 +66,7 @@ const Risk = {
   // noisy-OR: P = 1 - (1 - p0) * prod(1 - w_k) over every signal seen so far in the session
   probability(signals) { return 1 - (1 - this.base) * signals.reduce((m, s) => m * (1 - (this.weights[s] ?? 0)), 1); },
   level(loss) { return this.levels.find(([, t]) => loss >= t)[0]; },
+  of(s) { return s.level || this.level(s.loss); },  // the backend plugin's level when it decided, else the local one
   newSession(id, label) { return { id, label, signals: [], loss: 0, maxC: 1, steps: 0, log: [], P: this.base }; },
   // One step: its signals raise P for this and later steps; only executed steps add P x C to the loss.
   // A step is one action: one agent tool call.

@@ -21,6 +21,7 @@ button { font: inherit; color: inherit; }
 .mono, code, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .muted { color: var(--ink-2); }
 .faint { color: var(--ink-3); }
+.sim { text-decoration: underline dotted var(--ink-3); text-underline-offset: 3px; cursor: help; }  /* a simulated stand-in, see js/mock.js */
 .cap { font-size: .8125rem; }
 .sc { font-variant-caps: all-small-caps; letter-spacing: .06em; }
 .v-block { color: var(--block); } .v-warn { color: var(--warn); } .v-hold { color: var(--hold); } .v-allow { color: var(--allow); } .v-crit { color: var(--crit); }

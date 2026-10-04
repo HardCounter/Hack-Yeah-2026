@@ -11,27 +11,39 @@
   const get = path => App.read(path);
   async function loadSession(summary) {
     const id = encodeURIComponent(summary.session_id);
-    const [detail, trajectory] = await Promise.all([get(`/sessions/${id}`),
-      get(`/trajectories/session/${id}?view=full&kinds=tool_use&include_detections=false&limit=1000`)]);
+    const [detail, trajectory, trace] = await Promise.all([get(`/sessions/${id}`),
+      get(`/trajectories/session/${id}?view=full&kinds=tool_use&include_detections=false&limit=1000`),
+      get(`/sessions/${id}/decisions?limit=1000`).catch(() => null)]);  // control-plane trace; older APIs lack it
     const steps = trajectory.segments.flatMap(g => g.steps).map(({ summary: a, event }) => {
       const d = event?.action_details || {};
-      return { name: a.name, side_effect: a.side_effect, status: a.status, decision: a.decision, executed: a.executed,
-        args: d.parameters, error: d.error, result: d.result, rule: a.triggered_rules?.[0], reason: a.reason_code, usage: a.usage };
+      return { event_id: a.event_id, name: a.name, side_effect: a.side_effect, status: a.status, decision: a.decision, executed: a.executed,
+        args: d.parameters, error: d.error, result: d.result, rule: a.triggered_rules?.[0], reason: a.reason_code, usage: Mock.usage(a) };
     });
     const s = Risk.newSession(summary.session_id, `${summary.case_id} · ${summary.agent_id}`);
-    Risk.signalsFor(steps, detail.contract).forEach((signals, k) => {
-      const st = steps[k], held = st.status === 'pending_approval';
-      Risk.step(s, { name: st.name, signals, C: Risk.tools[st.name] ?? Risk.sideEffect[st.side_effect] ?? 1, executed: st.executed,
-        args: st.args, ms: st.usage?.latency_ms, tokens: st.usage && { in: st.usage.input_tokens, out: st.usage.output_tokens },
+    s.decisions = trace?.items || []; s.summary = trace?.summary || [];
+    // The backend trajectory-risk plugin scores each step; its numbers win over the local recomputation
+    const risk = Object.fromEntries(s.decisions.filter(d => d.plugin === 'trajectory-risk' && d.factors?.level).map(d => [d.trigger_event_id, d.factors]));
+    const local = Risk.signalsFor(steps, detail.contract);
+    let seen = {}, last;  // backend signals are session totals per name; a step's own are the increase
+    local.forEach((own, k) => {
+      const st = steps[k], held = st.status === 'pending_approval', f = risk[st.event_id];
+      const signals = f ? Object.entries(f.signals || {}).flatMap(([n, c]) => Array(Math.max(0, c - (seen[n] || 0))).fill(n)) : own;
+      if (f) { seen = f.signals || {}; last = f; }
+      Risk.step(s, { event_id: st.event_id, name: st.name, signals, C: Risk.tools[st.name] ?? Risk.sideEffect[st.side_effect] ?? 1, executed: st.executed,
+        trace: s.decisions.filter(d => d.trigger_event_id === st.event_id),
+        args: st.args, ms: st.executed ? st.usage?.latency_ms : null, tokens: st.usage && { in: st.usage.input_tokens, out: st.usage.output_tokens, sim: st.usage.sim },
         decision: { verdict: VERDICT[st.decision] || (st.executed ? 'ALLOWED' : 'BLOCKED'), by: st.rule?.auditor, reason: st.rule?.rule_id || st.reason },
         result: st.error ? { status: 'error', summary: st.error }
           : st.executed ? { status: 'ok', data: st.result, redacted: st.status === 'redacted' }
           : { status: held ? 'held' : 'blocked', summary: held ? 'Not executed, waiting for approval' : 'Not executed, stopped at the gateway' } });
     });
+    if (last) Object.assign(s, { P: last.failure_probability, loss: last.expected_loss, level: last.level.toUpperCase() });
+    const v = s.decisions.findLast(d => d.plugin === 'outcome-verifier' && d.outcome === 'decided');
+    if (v) s.verdict = { decision: v.decision, reasoning: v.reasoning, factors: v.factors || {} };
     return s;
   }
   // Keeps equal-impact dots apart; stable per session so a refresh does not move them
-  const jitter = id => ([...id].reduce((a, c) => Math.imul(a, 31) + c.charCodeAt(0) >>> 0, 7) % 1000 / 1000 - .5) * .5;
+  const jitter = id => (Mock.draw(id) - .5) * .5;
 
   const svg = $('#riskMap');
   const NS = 'http://www.w3.org/2000/svg';
@@ -63,7 +75,7 @@
   }
 
   const pop = $('#pop');
-  const describe = s => `${s.label}, likelihood ${s.P.toFixed(2)}, impact ${s.maxC}, expected loss ${s.loss.toFixed(2)}, level ${Risk.level(s.loss)}, ${s.steps} steps`;
+  const describe = s => `${s.label}, likelihood ${s.P.toFixed(2)}, impact ${s.maxC}, expected loss ${s.loss.toFixed(2)}, level ${Risk.of(s)}, ${s.steps} steps`;
   const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); return c; };
   const verdict = st => st.decision?.verdict || (st.executed ? 'ALLOWED' : 'BLOCKED');
   const RESULT = { ok: 'allow', blocked: 'block', error: 'block', held: 'hold' };
@@ -79,16 +91,25 @@
       const r = el('p'); r.append(el('span', 'badge ' + (RESULT[res.status] || 'neutral'), res.status || '—'), ...(res.redacted ? [' ', badge('REDACTED')] : []), ' ', res.summary || '');
       sec('Result', r, ...(res.data != null ? [pre(res.data)] : []));
     }
-    const foot = [st.ms != null && `${st.ms} ms`, st.tokens && `${fmtNum(st.tokens.in ?? 0)} in / ${fmtNum(st.tokens.out ?? 0)} out tokens`].filter(Boolean);
-    if (foot.length) d.append(el('p', 'step-foot mono', foot.join(' · ')));
+    // Control-plane plugins that decided on this step (docs/rest.md §4.21)
+    if (st.trace?.length) sec('Control plane', ...st.trace.map(t => {
+      const p = el('p'); p.append(el('span', 'mono', t.plugin), ' ', badge(code(t.decision)), ` ${t.reasoning || ''} · ${ms(t.duration_ms)}`,
+        ...(t.adjustments || []).map(j => ` · ${j.action} ${j.outcome}`));
+      return p;
+    }));
+    // Tool time only for an executed step; tokens may be a simulated planner turn (js/mock.js)
+    const foot = [st.ms != null && ms(st.ms), st.tokens && Mock.sim(`${fmtNum(st.tokens.in ?? 0)} in / ${fmtNum(st.tokens.out ?? 0)} out tokens`, st.tokens.sim)].filter(Boolean);
+    if (foot.length) { const p = el('p', 'step-foot mono'); foot.forEach((f, i) => p.append(...(i ? [' · '] : []), f)); d.append(p); }
+
     return d;
   }
   // Session card: header with level, key figures, then one table row per step
   function card(s) {
-    const lvl = Risk.level(s.loss), head = el('div', 'pop-head');
-    head.append(el('strong', null, s.label), badge(lvl));
+    const lvl = Risk.of(s), head = el('div', 'pop-head'), f = s.verdict?.factors;
+    head.append(el('strong', null, s.label), badge(lvl), ...(s.verdict ? [badge(code(s.verdict.decision))] : []));
     const facts = el('dl', 'pop-facts');
-    for (const [k, v] of [['Likelihood P', s.P.toFixed(2)], ['Impact C', s.maxC], ['Expected loss', s.loss.toFixed(2)], ['Action', ACTION[lvl]]])
+    for (const [k, v] of [['Likelihood P', s.P.toFixed(2)], ['Impact C', s.maxC], ['Expected loss', s.loss.toFixed(2)], ['Action', ACTION[lvl]],
+      ...(s.verdict ? [['Outcome', `${code(s.verdict.decision)}${f?.checks_total != null ? ` · ${f.checks_passed}/${f.checks_total} checks` : ''}`]] : [])])
       facts.append(el('dt', null, k), el('dd', 'mono', String(v)));
     const t = el('table', 'pop-steps'), hr = el('tr');
     hr.append(...['#', 'Step', 'Impact', 'Status', 'Signals'].map(h => el('th', null, h)));
@@ -137,7 +158,7 @@
     target.addEventListener('mouseleave', hide); target.addEventListener('blur', hide);
   }
   function point(s) {
-    const lvl = Risk.level(s.loss);
+    const lvl = Risk.of(s);
     const c = node('circle', { cx: x(s.P), cy: y(Math.min(10, s.maxC + jitter(s.id))), r: 5 + Math.min(s.steps, 12) * .5,
       class: `pt lvl-${lvl}`, tabindex: 0, role: 'img', 'aria-label': describe(s) });
     hoverCard(c, s);
@@ -152,7 +173,7 @@
       return $('#riskTable').replaceChildren(el('tr').appendChild(c).parentNode);
     }
     $('#riskTable').replaceChildren(...[...App.sessions].sort((a, b) => b.loss - a.loss).slice(0, 8).map(s => {
-      const tr = el('tr'), lvl = Risk.level(s.loss), b = el('td');
+      const tr = el('tr'), lvl = Risk.of(s), b = el('td');
       b.append(badge(lvl));
       tr.append(el('td', 'cap', s.label), el('td', 'n mono cap', s.P.toFixed(2)), el('td', 'n mono cap', s.maxC),
         el('td', 'n mono cap', s.loss.toFixed(2)), b, el('td', 'cap muted', ACTION[lvl]));
