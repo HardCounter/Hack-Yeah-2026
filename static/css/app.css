@@ -175,10 +175,7 @@ a.kpi:hover, a.kpi:focus-visible { background: var(--paper-2); } a.kpi:hover .la
 .meter .tick span { position: absolute; top: 0.875rem; left: -0.625rem; font: .6875rem var(--mono); color: var(--ink-3); }
 
 /* Risk: likelihood x impact */
-.risk-panel { margin-bottom: 1.25rem; }
-.risk-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
-.risk-side { border-left: thin solid var(--rule); min-width: 0; }
-.risk-main { min-width: 0; } .risk-sub { border-top: thin solid var(--rule); }  /* budget and controls under the chart */
+.risk-grid { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); margin-bottom: 1.25rem; }
 .risk-help { margin: 0; padding: 0.75rem 1rem; border-top: thin solid var(--rule); font-size: .8125rem; }
 .risk-help dt { font-weight: 600; margin-top: 0.5rem; }
 .risk-help dt:first-child { margin-top: 0; }
@@ -233,7 +230,6 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
 @media (max-width: 64em) {
   .grid.split, .grid.sidebar, .grid.halves { grid-template-columns: minmax(0, 1fr); }
   .risk-grid { grid-template-columns: minmax(0, 1fr); }
-  .risk-side { border-left: 0; border-top: thin solid var(--rule); }
   .kpis, #kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .kpi:nth-child(3n+1) { border-left: 0; }
   .kpi:nth-child(n+4) { border-top: thin solid var(--rule); }
