@@ -14,6 +14,7 @@ from web import sessions
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "static"
 PRESETS = ROOT / "config" / "presets"  # committed lenient / standard / strict
+PRESET_NAMES = ("lenient", "standard", "strict")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}")
 MAX_CONFIG_BYTES = 64_000
 
@@ -42,7 +43,8 @@ def custom_dir() -> Path:
 
 def config_files() -> dict[str, tuple[Path, bool]]:
     files = {p.stem: (p, False) for p in custom_dir().glob("*.json")}
-    files.update({p.stem: (p, True) for p in PRESETS.glob("*.json")})  # presets win a name clash
+    # Only these three files are selectable built-in presets; ignore drafts in this directory.
+    files.update({name: (PRESETS / f"{name}.json", True) for name in PRESET_NAMES})
     return files
 
 
@@ -64,7 +66,17 @@ def validate(config: dict, tools: set[str]) -> None:
     cost = budget.get("cost_usd")
     need(cost is None or (type(cost) in (int, float) and 0 <= cost <= 1000), "budget.cost_usd must be empty or 0-1000")
     need(is_int(config.get("max_output_tokens"), 1, 32_768), "max_output_tokens must be 1-32768")
-    guard = config.get("semantic_guard")
+    intercept = config.get("intercept", {})
+    need(isinstance(intercept, dict), "intercept must be an object")
+    velocity = intercept.get("velocity_guard")
+    if velocity is not None:
+        need(isinstance(velocity, dict)
+             and type(velocity.get("window_s")) in (int, float)
+             and 0 < velocity["window_s"] <= 3600
+             and is_int(velocity.get("max_calls"), 1, 10_000),
+             "intercept.velocity_guard requires window_s in (0, 3600] and max_calls in [1, 10000]")
+    guard = (intercept.get("semantic_guard") if "semantic_guard" in intercept
+             else config.get("semantic_guard"))
     need(isinstance(guard, dict) and type(guard.get("block_threshold")) in (int, float)
          and 0 < guard["block_threshold"] <= 1, "semantic_guard.block_threshold must be in (0, 1]")
     # Optional lower tiers: hold for approval, and alert only. Each at or below block; independent of each other.
@@ -103,7 +115,7 @@ def get_config(name: str):
 async def save_config(name: str, request: Request):
     if not NAME.fullmatch(name):
         raise HTTPException(422, "name: letters, digits, - and _, up to 40 characters")
-    if name.lower() in {p.stem for p in PRESETS.glob("*.json")}:
+    if name.lower() in PRESET_NAMES:
         raise HTTPException(409, "presets are read-only; save under another name")
     body = await request.body()
     if len(body) > MAX_CONFIG_BYTES:
