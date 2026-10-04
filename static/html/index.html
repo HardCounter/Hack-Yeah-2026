@@ -139,9 +139,25 @@
     <div class="panel risk-panel">
       <div class="panel-head"><h2>Risk map · likelihood × impact</h2><span class="cap faint">Each dot is one agent session, scored like the backend's trajectory-risk plugin</span></div>
       <div class="risk-grid">
-        <div class="panel-body">
-          <svg id="riskMap" viewBox="0 0 680 400" role="img" aria-labelledby="riskTitle"><title id="riskTitle">Agent sessions by likelihood of going wrong and impact of their riskiest executed step</title></svg>
-          <div class="legend" id="riskLegend"></div>
+        <div class="risk-main">
+          <div class="panel-body">
+            <svg id="riskMap" viewBox="0 0 680 400" role="img" aria-labelledby="riskTitle"><title id="riskTitle">Agent sessions by likelihood of going wrong and impact of their riskiest executed step</title></svg>
+            <div class="legend" id="riskLegend"></div>
+          </div>
+          <div class="risk-sub">
+            <div class="panel-head"><h2>Session budget</h2><span class="cap faint mono" id="budTxt"></span></div>
+            <div class="panel-body">
+              <div class="meter" role="meter" aria-label="Session token budget" aria-valuemin="0" id="budMeter"><div class="fill" id="budFill"></div><div class="tick"><span>80%</span></div></div>
+              <p class="cap muted" id="costTxt"></p>
+            </div>
+          </div>
+          <div class="risk-sub">
+            <div class="panel-head"><h2>Controls</h2><span class="cap faint">Per control, since start</span></div>
+            <div class="scroll"><table>
+              <thead><tr><th>Control</th><th class="n">Runs</th><th class="n">Acted</th><th class="n">p50</th><th class="n">p95</th></tr></thead>
+              <tbody id="ctlTable"></tbody>
+            </table></div>
+          </div>
         </div>
         <div class="risk-side">
           <div class="scroll"><table>
@@ -160,32 +176,14 @@
       </div>
     </div>
 
-    <div class="grid halves">
-      <div class="stack">
-        <div class="panel">
-          <div class="panel-head"><h2>Session budget</h2><span class="cap faint mono" id="budTxt"></span></div>
-          <div class="panel-body">
-            <div class="meter" role="meter" aria-label="Session token budget" aria-valuemin="0" id="budMeter"><div class="fill" id="budFill"></div><div class="tick"><span>80%</span></div></div>
-            <p class="cap muted" id="costTxt"></p>
-          </div>
-        </div>
-        <div class="panel">
-          <div class="panel-head"><h2>Controls</h2><span class="cap faint">Per control, since start</span></div>
-          <div class="scroll"><table>
-            <thead><tr><th>Control</th><th class="n">Runs</th><th class="n">Acted</th><th class="n">p50</th><th class="n">p95</th></tr></thead>
-            <tbody id="ctlTable"></tbody>
-          </table></div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-head"><h2>Audit log</h2><span class="cap faint">Newest first · excerpts are sanitized</span></div>
-        <div class="scroll"><table>
-          <thead><tr><th>Time</th><th>Decision</th><th>Rule</th><th>Excerpt</th></tr></thead>
-          <tbody id="audit"></tbody>
-        </table></div>
-      </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Audit log</h2><span class="cap faint">Newest first · excerpts are sanitized</span></div>
+      <div class="scroll"><table>
+        <thead><tr><th>Time</th><th>Decision</th><th>Rule</th><th>Excerpt</th></tr></thead>
+        <tbody id="audit"></tbody>
+      </table></div>
     </div>
-   </div>
+  </div>
 
     <!-- Drill-down: one record type (#metrics/<view>) or one record (#metrics/<view>/<id>) -->
     <div id="mDrill" hidden>

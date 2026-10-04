@@ -178,6 +178,7 @@ a.kpi:hover, a.kpi:focus-visible { background: var(--paper-2); } a.kpi:hover .la
 .risk-panel { margin-bottom: 1.25rem; }
 .risk-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
 .risk-side { border-left: thin solid var(--rule); min-width: 0; }
+.risk-main { min-width: 0; } .risk-sub { border-top: thin solid var(--rule); }  /* budget and controls under the chart */
 .risk-help { margin: 0; padding: 0.75rem 1rem; border-top: thin solid var(--rule); font-size: .8125rem; }
 .risk-help dt { font-weight: 600; margin-top: 0.5rem; }
 .risk-help dt:first-child { margin-top: 0; }
