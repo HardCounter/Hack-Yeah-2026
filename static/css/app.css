@@ -25,7 +25,7 @@ button { font: inherit; color: inherit; }
 .sc { font-variant-caps: all-small-caps; letter-spacing: .06em; }
 .v-block { color: var(--block); } .v-warn { color: var(--warn); } .v-hold { color: var(--hold); } .v-allow { color: var(--allow); } .v-crit { color: var(--crit); }
 
-/* Letterhead: wordmark row plus the numbered tabs, one brass double rule under both */
+/* Letterhead: wordmark row plus the tabs, one brass double rule under both */
 .appbar { background: var(--paper); border-bottom: 0.1875rem double var(--brass); }
 .appbar .lh { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.375rem 1.625rem; padding-top: 1rem; padding-bottom: 0.75rem; border-bottom: thin solid var(--rule); }
 .wordmark { font: 600 1.375rem var(--serif); font-variant-caps: all-small-caps; letter-spacing: .1em; text-decoration: none; color: var(--ink); }
@@ -38,11 +38,9 @@ button { font: inherit; color: inherit; }
 
 /* Tabs: the only navigation */
 .tabs { display: grid; grid-template-columns: repeat(4, 1fr); }
-.tabs a { display: grid; grid-template-columns: auto 1fr; gap: 0 0.75rem; align-items: baseline; padding: 1rem 1.25rem 0.875rem 0; text-decoration: none; color: var(--ink-3); border-bottom: 0.125rem solid transparent; margin-bottom: -0.0625rem; }
+.tabs a { display: block; padding: 1rem 1.25rem 0.875rem 0; text-decoration: none; color: var(--ink-3); border-bottom: 0.125rem solid transparent; margin-bottom: -0.0625rem; }
 .tabs a + a { padding-left: 1.25rem; border-left: thin solid var(--rule); }
-.tabs .n { grid-row: span 2; font: 500 2rem/1 var(--serif); }
 .tabs .t { font: 400 1.125rem var(--serif); color: inherit; }
-.tabs .d { font-size: .8125rem; }
 .tabs a:hover { color: var(--ink-2); }
 .tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
 
@@ -210,7 +208,6 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
   .wrap { padding: 0 1rem; }
   .tabs { grid-template-columns: 1fr; }
   .tabs a + a { padding-left: 0; border-left: 0; border-top: thin solid var(--rule); }
-  .tabs .d { display: none; }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kpi:nth-child(odd) { border-left: 0; }
   .kpi:nth-child(4) { border-left: thin solid var(--rule); }
