@@ -41,27 +41,36 @@
     return d;
   }
 
-  // Tokens per time slice, oldest left, shown above the Model spend drill-down. Hover a bar for its numbers.
-  function spendChart(rows) {
+  // One bar per time slice, oldest left, shown above a drill-down table. value(rows in slice) sets the bar height;
+  // hover a bar for tip(rows, value). aria(minutes per slice, peak) labels the chart.
+  function timeChart(rows, value, tip, aria) {
     const N = 20, H = 24, NS = 'http://www.w3.org/2000/svg';
     const node = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
     const svg = node('svg', { class: 'spark', viewBox: `0 0 ${N * 5} ${H}`, preserveAspectRatio: 'none', role: 'img' });
     if (!rows.length) return svg;
     const end = Date.now(), start = Math.min(...rows.map(a => +time(a))), w = Math.max(1, (end - start) / N);
-    const sums = Array(N).fill(0), cost = Array(N).fill(0);
-    for (const a of rows) { const i = Math.min(N - 1, Math.floor((time(a) - start) / w)); sums[i] += a.usage.total_tokens; cost[i] += a.usage.cost_usd; }
-    const max = Math.max(...sums) || 1;
-    svg.setAttribute('aria-label', `Tokens per ${Math.round(w / 60e3)} minutes, peak ${fmtNum(max)}`);
-    sums.forEach((n, i) => {
+    const slices = Array.from({ length: N }, () => []);
+    for (const a of rows) slices[Math.min(N - 1, Math.floor((time(a) - start) / w))].push(a);
+    const vals = slices.map(b => b.length ? value(b) : 0), max = Math.max(...vals) || 1;
+    svg.setAttribute('aria-label', aria(Math.round(w / 60e3), max));
+    vals.forEach((n, i) => {
       const h = n ? Math.max(1, n / max * H) : 0, g = node('g', {}), t = node('title', {});
       t.textContent = `${fmtTime(new Date(start + i * w))}–${fmtTime(new Date(start + (i + 1) * w))}
-${fmtNum(n)} tokens · ${usd(cost[i])}`;
+${tip(slices[i], n)}`;
       g.append(t, node('rect', { class: 'hit', x: i * 5, y: 0, width: 5, height: H }),
         node('rect', { class: 'bar', x: i * 5 + .5, y: H - h, width: 4, height: h }));
       svg.append(g);
     });
     return svg;
   }
+  const CHARTS = {
+    spend: list => timeChart(list, b => sum(b.map(a => a.usage.total_tokens)),
+      (b, n) => `${fmtNum(n)} tokens · ${usd(sum(b.map(a => a.usage.cost_usd)))}`,
+      (m, peak) => `Tokens per ${m} minutes, peak ${fmtNum(peak)}`),
+    latency: list => timeChart(list, b => Math.max(...b.map(overhead)),
+      (b, n) => `slowest ${ms(n)} · ${fmtNum(b.length)} requests`,
+      (m, peak) => `Slowest gateway time per ${m} minutes, peak ${ms(peak)}`),
+  };
 
   function render(fresh) {
     const by = security?.actions.by_decision, n = perf?.actions_evaluated ?? 0, num = v => security ? fmtNum(v) : '—';
@@ -232,7 +241,7 @@ ${fmtNum(n)} tokens · ${usd(cost[i])}`;
     const rows = list.map(a => link(`#metrics/${view}/${encodeURIComponent(a.event_id)}`, el('td', 'mono cap', fmtTime(time(a))), td(null, badge(verdict(a))),
       el('td', 'mono cap', rule(a)), el('td', 'cap', a.triggered_rules.map(t => t.auditor).join(', ') || '—'), el('td', 'n mono cap', fmtNum(a.usage.total_tokens)),
       el('td', 'n mono cap', ms(a.interception_overhead_ms)), el('td', 'mono cap', what(a)), el('td', 'mono cap muted', a.session_id)));
-    return [...(view === 'spend' ? [spendChart(list)] : []),
+    return [...(CHARTS[view] ? [CHARTS[view](list)] : []),
       table([['Time'], ['Decision'], ['Rule'], ['Decided by'], ['Tokens', 'n'], ['Gateway', 'n'], ['Action'], ['Session']], rows,
       reachable ? 'No records of this type yet.' : 'Read API unreachable.')];
   }
