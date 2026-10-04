@@ -86,6 +86,20 @@
         ],
         "action": "REQUIRE_APPROVAL"
       }
+    },
+    {
+      "id": "domain-blocklist",
+      "type": "domain_blocklist",
+      "config": {
+        "domains": [
+          "pastebin.com",
+          "transfer.sh",
+          "ngrok.io",
+          "webhook.site",
+          "requestbin.net"
+        ],
+        "action": "ALERT"
+      }
     }
   ],
   "intercept": {

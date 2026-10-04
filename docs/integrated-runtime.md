@@ -11,7 +11,7 @@ agent proposal -> contracts.ActionProposal -> intercept.GovernedGateway
                     -> persistence.GovernedPersistence
                     -> committed Event Envelope v2.1 + session seq + outbox
                     -> PersistenceEventSource -> ConsumerManager
-                    -> trajectory-risk / gateway-violations / outcome-verifier
+                    -> trajectory-risk / outcome-verifier
                     -> Finding / metrics / PolicyAdjustmentSignal
                     -> trusted in-process feedback channel -> Layer 1 -> durable control event
 

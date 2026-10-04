@@ -475,6 +475,8 @@ started, call every plugin's `teardown()`, flush sinks.
 
 ## 8. Adding plugins
 
+Step-by-step author guide: `consume_plane/plugins/README.md`.
+
 The three ways requested, in the order a developer meets them.
 
 ### 8.1 Way 1: drop a Python file into the plugin directory

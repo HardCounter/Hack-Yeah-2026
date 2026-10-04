@@ -5,7 +5,7 @@
 Starts two processes on a fresh synthetic bank:
   * `intercept.service.local`: Layer 1 gateway. Binding a session (/intercept-run) composes the
     governed runtime: Layer 2 evidence store `bank-runs/<session_id>.evidence.db` and the Layer 3
-    consume plane (trajectory-risk, gateway-violations, outcome verifier, feedback to Layer 1).
+    consume plane (trajectory-risk, outcome verifier, feedback to Layer 1).
   * `persistence.http_api`: the read-only REST API for dashboards (docs/rest.md) over `bank-runs/`.
 Every step is traced to a file (CONTROL_LOG=file). An isolated OpenCode project exposes only
 gateway-backed tools. Gateway connection details go to the private var/intercept.env read by

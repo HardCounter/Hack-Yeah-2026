@@ -200,3 +200,24 @@ def test_approved_identity_changed_detects_all_identity_fields(session):
     modified = {"fields": {"name": "Alice", "dob": "1990-01-01", "national_id": "[REDACTED]"}}
     assert gateway._approved_identity_changed(original, modified) is True
 
+def test_blocklisted_domain_is_denied_and_classified_at_decision_time(session):
+    s = session
+    # intranet.bank.example passes the fetch_url egress allowlist; the blocklist still wins.
+    s.runtime.gateway.pipeline = __import__("intercept.policy.auditors", fromlist=["Pipeline"]).Pipeline([
+        {"id": "domain-blocklist", "type": "domain_blocklist",
+         "config": {"domains": ["bank.example"], "action": "BLOCK"}}
+    ])
+    decision, result = s.runtime.runner.run(s.runtime.gateway.execute(proposal(
+        s, "fetch-blocked", "fetch_url", {"url": "https://intranet.bank.example/kyc-policy.txt"})))
+    assert (decision.decision, decision.reason_code, decision.reason_family) == ("BLOCK", "DOMAIN_BLOCKLISTED", "EGRESS")
+    assert "error" in result
+
+
+def test_scope_deny_is_classified_and_allow_has_no_family(session):
+    s = session
+    decision, _ = s.runtime.runner.run(s.runtime.gateway.execute(
+        proposal(s, "read-own", "read_application", {"app_id": s.app_id})))
+    assert decision.decision == "ALLOW" and decision.reason_family is None
+    decision, _ = s.runtime.runner.run(s.runtime.gateway.execute(
+        proposal(s, "read-other", "read_application", {"app_id": "APP-0002"})))
+    assert (decision.decision, decision.reason_family) == ("BLOCK", "SCOPE")

@@ -141,10 +141,50 @@ class AuditorTests(unittest.IsolatedAsyncioTestCase):
             await server.wait_closed()
 
 
+def blocklist(effect="BLOCK", domains=("evil.com",)):
+    return {"id": "domains", "type": "domain_blocklist", "config": {"domains": list(domains), "action": effect}}
+
+
+class DomainBlocklistTests(unittest.IsolatedAsyncioTestCase):
+    async def verdict(self, arguments, spec=None):
+        a = action()
+        a["arguments"] = arguments
+        return await Pipeline([spec or blocklist()]).evaluate(a)
+
+    async def test_blocked_hosts_in_any_form_are_denied(self):
+        for value in ("https://evil.com/x", "see http://API.Evil.com./path?q=1", "upload to evil.com/drop",
+                      "mail ops@evil.com", ["nested", {"url": "https://cdn.evil.com"}], {"evil.com": "key"}):
+            with self.subTest(value=value):
+                _, evidence, verdict, changed = await self.verdict({"v": value})
+                self.assertEqual((verdict, evidence[0]["code"], changed), ("BLOCK", "DOMAIN_BLOCKLISTED", False))
+                self.assertNotIn("evil", json.dumps(evidence))
+
+    async def test_lookalikes_and_clean_arguments_pass(self):
+        for value in ("https://notevil.com", "https://evil.com.attacker.net/", "evil-com.org", "evilcom", "plain text"):
+            with self.subTest(value=value):
+                self.assertEqual((await self.verdict({"v": value}))[2], "ALLOW")
+
+    async def test_internationalized_host_matches_punycode_entry(self):
+        spec = blocklist(domains=["xn--bcher-kva.example"])
+        self.assertEqual((await self.verdict({"url": "https://bücher.example/"}, spec))[2], "BLOCK")
+
+    async def test_alert_and_approval_actions(self):
+        _, evidence, verdict, _ = await self.verdict({"v": "evil.com"}, blocklist("ALERT"))
+        self.assertEqual((verdict, evidence[0]["decision"]), ("ALLOW", "ALERT"))
+        self.assertEqual((await self.verdict({"v": "evil.com"}, blocklist("REQUIRE_APPROVAL")))[2], "REQUIRE_APPROVAL")
+
+    def test_invalid_configs_are_rejected(self):
+        for spec in (blocklist(domains=["https://evil.com"]), blocklist(domains=["*.evil.com"]),
+                     blocklist(domains=["Evil.com"]), blocklist(domains=["com"]), blocklist("REDACT"),
+                     blocklist(domains=[f"d{i}.com" for i in range(513)])):
+            with self.subTest(spec=spec), self.assertRaises(ValueError):
+                Pipeline([spec])
+
+
 class ConfigTests(unittest.TestCase):
     def test_demo_loads_and_hash_includes_auditors(self):
         policy, pipeline = load("config/intercept.demo.yaml")
-        self.assertEqual(len(pipeline.specs), 3)
+        self.assertEqual(len(pipeline.specs), 4)
         self.assertEqual(len(policy.version), 64)
 
     def test_duplicate_yaml_keys_and_unknown_auditors_rejected(self):
