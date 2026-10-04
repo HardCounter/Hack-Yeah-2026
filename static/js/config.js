@@ -3,7 +3,7 @@
   const form = $('#cfgForm'), f = form.elements;
   const PRESETS = ['lenient', 'standard', 'strict'];
   const NEW = 'New config';
-  const THRESHOLDS = ['block_threshold', 'approve_threshold', 'alert_threshold'];  // highest first
+  const THRESHOLDS = ['block_threshold', 'approve_threshold', 'alert_threshold'];
   const AUDITORS = {
     signature: { id: 'signature-scanner', type: 'pattern_scanner', config: { patterns: [], action: 'BLOCK' } },
     privacy: { id: 'privacy-scanner', type: 'classified_scanner', config: { classes: ['pesel', 'iban'], action: 'REQUIRE_APPROVAL' } },
@@ -39,15 +39,13 @@
     const v = Number(f[o.dataset.for].value);
     o.textContent = THRESHOLDS.includes(o.dataset.for) ? Math.round(v * 100) + '%' : fmtNum(v);
   });
-  // Keep block >= approval >= alert: moving one slider pushes the others out of its way.
+  // Block is the ceiling for the two lower tiers. Approval and alert do not move each other.
   function orderThresholds(moved) {
-    const i = THRESHOLDS.indexOf(moved);
-    if (i < 0) return;
+    if (!THRESHOLDS.includes(moved)) return;
     const v = +f[moved].value;
-    THRESHOLDS.forEach((n, j) => {
-      if (j < i && +f[n].value < v) f[n].value = v;
-      if (j > i && +f[n].value > v) f[n].value = v;
-    });
+    if (moved === 'block_threshold') {
+      for (const n of ['approve_threshold', 'alert_threshold']) if (+f[n].value > v) f[n].value = v;
+    } else if (+f.block_threshold.value < v) f.block_threshold.value = v;
   }
   form.addEventListener('input', e => { orderThresholds(e.target.name); showOutputs(); if (!['name', 'description'].includes(e.target.name)) markDirty(); });
   form.addEventListener('change', e => { if (e.target.type === 'checkbox') markDirty(); });
@@ -68,7 +66,7 @@
   const allowedModels = kind => $$(`#${MODEL_LISTS[kind]} input:checked`).map(x => x.value);
   function showModelSummary(kind) {
     const on = allowedModels(kind), all = $$(`#${MODEL_LISTS[kind]} input`).length;
-    $(`#${MODEL_LISTS[kind]}Sum`).textContent = on.length ? `${on.length} of ${all} allowed: ${on.join(', ')}` : `None of ${all} allowed`;
+    $(`#${MODEL_LISTS[kind]}Sum`).textContent = `${on.length} of ${all} allowed`;
   }
   function renderModels(kind, allowed) {
     const ul = $(`#${MODEL_LISTS[kind]} ul`); ul.textContent = '';

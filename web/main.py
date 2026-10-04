@@ -67,10 +67,10 @@ def validate(config: dict, tools: set[str]) -> None:
     guard = config.get("semantic_guard")
     need(isinstance(guard, dict) and type(guard.get("block_threshold")) in (int, float)
          and 0 < guard["block_threshold"] <= 1, "semantic_guard.block_threshold must be in (0, 1]")
-    # Optional lower tiers: hold for approval, then alert only. Each at or below the one above.
-    levels = [guard[k] for k in ("block_threshold", "approve_threshold", "alert_threshold") if k in guard]
-    need(all(type(v) in (int, float) and 0 < v <= 1 for v in levels) and levels == sorted(levels, reverse=True),
-         "semantic_guard thresholds must be in (0, 1] with block >= approve >= alert")
+    # Optional lower tiers: hold for approval, and alert only. Each at or below block; independent of each other.
+    lower = [guard[k] for k in ("approve_threshold", "alert_threshold") if k in guard]
+    need(all(type(v) in (int, float) and 0 < v <= guard["block_threshold"] for v in lower),
+         "semantic_guard approve and alert thresholds must be above 0 and at most the block threshold")
     try:
         Pipeline(config.get("auditors"))
     except (ValueError, TypeError) as e:

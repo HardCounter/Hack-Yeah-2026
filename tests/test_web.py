@@ -43,6 +43,11 @@ def test_save_round_trip_and_rejections(monkeypatch, tmp_path):
     assert client.put("/api/v1/configs/Strict", json=config).status_code == 409  # preset names in any case
     unordered = {**config, "semantic_guard": {**config["semantic_guard"], "approve_threshold": 0.99}}
     assert client.put("/api/v1/configs/bad", json=unordered).status_code == 422  # approve above block
+    unordered = {**config, "semantic_guard": {**config["semantic_guard"], "alert_threshold": 0.99}}
+    assert client.put("/api/v1/configs/bad", json=unordered).status_code == 422  # alert above block
+    independent = {**config, "semantic_guard": {**config["semantic_guard"], "block_threshold": 0.9,
+                                                "approve_threshold": 0.5, "alert_threshold": 0.8}}
+    assert client.put("/api/v1/configs/my-policy", json=independent).status_code == 200
     bad = {**config, "require_approval": ["delete_everything"]}
     assert client.put("/api/v1/configs/bad", json=bad).status_code == 422
     bad = {**config, "auditors": [{"id": "x", "type": "webhook", "config": {}}]}
