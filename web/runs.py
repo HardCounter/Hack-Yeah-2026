@@ -1,7 +1,8 @@
-"""One-shot OpenCode runs for the frontend.
+"""One-shot free-agent runs for the frontend.
 
-Each run starts simulation.opencode_runner as a subprocess in its own folder on the data volume.
-Only the runner's sanitized exports are served; its logs and databases never leave the server.
+Each run sends one user message to the OpenCode agent with our plugin loaded. It starts
+simulation.opencode_runner --free as a subprocess in its own folder on the data volume.
+Only the agent's reply and sanitized evidence are served; logs and databases never leave the server.
 """
 from __future__ import annotations
 
@@ -26,9 +27,13 @@ TERMINAL = ("finished", "failed")
 MAX_WAITING = 3
 
 
+DEFAULT_APPLICATION = "APP-0001"  # the gateway needs one assigned case per session
+ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
 class RunRequest(BaseModel):
-    application: str = Field(pattern=r"^APP-00(0[1-9]|1[0-5])$")
-    prompt: str | None = Field(default=None, min_length=1, max_length=4000)
+    prompt: str = Field(min_length=1, max_length=4000)
+    application: str = Field(default=DEFAULT_APPLICATION, pattern=r"^APP-00(0[1-9]|1[0-5])$")
 
 
 def _now():
@@ -49,8 +54,8 @@ def _read_jsonl(path):
         return []
 
 
-def _live_events(artifacts):
-    """Events of a run that is still going, projected exactly like the runner's final export."""
+def _evidence_events(artifacts):
+    """Sanitized events from the run's evidence store, plus the gateway's reason code for each decision."""
     from persistence.adapters.consumer_v21 import to_consumer_v21
     from persistence.models import ActionEventEnvelope
     from persistence.privacy import sanitize_event
@@ -63,7 +68,10 @@ def _live_events(artifacts):
             for (raw,) in rows:
                 event = sanitize_event(ActionEventEnvelope.from_json(raw))
                 if event.status.value != "PENDING":
-                    events.append(to_consumer_v21(event))
+                    wire = to_consumer_v21(event)
+                    if "interception_metadata" in wire:
+                        wire["interception_metadata"]["reason_code"] = event.context.reason_code
+                    events.append(wire)
         except (sqlite3.Error, OSError, ValueError, TypeError):
             continue  # the run is writing; the next poll picks it up
     return events
@@ -112,18 +120,26 @@ class RunManager:
         if not meta:
             raise HTTPException(404, "unknown run")
         artifacts = self._artifacts(run_id)
-        verification = _read_json(artifacts / "verification.json") if artifacts and meta["status"] in TERMINAL else None
-        return {**meta, "verification": verification}
+        done = artifacts is not None and meta["status"] in TERMINAL
+        verification = _read_json(artifacts / "verification.json") if done else None
+        reply = None
+        if done:
+            try:
+                text = (artifacts / "reply.txt").read_text(encoding="utf-8", errors="replace")
+                reply = ANSI.sub("", text).strip()[:20000]
+            except OSError:
+                pass
+        return {**meta, "reply": reply, "verification": verification}
 
     def events(self, run_id):
         meta = self.get(run_id)
         artifacts = self._artifacts(run_id)
         if artifacts is None:
             return {"events": [], "findings": []}
-        if (artifacts / "events.jsonl").is_file():
-            return {"events": _read_jsonl(artifacts / "events.jsonl"),
-                    "findings": _read_jsonl(artifacts / "findings.jsonl")}
-        return {"events": [] if meta["status"] in TERMINAL else _live_events(artifacts), "findings": []}
+        events = _evidence_events(artifacts)
+        if not events and meta["status"] in TERMINAL:
+            events = _read_jsonl(artifacts / "events.jsonl")
+        return {"events": events, "findings": _read_jsonl(artifacts / "findings.jsonl")}
 
     def start(self, request: RunRequest):
         runs = self._all()
@@ -134,7 +150,7 @@ class RunManager:
         run_id = "run_" + secrets.token_hex(8)
         (self.root / run_id).mkdir()
         # The prompt itself is not stored: run records hold metadata only.
-        meta = {"run_id": run_id, "application": request.application, "custom_prompt": request.prompt is not None,
+        meta = {"run_id": run_id, "application": request.application, "prompt_chars": len(request.prompt),
                 "status": "queued", "created_at": _now(), "started_at": None, "finished_at": None,
                 "exit_code": None, "detail": None}
         self._save(meta)
@@ -143,9 +159,8 @@ class RunManager:
 
     async def _execute(self, meta, prompt):
         folder = self.root / meta["run_id"]
-        command = [*self.command, meta["application"], "--output-dir", str(folder), "--timeout", str(self.timeout)]
-        if prompt is not None:
-            command += ["--prompt", prompt]
+        command = [*self.command, meta["application"], "--free", "--output-dir", str(folder),
+                   "--timeout", str(self.timeout), "--prompt", prompt]
         try:
             async with self.slot:
                 meta = {**meta, "status": "running", "started_at": _now()}
@@ -158,7 +173,8 @@ class RunManager:
                         process.kill()
                         await process.wait()
                         code = 124
-            # Runner exit codes: 0 verified, 2 agent finished but verification incomplete, 1 run failed.
+            # Runner exit codes: 0 or 2 mean the agent finished (2: the assigned case was not completed,
+            # which is normal for a free-form message); 1 means the run itself failed.
             status, detail = ("finished", None) if code in (0, 2) else ("failed", "TIMEOUT" if code == 124 else "RUNNER_FAILED")
         except OSError:
             code, status, detail = None, "failed", "RUNNER_NOT_STARTED"
@@ -191,6 +207,11 @@ def manager() -> RunManager:
 
 
 router = APIRouter(prefix="/api/v1")
+
+
+@router.get("/info")
+async def info():
+    return {"model": os.environ.get("OPENCODE_MODEL"), "application": DEFAULT_APPLICATION}
 
 
 @router.get("/applications")
