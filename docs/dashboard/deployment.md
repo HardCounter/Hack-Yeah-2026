@@ -335,9 +335,9 @@ image runs locally and on the instance:
 # .env on the instance (names only; values are never committed)
 SITE_HOST=<elastic-ip>.sslip.io
 LLM_PROVIDER=openai
-LLM_MODEL=gpt-5-mini
+LLM_MODEL=gpt-4.1-mini
 OPENAI_API_KEY=
-OPENCODE_MODEL=openai/gpt-5-mini
+OPENCODE_MODEL=openai/gpt-4.1-mini
 ADMIN_TOKEN=
 ```
 
