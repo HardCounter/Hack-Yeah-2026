@@ -370,6 +370,20 @@ def security_overview(since: str, until: str, top: int) -> dict[str, Any]:
     }
 
 
+def performance_overview(since: str, until: str) -> dict[str, Any]:
+    # 404 gateway-evaluated actions: the 412 of security_overview minus 8 session events.
+    return {
+        "since": since, "until": until,
+        "actions_evaluated": 404,
+        "interception_overhead_ms": {"p50": 1.1, "p95": 228.0, "p99": 252.0},
+        "by_method": {
+            "deterministic": {"runs": 404, "skipped": 0, "p50": 0.9, "p95": 2.4, "p99": 6.1},
+            "semantic": {"runs": 148, "skipped": 24, "p50": 152.0, "p95": 234.0, "p99": 255.0}},
+        "backend_latency_ms": {"p50": 41.0, "p95": 640.0, "p99": 910.0},
+        "overhead_share": 0.22,
+    }
+
+
 def store_stats() -> dict[str, Any]:
     return {"total_events": 4120, "total_alerts": 3, "total_findings": 12, "total_dlq_records": 0,
             "events_by_type": {"TOOL_CALL": 2800, "LLM_INVOCATION": 1200, "SESSION": 100, "CONTROL": 20},

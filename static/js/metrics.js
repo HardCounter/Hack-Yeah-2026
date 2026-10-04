@@ -54,8 +54,25 @@
       kpi('held', 'Held for approval', fmtNum(held), 'requests awaiting a human', 'hold'),
       kpi('tasks', 'Tasks succeeded', pct(tasksOk, tasks.length) + '%', `${tasksOk} of ${tasks.length} agent tasks`, 'allow'),
       kpi('spend', 'Model spend', '$' + (tokens / 1e6 * PRICE_PER_MTOK).toFixed(2), `${fmtNum(tokens)} tokens`),
-      kpi('latency', 'Gateway p95', ms(quantile(gw, .95)), 'deterministic checks'),
+      perf ? kpi('latency', 'Gateway p95', ms(perf.interception_overhead_ms.p95), `all checks · p50 ${ms(perf.interception_overhead_ms.p50)}`)
+        : kpi('latency', 'Gateway p95', ms(quantile(gw, .95)), 'deterministic checks'),
     );
+
+    if (perf) {
+      const det = perf.by_method.deterministic, sem = perf.by_method.semantic;
+      const row = (name, runs, p) => {
+        const tr = el('tr');
+        tr.append(el('td', null, name), el('td', 'n mono cap', fmtNum(runs)), ...[p.p50, p.p95, p.p99].map(v => el('td', 'n mono cap', ms(v))));
+        return tr;
+      };
+      $('#perfTable').replaceChildren(row('Deterministic checks', det.runs, det), row('AI check', sem.runs, sem),
+        row('Gateway total', perf.actions_evaluated, perf.interception_overhead_ms), row('Model and tool calls', perf.actions_evaluated, perf.backend_latency_ms));
+      $('#perfTxt').replaceChildren(`AI check skipped on ${fmtNum(sem.skipped)} requests that a deterministic control had already blocked.`, el('br'),
+        perf.overhead_share == null ? 'No executed requests in this window.' : `The gateway accounts for ${Math.round(perf.overhead_share * 100)}% of end-to-end time.`);
+    } else {
+      $('#perfTable').replaceChildren(emptyRow('Read API unreachable.', 5));
+      $('#perfTxt').textContent = '';
+    }
 
     const cfg = App.config;
     if (cfg) {
@@ -199,6 +216,15 @@
   // Seed a sample history, then keep a slow trickle of sample traffic so the log looks alive.
   for (let i = 0, t = Date.now(); i < 120; i++) App.events.push(sampleEvent(new Date(t -= rand(30e3, 90e3))));  // newest first
   (function tick() { setTimeout(() => { App.record(sampleEvent(new Date())); tick(); }, rand(8000, 15000)); })();
+
+  // Gateway performance is read from the read API (docs/rest.md, /metrics/performance); the rest of this tab is sample data.
+  let perf = null;
+  async function loadPerf() {
+    try { const r = await fetch('/api/v1/metrics/performance', { cache: 'no-store' }); perf = r.ok ? await r.json() : null; }
+    catch { perf = null; }
+    if (!(path[0] in VIEWS)) render(false);
+  }
+  loadPerf(); setInterval(loadPerf, 30000);
 
   // A detail view is left as is when new events arrive; a list refreshes
   App.on('event', () => { if (!path[1]) show(true); });

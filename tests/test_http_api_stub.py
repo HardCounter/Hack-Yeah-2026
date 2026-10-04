@@ -32,6 +32,8 @@ def get(path, method="GET"):
     ("/api/v1/catalog/detections", {"catalog_version", "entries"}),
     ("/api/v1/metrics/usage?group_by=day", {"group_by", "totals", "buckets"}),
     ("/api/v1/metrics/security", {"actions", "detections", "block_rate", "interception_overhead_ms"}),
+    ("/api/v1/metrics/performance", {"actions_evaluated", "interception_overhead_ms", "by_method",
+                                     "backend_latency_ms", "overhead_share"}),
     ("/api/v1/metrics/timeseries?metric=blocked&bucket=1m", {"metric", "points"}),
     ("/api/v1/interventions", {"items"}),
     ("/api/v1/system/stats", {"total_events", "pending_deliveries"}),
@@ -117,7 +119,7 @@ def test_cors_preflight_and_headers_for_allowed_origin_only():
 
 def test_openapi_lists_every_documented_route():
     paths = set(client.get("/api/v1/openapi.json").json()["paths"])
-    assert len([p for p in paths if p.startswith("/api/v1/")]) == 20
+    assert len([p for p in paths if p.startswith("/api/v1/")]) == 21
     assert {"/api/v1/configs", "/api/v1/configs/{name}", "/api/v1/config-selection"} <= paths
 
 

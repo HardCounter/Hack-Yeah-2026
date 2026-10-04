@@ -167,6 +167,7 @@ frontend integration must use these authenticated PUTs (preferably through its t
 | 19 | `GET /api/v1/configs/{name}` | `PolicyConfig`; quoted revision in `ETag` |
 | 20 | `PUT /api/v1/configs/{name}` | `ConfigUpdateResult` |
 | 21 | `PUT /api/v1/config-selection` | `ConfigSelectionResult` |
+| 22 | `GET /api/v1/metrics/performance` | `PerformanceOverview` |
 
 Priority for the hackathon build: **P0** is 1, 2, 4, 6, 7, 10 and 12. **P1** is the rest. Endpoint 17
 covers the "exportable audit logs" deliverable, so build it as soon as P0 works.
@@ -428,6 +429,40 @@ Selecting the same name/revision is idempotent and preserves `selected_at`. Exis
 keep their pinned config, spent budgets, approval state and Task Contract. The next trusted
 session binding loads the selected snapshot; no server restart is required. Errors:
 **400, 401, 404, 405, 409, 413, 415, 422, 503** (§2.2). No empty success responses or `204`.
+
+### 4.20 `GET /metrics/performance`
+
+Performance telemetry of the control layer: what the gateway adds to each action, split by the
+hybrid defence's two paths.
+
+| Query | Default | Meaning |
+|---|---|---|
+| `since`, `until` | last 24 h | Window |
+| `agent_id`, `session_id` | – | Filter |
+
+```json
+{
+  "since": "...", "until": "...",
+  "actions_evaluated": 404,
+  "interception_overhead_ms": {"p50": 1.1, "p95": 228.0, "p99": 252.0},
+  "by_method": {
+    "deterministic": {"runs": 404, "skipped": 0, "p50": 0.9, "p95": 2.4, "p99": 6.1},
+    "semantic": {"runs": 148, "skipped": 24, "p50": 152.0, "p95": 234.0, "p99": 255.0}
+  },
+  "backend_latency_ms": {"p50": 41.0, "p95": 640.0, "p99": 910.0},
+  "overhead_share": 0.22
+}
+```
+
+- `actions_evaluated` counts gateway-evaluated actions, as in `SecurityOverview` rates.
+- `interception_overhead_ms` is the whole gateway time per action, semantic check included.
+  `SecurityOverview.interception_overhead_ms` stays as it is.
+- `by_method` sums `auditor_decisions[].latency_ms` per action by the auditor's `Method`.
+  `runs` is the number of actions the path ran on. `semantic.skipped` counts actions where the
+  semantic check would have run but a deterministic control had already denied.
+- `backend_latency_ms` is `Usage.latency_ms`: the model or tool call itself.
+- `overhead_share` is total interception overhead divided by total overhead plus backend latency,
+  `0..1`, or `null` when the window has no executed action.
 
 ## 5. Models
 

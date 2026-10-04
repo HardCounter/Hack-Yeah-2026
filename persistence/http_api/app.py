@@ -269,6 +269,13 @@ async def security_metrics(agent_id: OptId = None, session_id: OptId = None,
     return ex.security_overview(lo, hi, top)
 
 
+@router.get("/metrics/performance")
+async def performance_metrics(agent_id: OptId = None, session_id: OptId = None,
+                              since: Since = None, until: Until = None):
+    lo, hi = window(since, until, timedelta(hours=24))
+    return ex.performance_overview(lo, hi)
+
+
 @router.get("/metrics/timeseries")
 async def timeseries(metric: Metric, bucket: Bucket = "5m", agent_id: OptId = None, session_id: OptId = None,
                      since: Since = None, until: Until = None):
