@@ -111,15 +111,13 @@
   }
 
   drawFrame();
-  // Legend: what each colour means and what happens, then the reading notes on their own lines
-  const MEANING = { LOW: 'under 3, no action', MEDIUM: '3 or more, flagged for review', HIGH: '8 or more, a human must approve', CRITICAL: '15 or more, session stopped' };
+  // Legend: colour = level and what happens; one short reading note
+  const MEANING = { LOW: 'Low', MEDIUM: 'Medium · review', HIGH: 'High · approval', CRITICAL: 'Critical · stopped' };
   const swatch = (cls, text) => { const s = el('span'); s.append(el('i', cls), text); return s; };
   $('#riskLegend').append(
-    ...Risk.levels.slice().reverse().map(([lvl]) => swatch(lvl, `${lvl[0] + lvl.slice(1).toLowerCase()}: ${MEANING[lvl]}`)),
-    swatch('ring', 'You: your session from Prompt it'),
-    el('p', 'legend-note', 'Colour shows how much risk a session has built up over all its steps (its expected loss). Bigger dots took more steps.'),
-    el('p', 'legend-note', 'A step is one action the agent took, such as reading an application, a sanctions check or creating a client. For "You", each prompt you send is a step. Hover a dot to see its steps.'),
-    el('p', 'legend-note', 'Dashed lines: a single step to the right of a line is risky enough on its own to make the session medium or high.'));
+    ...Risk.levels.slice().reverse().map(([lvl]) => swatch(lvl, MEANING[lvl])),
+    swatch('ring', 'You'),
+    el('p', 'legend-note', 'Size = steps taken · hover a dot for its steps'));
   render();
   App.on('event', e => { if (e.source === 'session') render(); });
 })();
