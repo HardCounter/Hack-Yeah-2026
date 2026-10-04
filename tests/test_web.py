@@ -30,6 +30,27 @@ def test_presets_are_listed_and_valid(monkeypatch, tmp_path):
         assert preset["intercept"]["velocity_guard"]["max_calls"] > 0
         guard = preset["intercept"]["semantic_guard"]
         assert guard["block_threshold"] >= guard["approve_threshold"] >= guard["alert_threshold"]
+        assert preset["allowed_models"] and guard["allowed_models"]  # agent and judge model allowlists
+
+
+def test_list_marks_the_active_config_and_model_lists_are_validated(monkeypatch, tmp_path):
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("CONFIG_ADMIN_TOKEN", "synthetic-management-token")
+    headers = {"Authorization": "Bearer synthetic-management-token"}
+    flags = lambda: {c["name"]: (c["selected"], c["requires_selection"]) for c in client.get("/api/v1/configs").json()}
+    assert flags() == {"lenient": (False, True), "standard": (True, False), "strict": (False, True)}
+
+    config = client.get("/api/v1/configs/standard").json()
+    config["intercept"]["semantic_guard"]["allowed_models"] = ["llama-guard3"]
+    saved = client.put("/api/v1/configs/standard", json=config, headers=headers).json()
+    assert flags()["standard"] == (True, True)  # saved, but the older revision is still active
+    selection = {"name": "standard", "revision": saved["revision"]}
+    assert client.put("/api/v1/config-selection", json=selection, headers=headers).status_code == 200
+    assert flags()["standard"] == (True, False)
+
+    for bad in ([], ["llama-guard3", "llama-guard3"], ["openai/gpt 4"]):
+        config["intercept"]["semantic_guard"]["allowed_models"] = bad
+        assert client.put("/api/v1/configs/standard", json=config, headers=headers).status_code == 422
 
 
 def test_save_round_trip_and_rejections(monkeypatch, tmp_path):

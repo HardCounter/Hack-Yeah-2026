@@ -44,7 +44,7 @@ def test_selected_policy_changes_new_gateway_sessions_only(tmp_path):
             assert new.runtime.contract.policy_version == saved["revision"].removeprefix("sha256:")
             assert new.runtime.contract.budget.tokens == 1234
             assert new.runtime.prompt_gateway.max_output_tokens == 2048
-            assert new.runtime.prompt_gateway.allowed_models == frozenset({"llama3.2"})
+            assert new.runtime.prompt_gateway.allowed_models == frozenset(edited["allowed_models"])
             read.update(session_id="ses_config_new", call_id="third")
             assert (await new.handle_request("/v1/tools/execute", read))["decision"] == "BLOCK"
             assert new.runtime.consumer_config == json.loads(POLICY_PATH.read_text())["consumer"]

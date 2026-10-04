@@ -120,7 +120,10 @@
         "(?i)you\\s+are\\s+in\\s+audit\\s+mode",
         "(?i)os\\s*\\.\\s*system\\s*\\("
       ],
-      "fields": ["tool", "arguments"],
+      "fields": [
+        "tool",
+        "arguments"
+      ],
       "action": "BLOCK"
     },
     "feedback": {
@@ -140,7 +143,10 @@
       "block_threshold": 0.8,
       "approve_threshold": 0.65,
       "alert_threshold": 0.5,
-      "on_error": "BLOCK"
+      "on_error": "BLOCK",
+      "allowed_models": [
+        "llama-guard3"
+      ]
     }
   }
 }

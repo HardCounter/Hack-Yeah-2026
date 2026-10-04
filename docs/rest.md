@@ -383,7 +383,9 @@ return `404`; invalid names return `400`. The three built-in defaults are all ed
 the backend; untracked draft files in `config/presets/` are not exposed.
 
 `GET /configs` returns `ConfigSummary[]`; `GET /configs/{name}` returns the complete saved
-`PolicyConfig`. Its `ETag` is the quoted `sha256:<64 lowercase hex digits>` revision. Reads
+`PolicyConfig`. It carries two model allowlists, both required and non-empty: `allowed_models`
+(models agents may call) and `intercept.semantic_guard.allowed_models` (judge models the
+semantic guard may use; stored and validated, not enforced yet). Its `ETag` is the quoted `sha256:<64 lowercase hex digits>` revision. Reads
 return `404`/`503` for missing configs/unavailable storage.
 
 `PUT /configs/{name}` takes a complete `PolicyConfig` (§5.15), **not a partial patch**.
@@ -962,7 +964,11 @@ patterns requires explicitly saving/selecting them, not reseeding defaults or mu
 
 ### 5.16 Configuration results
 
-`ConfigSummary`: `{name: string, preset: true, description: string, revision: string}`.
+`ConfigSummary`: `{name: string, preset: true, description: string, revision: string, selected: boolean,
+requires_selection: boolean}`. `selected` marks the config named by the active selection.
+`requires_selection` is `false` only for that config at the active revision, so a selected config
+that was saved again shows `selected: true, requires_selection: true` until it is selected again.
+The dashboard reads the active config from these two fields; there is no `GET /config-selection`.
 
 `ConfigUpdateResult`:
 - `name`, `revision`: saved config identity and SHA-256 of canonical validated JSON.

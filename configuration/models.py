@@ -9,6 +9,8 @@ Name = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$")]
 Revision = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 Token = Annotated[str, Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9_.:/-]+$")]
 Action = Literal["BLOCK", "REDACT", "REQUIRE_APPROVAL", "ALERT"]
+ModelIds = Annotated[list[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]],
+                     Field(min_length=1, max_length=100)]
 
 
 def utc_timestamp(value):
@@ -93,6 +95,7 @@ class SemanticGuardConfig(Model):
     approve_threshold: Annotated[float, Field(ge=0, le=1)]
     alert_threshold: Annotated[float, Field(ge=0, le=1)]
     on_error: Literal["BLOCK"]
+    allowed_models: ModelIds  # judge models the semantic guard may use
 
     @model_validator(mode="after")
     def ordered(self):
@@ -127,7 +130,7 @@ class PolicyConfig(Model):
     allowed_tools: Annotated[list[Token], Field(min_length=1, max_length=100)]
     admin_tools: Annotated[list[Token], Field(max_length=100)]
     budget: BudgetConfig
-    allowed_models: Annotated[list[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]], Field(min_length=1, max_length=100)]
+    allowed_models: ModelIds  # models agents may call
     max_output_tokens: Annotated[int, Field(ge=1, le=8192)]
     require_approval: Annotated[list[Token], Field(max_length=100)]
     feed_version: Token
@@ -144,13 +147,14 @@ class PolicyConfig(Model):
         allowed = set(self.allowed_tools) | set(self.admin_tools)
         if not allowed <= known or not set(self.require_approval) <= allowed:
             raise ValueError("unknown or out-of-scope tools")
-        for values in (self.allowed_tools, self.admin_tools, self.require_approval, self.allowed_models):
+        judge_models = self.intercept.semantic_guard.allowed_models
+        for values in (self.allowed_tools, self.admin_tools, self.require_approval, self.allowed_models, judge_models):
             if len(values) != len(set(values)):
                 raise ValueError("duplicate entries")
         specs = [auditor.model_dump() for auditor in self.auditors]
         validate_specs(specs)
         token(self.feed_version, required=True)
-        for model in self.allowed_models:
+        for model in (*self.allowed_models, *judge_models):
             token(model, required=True)
         for spec in specs:
             token(spec["id"], required=True)
@@ -185,6 +189,8 @@ class ConfigSummary(Model):
     preset: bool
     description: str
     revision: Revision
+    selected: bool
+    requires_selection: bool
 
 
 class ErrorDetail(Model):

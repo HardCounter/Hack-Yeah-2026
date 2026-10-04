@@ -91,8 +91,8 @@
         <fieldset class="section">
           <h3>Sensitive data</h3>
           <div class="two">
-            <label class="field"><span>Personal data <small>PESEL, IBAN</small></span><select name="privacy_action"><option value="REQUIRE_APPROVAL">Human approval</option><option value="BLOCK">Block</option><option value="ALERT">Alert only</option></select></label>
-            <label class="field"><span>Secrets <small>API keys, private keys</small></span><select name="secret_action"><option value="REQUIRE_APPROVAL">Human approval</option><option value="BLOCK">Block</option><option value="ALERT">Alert only</option></select></label>
+            <label class="field"><span>Personal data <small>PESEL, IBAN</small></span><select name="privacy_action"><option value="REQUIRE_APPROVAL">Human approval</option><option value="BLOCK">Block</option><option value="REDACT">Redact</option><option value="ALERT">Alert only</option></select></label>
+            <label class="field"><span>Secrets <small>API keys, private keys</small></span><select name="secret_action"><option value="REQUIRE_APPROVAL">Human approval</option><option value="BLOCK">Block</option><option value="REDACT">Redact</option><option value="ALERT">Alert only</option></select></label>
           </div>
         </fieldset>
 
@@ -105,13 +105,13 @@
         </fieldset>
 
         <fieldset class="section">
-          <h3>Save as a new config</h3>
-          <div class="two">
-            <label class="field"><span>Name <small>letters, digits, - and _</small></span><input type="text" name="name" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,39}" maxlength="40" placeholder="e.g. strict-eu"></label>
-          </div>
+          <h3>Save</h3>
           <label class="field"><span>Description</span><input type="text" name="description" maxlength="200"></label>
+          <div class="two">
+            <label class="field"><span>Management token <small>needed to save or make active, kept for this tab only</small></span><input type="password" name="token" autocomplete="off" spellcheck="false"></label>
+          </div>
           <div class="actions">
-            <button class="btn" type="submit">Save config</button>
+            <button class="btn" type="submit" id="cfgSave">Save config</button>
             <span class="cap" id="cfgMsg" role="status"></span>
           </div>
         </fieldset>

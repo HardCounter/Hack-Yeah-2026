@@ -27,7 +27,10 @@
     "cost_usd": null
   },
   "allowed_models": [
-    "llama3.2"
+    "llama3.2",
+    "gpt-4.1-mini",
+    "gpt-4.1",
+    "gpt-5-mini"
   ],
   "max_output_tokens": 2048,
   "require_approval": [],
@@ -115,7 +118,10 @@
         "(?i)ignore\\s+previous\\s+instructions",
         "(?i)system\\s+override"
       ],
-      "fields": ["tool", "arguments"],
+      "fields": [
+        "tool",
+        "arguments"
+      ],
       "action": "BLOCK"
     },
     "feedback": {
@@ -135,7 +141,12 @@
       "block_threshold": 0.95,
       "approve_threshold": 0.85,
       "alert_threshold": 0.7,
-      "on_error": "BLOCK"
+      "on_error": "BLOCK",
+      "allowed_models": [
+        "llama-guard3",
+        "gpt-4.1-mini",
+        "gpt-4o-mini"
+      ]
     }
   }
 }

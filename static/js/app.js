@@ -56,8 +56,6 @@ const App = {
 
   setActive(name, config) {
     this.configName = name; this.config = config;
-    // only server-side configs are remembered; an edited, unsaved one lasts until reload
-    if (/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) try { localStorage.setItem('activeConfig', name); } catch {}
     this.tokensUsed = 0;  // the session budget restarts with each config
     $$('.activeName').forEach(n => n.textContent = label(name));
     this.emit('config', config);
@@ -69,12 +67,17 @@ const App = {
     this.emit('event', event);
   },
 
-  async api(path, opts) {
-    const r = await fetch('/api/v1/configs' + path, opts);
+  // JSON request. A failure throws the server's error message (docs/rest.md §2.2) with the HTTP status.
+  async request(url, opts) {
+    const r = await fetch(url, opts);
     const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+    if (!r.ok) {
+      const fields = body.error?.details?.fields;
+      throw Object.assign(new Error((body.error?.message || `HTTP ${r.status}`) + (fields ? `: ${fields.join(', ')}` : '')), { status: r.status });
+    }
     return body;
   },
+  api(path, opts) { return this.request('/api/v1/configs' + path, opts); },
 };
 
 /* Tabs: hash routing so the back button and shared links work */
@@ -106,8 +109,8 @@ async function health() {
 document.addEventListener('DOMContentLoaded', async () => {
   route();
   health(); setInterval(health, 30000);
-  let name = 'standard';
-  try { name = localStorage.getItem('activeConfig') || name; } catch {}
-  try { App.setActive(name, await App.api('/' + encodeURIComponent(name))); }
-  catch { App.setActive('standard', await App.api('/standard')); }
+  // The active config is the one selected on the server, the same for every browser.
+  const configs = await App.api('');
+  const name = (configs.find(c => c.selected) || configs[0]).name;
+  App.setActive(name, await App.api('/' + encodeURIComponent(name)));
 });

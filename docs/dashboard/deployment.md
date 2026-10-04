@@ -368,7 +368,11 @@ LLM_MODEL=gpt-4.1-mini
 OPENAI_API_KEY=
 OPENCODE_MODEL=openai/gpt-4.1-mini
 ADMIN_TOKEN=
+CONFIG_ADMIN_TOKEN=
 ```
+
+`CONFIG_ADMIN_TOKEN` is the bearer token the Config tab asks for before it saves or activates a
+config. While it is empty, every config write returns `401`.
 
 OpenCode reads the provider's own variable name (`OPENAI_API_KEY`), not a generic one, and takes the
 model as `provider/model`.

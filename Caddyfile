@@ -1,8 +1,9 @@
 {$SITE_HOST} {
-	# Read API for dashboards (docs/rest.md). The config endpoints stay in the web app.
+	# Read API for dashboards (docs/rest.md). The config endpoints stay in the web app: only it has
+	# CONFIG_ADMIN_TOKEN and the shared CONFIG_DIR.
 	@readapi {
 		path /api/v1 /api/v1/*
-		not path /api/v1/configs /api/v1/configs/*
+		not path /api/v1/configs /api/v1/configs/* /api/v1/config-selection
 	}
 	handle @readapi {
 		reverse_proxy api:8790

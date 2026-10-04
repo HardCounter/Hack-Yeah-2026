@@ -231,8 +231,11 @@ class ConfigService:
 
     def list_configs(self):
         with self._transaction() as state:
+            active = state["selection"]
             return [{"name": name, "preset": True, "description": entry["config"]["description"],
-                     "revision": entry["revision"]} for name, entry in sorted(state["configs"].items())]
+                     "revision": entry["revision"], "selected": name == active["name"],
+                     "requires_selection": name != active["name"] or entry["revision"] != active["revision"]}
+                    for name, entry in sorted(state["configs"].items())]
 
     def get_config(self, name):
         self._name(name)
