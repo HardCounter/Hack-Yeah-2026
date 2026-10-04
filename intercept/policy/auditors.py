@@ -43,7 +43,10 @@ def _find_casefold_spans(value: str, pattern: str) -> list[tuple[int, int]]:
             break
         orig_start = char_map[idx]
         orig_end = char_map[idx + pattern_len - 1] + 1
-        spans.append((orig_start, orig_end))
+        if spans and orig_start < spans[-1][1]:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], orig_end))
+        else:
+            spans.append((orig_start, orig_end))
         start = idx + pattern_len
     return spans
 

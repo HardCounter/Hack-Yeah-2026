@@ -965,6 +965,9 @@ class EventStore:
             conn.execute("""DELETE FROM consumer_completions WHERE event_id IN
                 (SELECT event_id FROM events WHERE ts < ? AND NOT EXISTS
                     (SELECT 1 FROM outbox WHERE outbox.event_id = events.event_id))""", (before,))
+            conn.execute("""DELETE FROM audit_run_indices WHERE event_id IN
+                (SELECT event_id FROM events WHERE ts < ? AND NOT EXISTS
+                    (SELECT 1 FROM outbox WHERE outbox.event_id = events.event_id))""", (before,))
             deleted = conn.execute("""DELETE FROM events WHERE ts < ? AND NOT EXISTS
                 (SELECT 1 FROM outbox WHERE outbox.event_id = events.event_id)""", (before,)).rowcount
             conn.execute("DELETE FROM alerts WHERE ts < ?", (before,))

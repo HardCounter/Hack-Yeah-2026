@@ -66,10 +66,10 @@ async def maintain(store: EventStore, now: Optional[datetime] = None) -> Mainten
                 for i in range(0, len(pruned_event_ids), 500):
                     batch = pruned_event_ids[i : i + 500]
                     ph = ",".join("?" for _ in batch)
-                    conn.execute(f"DELETE FROM events WHERE event_id IN ({ph})", batch)
                     conn.execute(f"DELETE FROM audit_run_indices WHERE event_id IN ({ph})", batch)
                     conn.execute(f"DELETE FROM run_order WHERE event_id IN ({ph})", batch)
                     conn.execute(f"DELETE FROM consumer_completions WHERE event_id IN ({ph})", batch)
+                    conn.execute(f"DELETE FROM events WHERE event_id IN ({ph})", batch)
 
             # Prune alerts older than cutoff
             conn.execute("DELETE FROM alerts WHERE ts < ?", (cutoff_ts,))

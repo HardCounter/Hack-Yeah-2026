@@ -543,3 +543,26 @@ async def test_prune_before_cleans_referencing_consumer_completions(tmp_path):
     assert remaining == 0
     await store.close()
 
+
+@async_test
+async def test_prune_before_cleans_referencing_audit_run_indices(tmp_path):
+    store = EventStore(tmp_path / "prune_idx.db")
+    await store.initialize()
+    ev = event("ev-prune-idx")
+    await store.append_with_outbox([ev])
+    with store._conn:
+        store._conn.execute(
+            "INSERT INTO audit_run_indices (run_id, action_index, event_id) VALUES ('run-1', 0, 'ev-prune-idx')"
+        )
+        store._conn.execute("DELETE FROM outbox WHERE event_id = 'ev-prune-idx'")
+        store._conn.execute("UPDATE events SET ts = '2020-01-01T00:00:00Z' WHERE event_id = 'ev-prune-idx'")
+
+    deleted = await store.prune_before("2021-01-01T00:00:00Z")
+    assert deleted == 1
+    remaining = store._conn.execute(
+        "SELECT COUNT(*) FROM audit_run_indices WHERE event_id = 'ev-prune-idx'"
+    ).fetchone()[0]
+    assert remaining == 0
+    assert await store.get_event("ev-prune-idx") is None
+    await store.close()
+
