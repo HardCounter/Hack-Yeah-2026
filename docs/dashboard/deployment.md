@@ -71,8 +71,8 @@ under sustained load.
 | LLM (the agent we protect) | Stronger API model with tool calling (e.g. Claude Sonnet 5.5), configured in OpenCode's provider settings. Provider and model can be swapped without code changes |
 | Storage | SQLite files (audit store, consumer ledger, synthetic bank database) on a Docker volume |
 
-In the repository: `web/main.py` (FastAPI, `/healthz` plus the `static/` mount), `static/index.html`
-(placeholder), `Dockerfile`, `compose.yaml`, `Caddyfile`, `.env.example`, `infra/main.tf` and
+In the repository: `web/main.py` (FastAPI: `/healthz`, the config and run APIs, and the static mounts),
+`static/html/` (pages: the dashboard and `/opencode-wrapper/`), `static/css/`, `static/js/`, `Dockerfile`, `compose.yaml`, `Caddyfile`, `.env.example`, `infra/main.tf` and
 `.github/workflows/deploy.yml`.
 
 ---
@@ -97,6 +97,33 @@ browser ──HTTPS──> Caddy ──> app container
   gateway keeps listening on `127.0.0.1` inside the container; only FastAPI is exposed through Caddy.
 - **The API contract is not fixed yet.** The infrastructure only needs FastAPI to answer `/healthz`
   and serve `/static`. Endpoints are added later without touching the deployment.
+
+### Run API and the OpenCode wrapper page (implemented)
+
+The jury page is at `/opencode-wrapper`. It sends one free-form message to an OpenCode agent that runs
+with our plugin, and shows the agent's reply and the gateway's decision for every tool call. Scenarios
+and the test suite live elsewhere; this page has neither.
+
+`web/runs.py` starts `simulation.opencode_runner --free` as a subprocess in its own folder under
+`/data/pipeline-runs`. In free mode the agent gets a generic prompt and is offered every registered
+tool, including the ones policy forbids, so blocks are visible. Each run is still assigned to
+`APP-0001`, because the gateway needs one case per session.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/info` | Model and assigned application |
+| `POST /api/v1/runs` | Start a run with `{"prompt": "..."}`. Returns `202` and a `run_id` |
+| `GET /api/v1/runs` | The 50 most recent runs |
+| `GET /api/v1/runs/{id}` | Status (`queued`, `running`, `finished`, `failed`), the agent's `reply` and the verifier output |
+| `GET /api/v1/runs/{id}/events` | Sanitized events (each with the gateway's `reason_code`) and findings |
+| `GET /api/v1/runs/{id}/stream` | Server-Sent Events: `status`, one `action` per event, then a final `result` |
+
+- `finished` means the agent completed; `failed` means the run itself broke or timed out.
+- Limits: one run at a time, at most three waiting, `RUN_TIMEOUT_S` (300 s) per run, `RUNS_DAILY_CAP`
+  (100) runs per day. Over the limit the API answers `429`.
+- Not available: raw tool arguments and results (events are sanitized by design). The message is passed
+  to the agent but not stored.
+- Tests (`tests/test_web_runs.py`) use a stub runner, so they need no OpenCode and no API key.
 
 ### Guard vs agent
 
@@ -307,11 +334,25 @@ image runs locally and on the instance:
 ```sh
 # .env on the instance (names only; values are never committed)
 SITE_HOST=<elastic-ip>.sslip.io
-LLM_PROVIDER=
-LLM_MODEL=
-LLM_API_KEY=
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4.1-mini
+OPENAI_API_KEY=
+OPENCODE_MODEL=openai/gpt-4.1-mini
 ADMIN_TOKEN=
 ```
+
+OpenCode reads the provider's own variable name (`OPENAI_API_KEY`), not a generic one, and takes the
+model as `provider/model`.
+
+Verified on the instance on 2026-10-04: one synthetic application run through OpenCode, the gateway
+and the verifier inside the app container, ending in `VERIFIED_SUCCESS`:
+
+```sh
+docker compose exec app python -m simulation.opencode_runner APP-0001     --timeout 300 --output-dir /data/pipeline-runs
+```
+
+`--output-dir` must point outside the repository (here: the data volume). The runner's default folder
+is inside the repository and is rejected by its own isolation check.
 
 Guard settings live in the policy file (example values, not final):
 

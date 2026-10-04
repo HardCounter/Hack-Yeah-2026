@@ -1,4 +1,4 @@
-"""Web app: health check, config files and the static frontend."""
+"""Web app: health check, config files, the one-shot run API and the static frontend."""
 import json
 import os
 import re
@@ -9,6 +9,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 
 from intercept.auditors import Pipeline
+from web import runs
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "static"
@@ -116,6 +117,7 @@ async def save_config(name: str, request: Request, authorization: str = Header("
     return {"status": "saved", "name": name}
 
 
+app.include_router(runs.router)
 app.mount("/css", StaticFiles(directory=STATIC / "css"), name="css")
 app.mount("/js", StaticFiles(directory=STATIC / "js"), name="js")
 app.mount("/", StaticFiles(directory=STATIC / "html", html=True), name="html")

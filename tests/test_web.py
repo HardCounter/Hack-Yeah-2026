@@ -57,3 +57,10 @@ def test_save_round_trip_and_rejections(monkeypatch, tmp_path):
     bad = {**config, "auditors": [{"id": "x", "type": "webhook", "config": {}}]}
     assert client.put("/api/v1/configs/bad", json=bad, headers=auth).status_code == 422
     assert sorted(p.name for p in tmp_path.iterdir()) == ["my-policy.json"]
+
+
+def test_opencode_wrapper_page_is_served_under_its_own_path():
+    response = client.get("/opencode-wrapper/")
+    assert response.status_code == 200
+    assert "opencode-wrapper" in response.text
+    assert client.get("/opencode-wrapper", follow_redirects=False).status_code in (301, 307, 308)

@@ -20,7 +20,7 @@ from simulation.governed import GovernedRuntime, POLICY_PATH
 
 
 class LocalService:
-    def __init__(self, *, bank_path, runs_dir, app_id, contract_id, policy_path=POLICY_PATH):
+    def __init__(self, *, bank_path, runs_dir, app_id, contract_id, policy_path=POLICY_PATH, catalog_all=False):
         # Import the simulation's existing registry through its established path.
         from simulation import agent
         self.registry = agent.registry
@@ -28,6 +28,8 @@ class LocalService:
         self.runs_dir = Path(runs_dir).resolve()
         self.app_id, self.contract_id = app_id, contract_id
         self.config = json.loads(Path(policy_path).read_text())
+        # Free-agent mode advertises every tool; the gateway still decides each call.
+        self.catalog_names = list(self.registry.REGISTRY) if catalog_all else self.config["allowed_tools"]
         self.runtime = None
         self.lock = asyncio.Lock()
         if not self.bank_path.is_file() or not IDENTIFIER.fullmatch(contract_id):
@@ -38,7 +40,7 @@ class LocalService:
             if path == "/v1/tools/catalog":
                 if payload != {}:
                     raise ValueError("invalid catalog request")
-                tools = self.registry.openai_tools(self.config["allowed_tools"])
+                tools = self.registry.openai_tools(self.catalog_names)
                 return {"tools": [{"name": t["function"]["name"], "description": t["function"]["description"],
                                    "input": t["function"]["parameters"]} for t in tools]}
             if path == "/v1/runs/bind":
@@ -98,7 +100,7 @@ class LocalService:
 
 async def serve(args):
     service = LocalService(bank_path=args.bank_db, runs_dir=args.runs_dir, app_id=args.application,
-                           contract_id=args.contract_id, policy_path=args.policy)
+                           contract_id=args.contract_id, policy_path=args.policy, catalog_all=args.catalog_all)
     gateway = Gateway(None, os.environ.get("INTERCEPT_TOKEN", ""), None,
                       admin_token=os.environ.get("INTERCEPT_ADMIN_TOKEN"), service=service)
     server = await asyncio.start_server(gateway.handle, "127.0.0.1", args.port, limit=8192)
@@ -117,6 +119,8 @@ def main():
     parser.add_argument("--runs-dir", type=Path, default=Path("data/runs"))
     parser.add_argument("--policy", type=Path, default=POLICY_PATH)
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--catalog-all", action="store_true",
+                        help="advertise every registered tool (free-agent demo); policy still decides each call")
     asyncio.run(serve(parser.parse_args()))
 
 

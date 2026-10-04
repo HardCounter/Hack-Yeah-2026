@@ -99,7 +99,7 @@ def run_pipeline(args):
     token, admin = secrets.token_hex(32), secrets.token_hex(32)
     endpoint = f'http://127.0.0.1:{free_port()}'
     gateway = opencode = None
-    gateway_log = opencode_log = None
+    gateway_log = opencode_log = reply_log = None
     interrupted = False
     finished = False
     result = {'verification_status': 'VERIFICATION_INCOMPLETE', 'checks': [
@@ -119,13 +119,14 @@ def run_pipeline(args):
             bank = dataset / 'bank.db'
         project = work / 'project'
         prepare_project(project, REPO, args.application, contract_id, args.model, endpoint,
-                        provider_config=args.provider_config)
+                        provider_config=args.provider_config, free=args.free)
         child_env = _child_env(work / 'config', token, admin)
         gateway_log = _log(output, 'gateway.log')
         gateway = subprocess.Popen([
             sys.executable, '-m', 'intercept.local', '--bank-db', str(bank),
             '--application', args.application, '--contract-id', contract_id,
             '--runs-dir', str(bank_runs), '--port', endpoint.rsplit(':', 1)[1],
+            *(['--catalog-all'] if args.free else []),
         ], cwd=REPO, env=child_env, stdout=gateway_log, stderr=subprocess.STDOUT,
             start_new_session=True)
         deadline = time.monotonic() + 30
@@ -147,13 +148,15 @@ def run_pipeline(args):
         )
         print(f'OpenCode agent: {args.agent}\nModel: {args.model}\nApplication: {args.application}\nArtifacts: {output}', flush=True)
         opencode_log = _log(output, 'opencode.log')
+        # Free-agent mode keeps what the agent printed; tool results reached it only through the gateway.
+        reply_log = _log(output, 'reply.txt') if args.free else None
         # OpenCode selects its project from PWD, not only the process working directory.
         opencode_env = child_env.copy()
         opencode_env['PWD'] = str(project)
         opencode = subprocess.Popen([
             binary, 'run', '--standalone', '--auto', '--session', session_id,
             '--agent', args.agent, '--model', args.model, prompt,
-        ], cwd=project, env=opencode_env, stdout=subprocess.DEVNULL, stderr=opencode_log,
+        ], cwd=project, env=opencode_env, stdout=reply_log or subprocess.DEVNULL, stderr=opencode_log,
             start_new_session=True)
         try:
             status = opencode.wait(timeout=args.timeout)
@@ -181,7 +184,7 @@ def run_pipeline(args):
     finally:
         stop_process(opencode)
         stop_process(gateway)
-        for stream in (gateway_log, opencode_log):
+        for stream in (gateway_log, opencode_log, reply_log):
             if stream is not None:
                 stream.close()
         (output / 'verification.json').write_text(json.dumps(result, indent=2) + '\n')
@@ -211,6 +214,8 @@ def main(argv=None):
     parser.add_argument('--bank-db', type=Path, help='synthetic bank to copy; generated when omitted')
     parser.add_argument('--timeout', type=int, default=600, help='maximum agent runtime in seconds (default: 600)')
     parser.add_argument('--prompt', help='user message; default asks the agent to process the application')
+    parser.add_argument('--free', action='store_true',
+                        help='free-agent demo: generic prompt, every tool offered, agent output kept in reply.txt')
     parser.add_argument('--provider-config', type=Path, help='non-secret providers-only JSON; use env substitutions for keys')
     args = parser.parse_args(argv)
     if not re.fullmatch(r'APP-\d{4}', args.application) or not 1 <= int(args.application[4:]) <= 15:
