@@ -68,6 +68,16 @@
         </fieldset>
 
         <fieldset class="section">
+          <h3>Models</h3>
+          <div class="two">
+            <div class="field"><span id="cfgAgentModelsLabel">Agent models <small>models agents may call</small></span>
+              <details class="multi" id="cfgAgentModels"><summary aria-labelledby="cfgAgentModelsLabel cfgAgentModelsSum"><span id="cfgAgentModelsSum"></span></summary><ul></ul></details></div>
+            <div class="field"><span id="cfgJudgeModelsLabel">Judge models <small>models the guardrails may use</small></span>
+              <details class="multi" id="cfgJudgeModels"><summary aria-labelledby="cfgJudgeModelsLabel cfgJudgeModelsSum"><span id="cfgJudgeModelsSum"></span></summary><ul></ul></details></div>
+          </div>
+        </fieldset>
+
+        <fieldset class="section">
           <h3>Prompt injection</h3>
           <label class="slider"><span>Block a message when the AI is at least this sure it is an attack</span><input type="range" name="block_threshold" min="0.7" max="0.99" step="0.01"><output data-for="block_threshold"></output></label>
           <label class="slider"><span>Hold for human approval from</span><input type="range" name="approve_threshold" min="0.5" max="0.99" step="0.01"><output data-for="approve_threshold"></output></label>

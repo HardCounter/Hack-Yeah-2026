@@ -9,6 +9,13 @@
     privacy: { id: 'privacy-scanner', type: 'classified_scanner', config: { classes: ['pesel', 'iban'], action: 'REQUIRE_APPROVAL' } },
     secret: { id: 'secret-scanner', type: 'classified_scanner', config: { classes: ['aws_access_key', 'private_key', 'api_key'], action: 'REQUIRE_APPROVAL' } },
   };
+  // Models offered in the two dropdowns. Placeholder list: it will come from the config later.
+  // A model already allowed by the loaded config is always shown, even when it is not listed here.
+  const MODEL_CATALOG = {
+    agent: ['openai/gpt-4.1-mini', 'openai/gpt-4.1', 'openai/gpt-5-mini', 'anthropic/claude-sonnet-5-5', 'llama3.2'],
+    judge: ['openai/gpt-4.1-mini', 'openai/gpt-4o-mini', 'anthropic/claude-haiku-4-5', 'llama-guard3'],
+  };
+  const MODEL_LISTS = { agent: 'cfgAgentModels', judge: 'cfgJudgeModels' };
   const auditor = (c, key) => c.auditors.find(a => a.id === AUDITORS[key].id) || structuredClone(AUDITORS[key]);
 
   let TOOLS = [];      // every tool the gateway knows; the lenient preset allows all of them
@@ -58,6 +65,29 @@
     }
   }
 
+  const allowedModels = kind => $$(`#${MODEL_LISTS[kind]} input:checked`).map(x => x.value);
+  function showModelSummary(kind) {
+    const on = allowedModels(kind), all = $$(`#${MODEL_LISTS[kind]} input`).length;
+    $(`#${MODEL_LISTS[kind]}Sum`).textContent = on.length ? `${on.length} of ${all} allowed: ${on.join(', ')}` : `None of ${all} allowed`;
+  }
+  function renderModels(kind, allowed) {
+    const ul = $(`#${MODEL_LISTS[kind]} ul`); ul.textContent = '';
+    for (const m of [...new Set([...MODEL_CATALOG[kind], ...allowed])]) {
+      const box = el('input'); box.type = 'checkbox'; box.name = kind + '_model'; box.value = m; box.checked = allowed.includes(m);
+      const state = el('span', '', box.checked ? 'allowed' : 'not allowed');
+      box.addEventListener('change', () => { state.textContent = box.checked ? 'allowed' : 'not allowed'; showModelSummary(kind); });
+      const lab = el('label'); lab.append(box, m, state);
+      const li = el('li'); li.append(lab); ul.append(li);
+    }
+    showModelSummary(kind);
+  }
+  // Close an open model dropdown on Escape or a click outside it.
+  document.addEventListener('click', e => $$('details.multi[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; }));
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    $$('details.multi[open]').forEach(d => { d.open = false; d.querySelector('summary').focus(); });
+  });
+
   function fill(name, c) {
     loaded = structuredClone(c); editing = name; dirty = false;
     $('#cfgEditing').textContent = label(name);
@@ -77,6 +107,8 @@
     f.secret_action.value = auditor(c, 'secret').config.action;
     f.name.value = PRESETS.includes(name) || name === NEW ? '' : name;
     f.description.value = c.description || '';
+    renderModels('agent', c.allowed_models || []);
+    renderModels('judge', g.allowed_models || []);
     renderTools(c); showOutputs(); showState();
     $$('#cfgList button').forEach(b => b.setAttribute('aria-pressed', b.value === name));
   }
@@ -89,8 +121,10 @@
     c.require_approval = checked('approve');
     c.budget = { ...c.budget, tokens: +f.tokens.value, tool_calls: +f.tool_calls.value, cost_usd: f.cost_usd.value === '' ? null : +f.cost_usd.value };
     c.max_output_tokens = +f.max_output_tokens.value;
+    c.allowed_models = allowedModels('agent');
     c.semantic_guard = { on_error: 'BLOCK', ...c.semantic_guard, block_threshold: +f.block_threshold.value,
-      approve_threshold: +f.approve_threshold.value, alert_threshold: +f.alert_threshold.value };
+      approve_threshold: +f.approve_threshold.value, alert_threshold: +f.alert_threshold.value,
+      allowed_models: allowedModels('judge') };
     const set = (key, conf) => {
       const a = auditor(c, key); a.config = { ...a.config, ...conf };
       c.auditors = c.auditors.filter(x => x.id !== a.id).concat(a);
