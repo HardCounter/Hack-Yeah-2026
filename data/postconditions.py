@@ -61,7 +61,7 @@ def verify_onboarding(con, app_id, calls, today=TODAY):
     created = _rows(con, "SELECT * FROM clients WHERE application_id = ?", app_id)
     docs = _rows(con, "SELECT * FROM documents WHERE application_id = ?", app_id)
     registry = (_rows(con, "SELECT * FROM company_registry WHERE reg_number = ?", declared.get("reg_number")) or [None])[0] if company and declared.get("reg_number") else None
-    ubos = [u for u in json.loads(registry["ubos"] or "[]")] if registry and registry.get("ubos") else []
+    ubos = [u for u in json.loads(registry["ubos"] or "[]")] if registry and registry["ubos"] else []
     sanctions, peps = _entries(con, "sanctions_list"), _entries(con, "pep_list")
     approved = bool(created) or app["status"] == "approved"
     screened = {(norm(c["args"].get("name")), c["args"].get("dob") or None) for c in calls if c["tool"] == "screen_sanctions"}

@@ -485,9 +485,13 @@ async def test_corrupted_outbox_payload_is_routed_to_dlq_without_crashing_worker
     # Outbox job should be removed
     pending = store._conn.execute("SELECT COUNT(*) FROM outbox WHERE event_id = 'ev-corrupt'").fetchone()[0]
     assert pending == 0
-    # DLQ should contain corrupted payload record
+    # DLQ should contain corrupted payload record with preserved event_id
     dlqs = await store.get_dlq_records()
-    assert any(d.error_message == "CONSUMER_DELIVERY_FAILED" and d.consumer_name == "test-cons" for d in dlqs)
+    matched = [d for d in dlqs if d.error_message == "CONSUMER_DELIVERY_FAILED" and d.consumer_name == "test-cons"]
+    assert len(matched) == 1
+    assert matched[0].event.get("event_id") == "ev-corrupt"
+    row = store._conn.execute("SELECT event_id FROM dead_letter_queue WHERE consumer_name = 'test-cons'").fetchone()
+    assert row[0] == "ev-corrupt"
     await store.close()
 
 

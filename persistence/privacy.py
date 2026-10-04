@@ -25,7 +25,7 @@ _NUMBERS = {
     "reserved_cost", "actual_cost", "latency_ms", "duration_ms",
 }
 _IDS = {
-    "application_id", "client_id", "receipt_id", "action_id", "contract_id",
+    "event_id", "application_id", "client_id", "receipt_id", "action_id", "contract_id",
     "run_id", "approval_id", "intervention_id", "policy_version", "feed_version",
     "rule", "reason_code", "model", "model_version", "forbidden_tool",
     "app_id", "document_id", "doc_id", "resource_id", "target_id",
