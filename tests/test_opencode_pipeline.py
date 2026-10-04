@@ -159,6 +159,9 @@ def _run_opencode(tmp_path: Path, model: _FixtureModel, *, failure=False):
     completed = subprocess.run([
         sys.executable, "-m", "simulation.opencode_runner", "APP-0001",
         "--bank-db", str(bank), "--runs-dir", str(runs),
+        # This scripted success fixture requires its original no-approval policy, not the
+        # operator's persisted selection (standard deliberately requires create_client approval).
+        "--policy", str(ROOT / "simulation" / "policy.json"),
         "--provider-config", str(provider_config), "--model", "fixture/kyc-fixture",
         "--timeout", "120", "--agent", "build",
         "--prompt", "Process APP-0001 using the available KYC tools. Complete the workflow.",

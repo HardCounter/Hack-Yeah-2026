@@ -26,8 +26,9 @@ POLICY_PATH = Path(__file__).with_name("policy.json")
 class GovernedRuntime:
     """Composition root; only this trusted runtime issues authority and identity."""
 
-    def __init__(self, ctx, app_id, *, policy_path=POLICY_PATH, policy_config=None, contract_id=None):
-        self._configure(ctx, app_id, policy_path, policy_config, contract_id)
+    def __init__(self, ctx, app_id, *, policy_path=POLICY_PATH, policy_config=None, contract_id=None,
+                 policy_revision=None):
+        self._configure(ctx, app_id, policy_path, policy_config, contract_id, policy_revision)
         self.runner = asyncio.Runner()
         try:
             self.runner.run(self._start())
@@ -37,19 +38,25 @@ class GovernedRuntime:
             self.runner.close()
             raise
 
-    def _configure(self, ctx, app_id, policy_path, policy_config, contract_id):
+    def _configure(self, ctx, app_id, policy_path, policy_config, contract_id, policy_revision=None):
         self.ctx = ctx
         self.app_id = app_id
         self.config = json.loads(Path(policy_path).read_text()) if policy_config is None else json.loads(json.dumps(policy_config))
+        self.policy_revision = policy_revision
+        # Managed configs are used only by interception in this iteration. Keep consume-plane
+        # configuration on its existing trusted path; do not wire intercept.velocity_guard etc.
+        self.consumer_config = (json.loads(POLICY_PATH.read_text())["consumer"]
+                                if "intercept" in self.config else self.config["consumer"])
         self.operator_contract_id = contract_id
         self.closed = False
         self.decisions = []
 
     @classmethod
-    async def create(cls, ctx, app_id, *, policy_path=POLICY_PATH, policy_config=None, contract_id=None):
+    async def create(cls, ctx, app_id, *, policy_path=POLICY_PATH, policy_config=None, contract_id=None,
+                     policy_revision=None):
         """Async composition for the HTTP/OpenCode execution adapter."""
         runtime = cls.__new__(cls)
-        runtime._configure(ctx, app_id, policy_path, policy_config, contract_id)
+        runtime._configure(ctx, app_id, policy_path, policy_config, contract_id, policy_revision)
         runtime.runner = None
         try:
             await runtime._start()
@@ -90,7 +97,8 @@ class GovernedRuntime:
         policy = Policy(core)
         # Pin the full central configuration, including controls and consumer thresholds.
         import hashlib
-        policy.version = hashlib.sha256(json.dumps(self.config, sort_keys=True, allow_nan=False).encode()).hexdigest()
+        policy.version = self.policy_revision or hashlib.sha256(
+            json.dumps(self.config, sort_keys=True, allow_nan=False).encode()).hexdigest()
         self.contract = TaskContract(
             contract_id=core["runs"][self.ctx.session_id]["contract_id"],
             run_id=f"run_{self.ctx.session_id}", session_id=self.ctx.session_id,
@@ -112,8 +120,8 @@ class GovernedRuntime:
         cfg = ConsumePlaneConfig(
             source=SourceConfig(poll_timeout_s=0.01), partitions=1,
             ledger_path=str(self.audit_path.with_suffix(".ledger.db")), retry_backoff_s=0.01,
-            feedback=FeedbackConfig(**self.config["consumer"]["feedback"]),
-            plugins={"trajectory-risk": PluginEntry(name="trajectory-risk", config=self.config["consumer"]["trajectory_risk"])},
+            feedback=FeedbackConfig(**self.consumer_config["feedback"]),
+            plugins={"trajectory-risk": PluginEntry(name="trajectory-risk", config=self.consumer_config["trajectory_risk"])},
         )
         self.manager = await build_manager(cfg, source=self.source, reader=self.reader, sinks=[self.sink],
                                            channel=InProcessFeedbackChannel(self.gateway, credential), extra_plugins=[TrajectoryRisk, GatewayViolations])

@@ -21,7 +21,8 @@ from tracing import get_logger
 
 
 class LocalService:
-    def __init__(self, *, bank_path, runs_dir, app_id, contract_id, policy_path=POLICY_PATH, catalog_all=False):
+    def __init__(self, *, bank_path, runs_dir, app_id, contract_id, policy_path=POLICY_PATH, catalog_all=False,
+                 config_service=None):
         # Import the simulation's existing registry through its established path.
         from simulation import agent
         self.registry = agent.registry
@@ -29,6 +30,10 @@ class LocalService:
         self.runs_dir = Path(runs_dir).resolve()
         self.app_id, self.contract_id = app_id, contract_id
         self.config = json.loads(Path(policy_path).read_text())
+        self.config_service = config_service
+        self.catalog_all = catalog_all
+        if config_service is not None:
+            self.config = config_service.snapshot_for_intercept()["config"]
         # Free-agent mode advertises every tool; the gateway still decides each call.
         self.catalog_names = list(self.registry.REGISTRY) if catalog_all else self.config["allowed_tools"]
         self.runtime = None
@@ -55,6 +60,14 @@ class LocalService:
                     if self.runtime.contract.session_id != session_id:
                         raise ValueError("this demo service is bound to another session")
                 else:
+                    # Select once at trusted binding, not per tool call. Never change a live contract.
+                    policy_revision = None
+                    if self.config_service is not None:
+                        snapshot = await asyncio.to_thread(self.config_service.snapshot_for_intercept)
+                        self.config = snapshot["config"]
+                        policy_revision = snapshot["revision"].removeprefix("sha256:")
+                        if not self.catalog_all:
+                            self.catalog_names = self.config["allowed_tools"]
                     self.runs_dir.mkdir(parents=True, exist_ok=True)
                     bank_copy = self.runs_dir / f"{session_id}.bank.db"
                     if bank_copy.exists():
@@ -64,7 +77,8 @@ class LocalService:
                             source.backup(dest)
                     ctx = self.registry.Ctx(agent="onboarding-agent", session_id=session_id, db=bank_copy)
                     self.runtime = await GovernedRuntime.create(ctx, self.app_id, policy_config=self.config,
-                                                                contract_id=self.contract_id)
+                                                                contract_id=self.contract_id,
+                                                                policy_revision=policy_revision)
                     get_logger().log("intercept", "session.bound", session=session_id, contract=self.contract_id,
                                      case=self.app_id)
                 return {"session_id": session_id, "contract_id": self.contract_id,
@@ -104,8 +118,11 @@ class LocalService:
 
 
 async def serve(args):
+    from configuration.service import ConfigService
     service = LocalService(bank_path=args.bank_db, runs_dir=args.runs_dir, app_id=args.application,
-                           contract_id=args.contract_id, policy_path=args.policy, catalog_all=args.catalog_all)
+                           contract_id=args.contract_id, policy_path=args.policy or POLICY_PATH,
+                           catalog_all=args.catalog_all,
+                           config_service=None if args.policy else ConfigService(args.config_dir))
     gateway = Gateway(None, os.environ.get("INTERCEPT_TOKEN", ""), None,
                       admin_token=os.environ.get("INTERCEPT_ADMIN_TOKEN"), service=service)
     server = await asyncio.start_server(gateway.handle, "127.0.0.1", args.port, limit=8192)
@@ -122,7 +139,9 @@ def main():
     parser.add_argument("--application", required=True)
     parser.add_argument("--contract-id", required=True)
     parser.add_argument("--runs-dir", type=Path, default=Path("data/runs"))
-    parser.add_argument("--policy", type=Path, default=POLICY_PATH)
+    config_source = parser.add_mutually_exclusive_group()
+    config_source.add_argument("--policy", type=Path, help="explicit legacy policy; bypass selected backend config")
+    config_source.add_argument("--config-dir", type=Path, help="shared backend config directory (default: CONFIG_DIR)")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--catalog-all", action="store_true",
                         help="advertise every registered tool (free-agent demo); policy still decides each call")

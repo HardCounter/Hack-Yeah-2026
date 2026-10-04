@@ -120,6 +120,9 @@ class OpenCodeBackend:
         project = folder / "project"
         prepare_project(project, REPO, APPLICATION, contract, self.model, endpoint, free=True)
         env = _child_env(folder / "config", token, admin)
+        # Let the gateway read the operator-owned config directory, not a session workspace.
+        from configuration.service import ConfigService
+        env["CONFIG_DIR"] = str(ConfigService().directory)
         for name in ("HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):  # isolate OpenCode's own storage
             env[name] = str(folder / name.lower())
             Path(env[name]).mkdir(parents=True, exist_ok=True)
