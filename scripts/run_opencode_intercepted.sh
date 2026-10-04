@@ -60,6 +60,7 @@ grep -q '"package": ".*adapters/opencode"' "$CONFIG_FILE" 2>/dev/null ||
 echo "Starting OpenCode in $WORKSPACE (private server, adapter -> 127.0.0.1:$INTERCEPT_PORT)"
 cd "$WORKSPACE"
 # The admin token is present only for the live governed pipeline (used by /intercept-run to bind the session).
+unset CONFIG_ADMIN_TOKEN  # REST management credentials must never reach the agent server.
 INTERCEPT_TOKEN=$INTERCEPT_TOKEN \
 INTERCEPT_ADMIN_TOKEN=${INTERCEPT_ADMIN_TOKEN:-} \
 OPENCODE_CONFIG="$INTERCEPT_DEMO_DIR/opencode.json" \

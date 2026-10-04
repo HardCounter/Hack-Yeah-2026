@@ -62,7 +62,7 @@ def free_port():
 def _child_env(config_home, token, admin):
     """Keep provider credentials from the process environment, but not the operator's OpenCode config."""
     env = os.environ.copy()
-    for key in ('OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR'):
+    for key in ('OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR', 'CONFIG_ADMIN_TOKEN'):
         env.pop(key, None)
     config_home.mkdir(parents=True, exist_ok=True)
     env.update(
@@ -126,6 +126,7 @@ def run_pipeline(args):
             sys.executable, '-m', 'intercept.service.local', '--bank-db', str(bank),
             '--application', args.application, '--contract-id', contract_id,
             '--runs-dir', str(bank_runs), '--port', endpoint.rsplit(':', 1)[1],
+            *(['--policy', str(args.policy.resolve())] if args.policy else []),
             *(['--catalog-all'] if args.free else []),
         ], cwd=REPO, env=child_env, stdout=gateway_log, stderr=subprocess.STDOUT,
             start_new_session=True)
@@ -212,6 +213,7 @@ def main(argv=None):
     parser.add_argument('--output-dir', '--runs-dir', type=Path, default=REPO / 'var/pipeline-runs',
                         help='parent directory for the isolated run artifacts')
     parser.add_argument('--bank-db', type=Path, help='synthetic bank to copy; generated when omitted')
+    parser.add_argument('--policy', type=Path, help='explicit legacy policy; bypass managed backend selection')
     parser.add_argument('--timeout', type=int, default=600, help='maximum agent runtime in seconds (default: 600)')
     parser.add_argument('--prompt', help='user message; default asks the agent to process the application')
     parser.add_argument('--free', action='store_true',

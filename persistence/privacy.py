@@ -37,7 +37,8 @@ def token(value: Any, *, required: bool = False) -> str | None:
     if value is None and not required:
         return None
     if (not isinstance(value, str) or not _TOKEN.fullmatch(value)
-            or _SECRET.search(value) or re.fullmatch(r"\d{9,}", value)
+            # This exact, code-defined auditor name is metadata, not a raw secret.
+            or (_SECRET.search(value) and value != "secret-scanner") or re.fullmatch(r"\d{9,}", value)
             or re.search(r"\d{3}-\d{2}-\d{4}", value)):
         raise ValueError("Invalid telemetry identifier; use an opaque trusted ID")
     return value

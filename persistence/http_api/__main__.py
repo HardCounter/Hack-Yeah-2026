@@ -13,7 +13,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Read API for dashboards (stub: serves example data)")
     parser.add_argument("--evidence-dir", type=Path,
                         help="directory of per-session evidence stores (<session_id>.evidence.db); the live "
-                             "pipeline passes its bank-runs directory. The stub only counts the stores.")
+                              "pipeline passes its bank-runs directory. The stub only counts the stores.")
+    parser.add_argument("--config-dir", type=Path, help="shared backend configuration directory (default: CONFIG_DIR)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8790)
     parser.add_argument("--cors-origin", action="append", default=[], help="allowed dashboard origin; repeatable")
@@ -28,7 +29,9 @@ def main() -> None:
     if args.evidence_dir is not None and not args.evidence_dir.is_dir():
         sys.exit(f"--evidence-dir {args.evidence_dir} is not a directory")
     evidence_dir = args.evidence_dir.resolve() if args.evidence_dir else None
-    app = create_app(frozenset(args.cors_origin), docs=not args.no_docs, evidence_dir=evidence_dir)
+    from configuration.service import ConfigService
+    app = create_app(frozenset(args.cors_origin), docs=not args.no_docs, evidence_dir=evidence_dir,
+                     config_service=ConfigService(args.config_dir))
     # access_log off: query strings may carry IDs and must not end up in logs.
     uvicorn.run(app, host=args.host, port=args.port, access_log=False)
 
