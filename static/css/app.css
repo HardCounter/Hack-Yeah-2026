@@ -215,6 +215,19 @@ a.kpi:hover, a.kpi:focus-visible { background: var(--paper-2); } a.kpi:hover .la
 .pop-steps { border-collapse: collapse; width: 100%; font-size: .75rem; }
 .pop-steps th { text-align: left; font-weight: 600; color: var(--ink-3); border-bottom: thin solid var(--rule); padding: 0.125rem 0.375rem; }
 .pop-steps td { padding: 0.125rem 0.375rem; border-bottom: thin solid var(--paper-3); white-space: nowrap; }
+.pop-steps tr.step { cursor: pointer; } .pop-steps tr.step:hover, .pop-steps tr.step:focus-visible { background: var(--paper-2); outline: none; }
+.pop-steps tr.step td:first-child::before { content: "\25B8"; display: inline-block; margin-right: 0.25rem; color: var(--ink-3); transition: transform .15s; }
+.pop-steps tr.step[aria-expanded="true"] td:first-child::before { transform: rotate(90deg); }
+.pop-steps td.step-cell { white-space: normal; padding: 0.25rem 0.375rem 0.5rem; background: var(--paper-2); }
+/* width: 0 + min-width: 100% keeps long JSON from widening the table (and the popup); the <pre> scrolls instead */
+.step-detail { width: 0; min-width: 100%; box-sizing: border-box; border-left: 0.1875rem solid var(--tone, var(--rule)); padding: 0.125rem 0 0.125rem 0.625rem; }
+.step-detail.allow { --tone: var(--allow); } .step-detail.block { --tone: var(--block); } .step-detail.warn { --tone: var(--warn); } .step-detail.hold { --tone: var(--hold); }
+.step-detail section + section { margin-top: 0.375rem; }
+.step-detail h4 { margin: 0 0 0.125rem; font: 600 .6875rem var(--sans); text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+.step-detail p { margin: 0; }
+.step-detail blockquote { margin: 0; padding-left: 0.5rem; border-left: thin solid var(--rule); font-style: italic; color: var(--ink-2); }
+.step-detail pre { margin: 0.125rem 0 0; padding: 0.25rem 0.375rem; max-height: 12rem; overflow: auto; background: var(--paper); border: thin solid var(--paper-3); font: .6875rem/1.4 var(--mono); }
+.step-detail .step-foot { margin-top: 0.375rem; color: var(--ink-3); font-size: .6875rem; }
 #riskTable tr { cursor: default; } #riskTable tr:hover, #riskTable tr:focus { background: var(--paper-2); outline: none; }
 .timeline { list-style: none; margin: 0; padding: 0; counter-reset: s; }
 .timeline li { display: grid; grid-template-columns: 1.75rem 1fr auto; gap: 0 0.75rem; padding: 0.5rem 1rem; border-top: thin solid var(--rule); counter-increment: s; }

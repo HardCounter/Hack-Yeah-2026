@@ -34,12 +34,12 @@ const Risk = {
   newSession(id, label) { return { id, label, signals: [], loss: 0, maxC: 1, steps: 0, log: [], P: this.base }; },
   // One step: its signals raise P for this and later steps; only executed steps add P x C to the loss.
   // A step is one action: one agent tool call.
-  step(session, { name = 'step', signals = [], C = 1, executed = true }) {
+  step(session, { name = 'step', signals = [], C = 1, executed = true, ...details }) {
     session.signals.push(...signals);
     const P = session.P = this.probability(session.signals);
     if (executed) { session.loss += P * C; session.maxC = Math.max(session.maxC, C); }
     session.steps++;
-    session.log.push({ name, C, executed, signals });
+    session.log.push({ name, C, executed, signals, ...details });  // details: args, thought, decision, result, ms, tokens
     return { P, C, loss: session.loss, level: this.level(session.loss) };
   },
 };
