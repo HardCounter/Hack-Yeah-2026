@@ -78,10 +78,10 @@
   const pop = $('#pop');
   const describe = s => `${s.label}\nlikelihood P  ${s.P.toFixed(2)}\nimpact C      ${s.maxC}\nexpected loss ${s.loss.toFixed(2)}\nlevel         ${Risk.level(s.loss)}\naction        ${ACTION[Risk.level(s.loss)]}\n\n${s.steps} steps (actions taken):\n`
     + s.log.map((st, i) => `${String(i + 1).padStart(2)}. ${st.name.padEnd(22)} impact ${String(st.C).padStart(2)}${st.executed ? '' : '  BLOCKED'}${st.signals.length ? '  ! ' + st.signals.join(', ').replace(/_/g, ' ') : ''}`).join('\n');
-  function point(s, mine) {
+  function point(s) {
     const lvl = Risk.level(s.loss);
-    const c = node('circle', { cx: x(s.P), cy: y(Math.min(10, s.maxC + (mine ? 0 : jitter[s.id]))), r: 5 + Math.min(s.steps, 12) * .5,
-      class: `pt lvl-${lvl}${mine ? ' you' : ''}`, tabindex: 0, role: 'img', 'aria-label': describe(s).replace(/\s+/g, ' ') });
+    const c = node('circle', { cx: x(s.P), cy: y(Math.min(10, s.maxC + jitter[s.id])), r: 5 + Math.min(s.steps, 12) * .5,
+      class: `pt lvl-${lvl}`, tabindex: 0, role: 'img', 'aria-label': describe(s).replace(/\s+/g, ' ') });
     const show = () => {
       pop.textContent = describe(s); pop.hidden = false;
       const r = c.getBoundingClientRect();  // runtime coordinates are measured, not design values
@@ -95,16 +95,11 @@
   }
 
   function render() {
-    svg.querySelectorAll('.pt, .you-label').forEach(e => e.remove());
-    const me = App.session, all = me.steps ? [...samples, me] : samples;
-    for (const s of samples) svg.append(point(s, false));
-    if (me.steps) {
-      svg.append(point(me, true), node('text', { x: x(me.P) + 12, y: y(me.maxC) - 10, class: 'you-label' }, 'You'));
-    }
-    $('#riskTable').replaceChildren(...[...all].sort((a, b) => b.loss - a.loss).slice(0, 8).map(s => {
-      const tr = el('tr', s === me ? 'me' : null), lvl = Risk.level(s.loss), b = el('td');
+    for (const s of samples) svg.append(point(s));
+    $('#riskTable').replaceChildren(...[...samples].sort((a, b) => b.loss - a.loss).slice(0, 8).map(s => {
+      const tr = el('tr'), lvl = Risk.level(s.loss), b = el('td');
       b.append(badge(lvl));
-      tr.append(el('td', 'cap', s === me ? 'You (Prompt it)' : s.label), el('td', 'n mono cap', s.P.toFixed(2)), el('td', 'n mono cap', s.maxC),
+      tr.append(el('td', 'cap', s.label), el('td', 'n mono cap', s.P.toFixed(2)), el('td', 'n mono cap', s.maxC),
         el('td', 'n mono cap', s.loss.toFixed(2)), b, el('td', 'cap muted', ACTION[lvl]));
       return tr;
     }));
@@ -116,8 +111,6 @@
   const swatch = (cls, text) => { const s = el('span'); s.append(el('i', cls), text); return s; };
   $('#riskLegend').append(
     ...Risk.levels.slice().reverse().map(([lvl]) => swatch(lvl, MEANING[lvl])),
-    swatch('ring', 'You'),
     el('p', 'legend-note', 'Size = steps taken · hover a dot for its steps'));
   render();
-  App.on('event', e => { if (e.source === 'session') render(); });
 })();

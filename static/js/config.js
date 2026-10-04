@@ -125,7 +125,7 @@
     const name = dirty ? `${editing} (edited)` : editing;
     App.setActive(name, c);
     loaded = c; dirty = false;
-    say(`"${name}" is now active for prompts in this browser.`);
+    say(`"${name}" is now active in this browser.`);
     showState(); refreshList();
   };
 

@@ -77,7 +77,6 @@ main.wrap { padding-top: 1.5rem; padding-bottom: 3rem; }
 .btn.ghost:hover { background: var(--paper-2); border-color: var(--ink-3); }
 .btn.sm { height: 1.75rem; padding: 0 0.625rem; font-size: .8125rem; }
 .link { background: none; border: 0; padding: 0; color: var(--ink); text-decoration: underline; cursor: pointer; }
-kbd { font: .75rem var(--mono); border: thin solid var(--rule); border-bottom-width: 0.125rem; border-radius: 0.125rem; padding: 0 0.25rem; background: var(--paper-2); }
 
 label.field { display: block; margin-bottom: 0.875rem; }
 .field > span { display: block; font-size: .8125rem; font-weight: 600; margin-bottom: 0.25rem; }
@@ -130,12 +129,6 @@ tr.fresh td { animation: fresh 900ms ease-out; }
 .picker .sub { display: block; font: 400 .8125rem/1.4 var(--sans); color: var(--ink-3); }
 .picker-group { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); padding: 0.625rem 1rem 0.25rem; background: var(--paper-2); border-top: thin solid var(--rule); }
 
-/* Prompt it */
-.composer textarea { min-height: 11rem; border: 0; border-radius: 0; padding: 0.875rem 1rem; font-size: .9375rem; background: var(--paper); }
-.composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 1rem; border-top: thin solid var(--rule); background: var(--paper-2); }
-.snips { display: flex; flex-wrap: wrap; gap: 0.375rem; }
-.snip { background: var(--paper); border: thin solid var(--rule); border-radius: 0.125rem; padding: 0.125rem 0.5rem; font: .8125rem var(--mono); color: var(--ink-2); cursor: pointer; }
-.snip:hover { border-color: var(--ink-3); color: var(--ink); }
 
 .verdict { border-left: 0.3125rem solid currentColor; padding: 0.875rem 1rem; background: color-mix(in srgb, currentColor 6%, var(--paper)); }
 .verdict .word { font: 600 1.625rem/1.1 var(--serif); font-variant-caps: all-small-caps; letter-spacing: .08em; }
@@ -144,7 +137,6 @@ tr.fresh td { animation: fresh 900ms ease-out; }
 .verdict.block { color: var(--block); } .verdict.warn { color: var(--warn); } .verdict.hold { color: var(--hold); } .verdict.allow { color: var(--allow); }
 @media (prefers-reduced-motion: no-preference) { .verdict.in { animation: rise 180ms ease-out; } }
 @keyframes rise { from { opacity: 0; transform: translateY(0.25rem); } }
-.saw { margin: 0; padding: 0.75rem 1rem; font: .8125rem/1.55 var(--mono); white-space: pre-wrap; word-break: break-word; background: var(--paper-2); }
 .reveal { animation: rv 160ms ease-out; }
 @keyframes rv { from { opacity: 0; } }
 
@@ -162,9 +154,6 @@ tr.fresh td { animation: fresh 900ms ease-out; }
 .meter .tick span { position: absolute; top: 0.875rem; left: -0.625rem; font: .6875rem var(--mono); color: var(--ink-3); }
 
 /* Risk: likelihood x impact */
-.risk-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1rem; padding: 0.5rem 1rem; border-bottom: thin solid var(--rule); font: .75rem var(--mono); color: var(--ink-2); }
-.risk-line:empty { display: none; }
-.risk-line .label { font: 600 .75rem var(--sans); text-transform: uppercase; letter-spacing: .06em; color: var(--ink); }
 .risk-panel { margin-bottom: 1.25rem; }
 .risk-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
 .risk-side { border-left: thin solid var(--rule); min-width: 0; }
@@ -184,15 +173,11 @@ tr.fresh td { animation: fresh 900ms ease-out; }
 #riskMap .pt:hover, #riskMap .pt:focus { stroke: var(--ink); stroke-width: 2; outline: none; }
 #riskMap .lvl-LOW { fill: var(--allow); } #riskMap .lvl-MEDIUM { fill: var(--warn); }
 #riskMap .lvl-HIGH { fill: var(--block); } #riskMap .lvl-CRITICAL { fill: var(--crit); }
-#riskMap .you { stroke: var(--ink); stroke-width: 2.5; }
-#riskMap .you-label { font-size: 12px; font-weight: 700; fill: var(--ink); }
 .legend { display: flex; flex-wrap: wrap; gap: 0.375rem 1rem; margin-top: 0.5rem; font-size: .8125rem; color: var(--ink-2); }
 .legend i { display: inline-block; width: 0.625rem; height: 0.625rem; border-radius: 50%; margin-right: 0.375rem; vertical-align: -0.0625rem; }
 .legend .LOW { background: var(--allow); } .legend .MEDIUM { background: var(--warn); } .legend .HIGH { background: var(--block); } .legend .CRITICAL { background: var(--crit); }
-.legend .ring { background: transparent; border: 0.15rem solid var(--ink); }
 .legend-note { flex-basis: 100%; margin: 0; color: var(--ink-3); }
 .legend-note:first-of-type { margin-top: 0.25rem; }
-#riskTable tr.me td { background: var(--paper-2); font-weight: 600; }
 
 /* Tests */
 .cells { display: flex; flex-wrap: wrap; gap: 0.1875rem; }

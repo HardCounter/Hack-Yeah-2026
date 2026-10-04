@@ -31,7 +31,7 @@ const Risk = {
   level(loss) { return this.levels.find(([, t]) => loss >= t)[0]; },
   newSession(id, label) { return { id, label, signals: [], loss: 0, maxC: 1, steps: 0, log: [], P: this.base }; },
   // One step: its signals raise P for this and later steps; only executed steps add P x C to the loss.
-  // A step is one action: an agent tool call, or one prompt sent from Prompt it.
+  // A step is one action: one agent tool call.
   step(session, { name = 'step', signals = [], C = 1, executed = true }) {
     session.signals.push(...signals);
     const P = session.P = this.probability(session.signals);
@@ -46,7 +46,6 @@ const App = {
   config: null,        // the active config document
   configName: null,
   tokensUsed: 0,
-  session: Risk.newSession('this-browser', 'Your session'),  // risk of the prompts sent from this browser
   events: [],          // audit log, newest first
   listeners: {},
   on(evt, fn) { (this.listeners[evt] ||= []).push(fn); },
@@ -74,9 +73,9 @@ const App = {
 };
 
 /* Tabs: hash routing so the back button and shared links work */
-const TABS = ['prompt', 'config', 'metrics', 'tests'];
+const TABS = ['config', 'metrics', 'tests'];  // Prompt it is a link to /opencode-wrapper/
 function route() {
-  const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'prompt';
+  const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'metrics';
   $$('[data-view]').forEach(s => s.hidden = s.id !== 'v-' + tab);
   $$('.tabs a').forEach(a => a.hash === '#' + tab ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   document.title = `${$('#v-' + tab + ' h1').textContent} · AI Control Layer`;

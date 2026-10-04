@@ -7,7 +7,6 @@
 <link rel="stylesheet" href="/css/app.css">
 <!-- Load order matters: app.js owns shared state; each tab script registers with it. -->
 <script src="/js/app.js" defer></script>
-<script src="/js/prompt.js" defer></script>
 <script src="/js/config.js" defer></script>
 <script src="/js/metrics.js" defer></script>
 <script src="/js/riskmap.js" defer></script>
@@ -17,7 +16,7 @@
 
 <header class="appbar">
   <div class="wrap lh">
-    <a class="wordmark" href="#prompt"><span class="seal" aria-hidden="true">◆</span>AI Control Layer</a>
+    <a class="wordmark" href="#metrics"><span class="seal" aria-hidden="true">◆</span>AI Control Layer</a>
     <div class="appbar-meta">
       <span class="env" title="Synthetic bank data. No real customer data is processed.">Demo</span>
       <span>Active config <b class="activeName">…</b></span>
@@ -26,7 +25,7 @@
     </div>
   </div>
   <nav class="wrap tabs" aria-label="Sections">
-    <a href="#prompt"><span class="n">1</span><span class="t">Prompt it</span><span class="d">Send a prompt to OpenCode</span></a>
+    <a href="/opencode-wrapper/"><span class="n">1</span><span class="t">Prompt it</span><span class="d">Send a prompt to OpenCode</span></a>
     <a href="#config"><span class="n">2</span><span class="t">Config</span><span class="d">Choose and edit the control settings</span></a>
     <a href="#metrics"><span class="n">3</span><span class="t">Metrics</span><span class="d">Decisions, cost, latency and audit log</span></a>
     <a href="#tests"><span class="n">4</span><span class="t">Tests</span><span class="d">Self-test suite and agent checks</span></a>
@@ -34,72 +33,6 @@
 </header>
 
 <main class="wrap">
-
-  <!-- PROMPT IT -->
-  <section id="v-prompt" data-view aria-labelledby="h-prompt">
-    <div class="page-head">
-      <div>
-        <h1 id="h-prompt">Prompt it</h1>
-        <p>Every prompt runs through each control before any model sees it. The result shows what each control decided and what was forwarded.</p>
-      </div>
-      <div class="actions cap muted">Checked against config&nbsp;<a href="#config"><b class="activeName">…</b></a>&nbsp;·&nbsp;<a href="/opencode-wrapper/">Run a live OpenCode agent →</a></div>
-    </div>
-
-    <div class="grid split">
-      <div class="stack">
-        <div class="panel composer">
-          <div class="panel-head"><h2><label for="prompt">Prompt</label></h2><span class="cap faint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to send</span></div>
-          <textarea id="prompt" maxlength="4000" placeholder="Type or paste a prompt, or pick a sample below."></textarea>
-          <div class="composer-bar">
-            <span class="mono cap muted"><span id="chars">0</span> / 4000 chars · ~<span id="estTok">0</span> tokens</span>
-            <span class="actions">
-              <button class="btn ghost sm" id="clear" type="button">Clear</button>
-              <button class="btn" id="send" type="button">Send prompt</button>
-            </span>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head"><h2>Insert a known attack pattern</h2></div>
-          <div class="panel-body"><div class="snips" id="snips"></div></div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head"><h2>Sample prompts</h2><span class="cap faint">Click to load and send</span></div>
-          <ul class="picker" id="samples"></ul>
-        </div>
-      </div>
-
-      <div class="stack">
-        <div class="panel" aria-live="polite">
-          <div class="panel-head"><h2>Result</h2><span class="cap faint mono" id="reqId"></span></div>
-          <p class="empty" id="resultEmpty">No prompt sent yet. Write one on the left or pick a sample.</p>
-          <div id="result" hidden>
-            <div class="verdict" id="verdict">
-              <div class="word" id="vWord"></div>
-              <p class="reason" id="vReason"></p>
-              <div class="meta" id="vMeta"></div>
-            </div>
-            <div class="risk-line" id="vRisk"></div>
-            <div class="scroll"><table>
-              <thead><tr><th>Control</th><th>Decision</th><th>Detail</th><th class="n">Latency</th></tr></thead>
-              <tbody id="trace"></tbody>
-            </table></div>
-            <div class="panel-head"><h2>Forwarded to the model</h2><span class="cap faint" id="redactions"></span></div>
-            <pre class="saw" id="saw"></pre>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head"><h2>This session</h2><span class="cap faint">Click a row to load the prompt again</span></div>
-          <div class="scroll"><table>
-            <thead><tr><th>Time</th><th>Verdict</th><th>Rule</th><th>Prompt</th></tr></thead>
-            <tbody id="history"><tr><td colspan="4" class="empty">Nothing sent in this session.</td></tr></tbody>
-          </table></div>
-        </div>
-      </div>
-    </div>
-  </section>
 
   <!-- CONFIG -->
   <section id="v-config" data-view hidden aria-labelledby="h-config">
@@ -183,7 +116,7 @@
     <div class="page-head">
       <div>
         <h1 id="h-metrics">Metrics</h1>
-        <p>What the control layer decided, what it cost and how fast it was. Includes this session's prompts.</p>
+        <p>What the control layer decided, what it cost and how fast it was.</p>
       </div>
       <div class="actions">
         <label class="cap muted">Show
@@ -289,7 +222,7 @@
 
 <footer>
   <div class="wrap">
-    <span>Demo environment. Prompt verdicts, metrics and test results are simulated in the browser; configs are read from and saved to the server.</span>
+    <span>Demo environment. Metrics and test results are simulated in the browser; configs are read from and saved to the server. Prompt it runs the real OpenCode agent.</span>
     <span>Times in Europe/Warsaw</span>
   </div>
 </footer>
