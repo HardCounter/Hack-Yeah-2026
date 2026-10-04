@@ -15,27 +15,36 @@
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.6 ui-monospace, "IBM Plex Mono", "Cascadia Mono", Consolas, monospace; }
   .app { max-width: 60rem; height: 100%; margin: 0 auto; padding: 0 1rem; display: flex; flex-direction: column; }
-  header { padding: 1rem 0 .75rem; border-bottom: 1px solid var(--line); }
+  header { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; align-items: flex-start; justify-content: space-between;
+           padding: 1rem 0 .75rem; border-bottom: 1px solid var(--line); }
+  header div { flex: 1 1 20rem; }
   h1 { margin: 0; font-size: 1rem; font-weight: 700; letter-spacing: .02em; }
   h1 span { color: var(--muted); font-weight: 400; }
   header p { margin: .35rem 0 0; color: var(--muted); }
+  button { font: inherit; background: transparent; color: var(--accent); border: 1px solid var(--line); padding: .1rem .7rem; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:focus-visible { outline: 1px dashed var(--accent); outline-offset: 2px; }
+  button:disabled { color: var(--muted); cursor: default; }
+  #new-session { flex: 0 0 auto; background: var(--accent); color: var(--bg); border-color: var(--accent);
+                 font-weight: 700; padding: .45rem 1.1rem; }
+  #new-session:hover:not(:disabled) { background: var(--text); border-color: var(--text); }
+  #new-session:disabled { background: transparent; color: var(--muted); border-color: var(--line); }
   #transcript { flex: 1 1 auto; overflow-y: auto; padding: 1rem 0; min-height: 8rem; }
   .msg { margin: 0 0 1rem; padding: .6rem .9rem; border-left: 2px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
   .msg.user { background: var(--panel); border-left-color: var(--accent); }
   .msg.agent { border-left-color: var(--info); }
-  .msg.system { color: var(--muted); border-left-color: var(--line); }
+  .msg.system { color: var(--muted); }
   .who { display: block; color: var(--muted); font-size: .8rem; margin-bottom: .2rem; }
   .call { display: grid; grid-template-columns: 1.2rem minmax(9rem, 14rem) 5.5rem 1fr; gap: .5rem;
           padding: .15rem .9rem; border-left: 2px solid var(--line); }
   .call .arrow, .call .why { color: var(--muted); }
   .call .why { overflow-wrap: anywhere; }
-  .calls { margin: 0 0 1rem; }
+  .gap { height: 1rem; }
   .ALLOW { color: var(--allow); } .BLOCK { color: var(--block); }
   .REDACT, .ALERT, .REQUIRE_APPROVAL { color: var(--warn); }
   .finding { padding: .15rem .9rem; border-left: 2px solid var(--warn); color: var(--muted); }
   .finding b { color: var(--warn); font-weight: 400; }
   .finding b.high, .finding b.critical { color: var(--block); }
-  .empty { color: var(--muted); padding: 2rem 0; }
   .composer { background: var(--panel); border-left: 2px solid var(--accent); padding: .6rem .9rem; }
   textarea { display: block; width: 100%; min-height: 3.2rem; max-height: 12rem; resize: vertical; border: 0; outline: 0;
              background: transparent; color: var(--text); font: inherit; padding: 0; }
@@ -43,60 +52,49 @@
   textarea:focus-visible { outline: 1px dashed var(--line); outline-offset: 4px; }
   .hints { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; justify-content: space-between; color: var(--muted); font-size: .8rem; margin-top: .4rem; }
   .hints b { color: var(--text); font-weight: 400; }
-  button { font: inherit; background: transparent; color: var(--accent); border: 1px solid var(--line); padding: .1rem .7rem; cursor: pointer; }
-  button:hover:not(:disabled) { border-color: var(--accent); }
-  button:disabled { color: var(--muted); cursor: default; }
   #error { color: var(--block); min-height: 1.4rem; margin: .3rem 0 0; }
-  details { margin: .5rem 0; color: var(--muted); }
-  summary { cursor: pointer; }
-  .runs { list-style: none; margin: .4rem 0 0; padding: 0; }
-  .runs li { padding: .1rem 0; }
-  .runs button { border: 0; padding: 0; color: var(--info); }
-  .finished { color: var(--allow); } .failed { color: var(--block); } .running, .queued { color: var(--warn); }
   footer { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; justify-content: space-between; color: var(--muted);
-           font-size: .8rem; padding: .5rem 0 .75rem; border-top: 1px solid var(--line); margin-top: .5rem; }
+           font-size: .8rem; padding: .5rem 0 .75rem; border-top: 1px solid var(--line); }
   footer b { color: var(--text); font-weight: 400; }
+  .ready { color: var(--allow); } .starting, .working { color: var(--warn); } .down { color: var(--block); }
   @media (max-width: 560px) { .call { grid-template-columns: 1rem 1fr 5rem; } .call .why { grid-column: 2 / -1; } }
 </style>
 </head>
 <body>
 <div class="app">
   <header>
-    <h1>opencode-wrapper <span>/ ai control layer</span></h1>
-    <p>One message, one run. The agent has bank tools on a synthetic database; every tool call passes through
-      the control gateway and its decision is shown inline.</p>
+    <div>
+      <h1>opencode-wrapper <span>/ ai control layer</span></h1>
+      <p>Chat with an OpenCode agent that runs with our control plugin. It has bank tools on a synthetic database;
+        every tool call passes through the control gateway and its decision is shown inline.</p>
+    </div>
+    <button id="new-session" disabled>+ new session</button>
   </header>
 
-  <main id="transcript" aria-live="polite">
-    <p class="empty" id="empty">No messages yet. Ask the agent to do something, including things it should not be allowed to do.</p>
-  </main>
+  <main id="transcript" aria-live="polite"></main>
 
   <div class="composer">
     <label for="prompt" class="who">message</label>
     <textarea id="prompt" maxlength="4000" aria-describedby="hints"></textarea>
     <div class="hints" id="hints">
       <span><b>enter</b> send &nbsp; <b>shift+enter</b> newline &nbsp; <b>tab</b> insert suggestion</span>
-      <button id="start">send</button>
+      <button id="send" disabled>send</button>
     </div>
   </div>
   <p id="error" role="alert"></p>
 
-  <details>
-    <summary>recent runs</summary>
-    <ul class="runs" id="recent"></ul>
-  </details>
-
   <footer>
+    <span>session <b id="session-id">–</b> <b id="state" class="starting">starting</b></span>
     <span>model <b id="model">–</b></span>
     <span>scope <b id="scope">–</b></span>
-    <span>run <b id="run-id">–</b> <b id="run-status"></b></span>
     <span>commit <b id="commit">–</b></span>
   </footer>
 </div>
 <script>
 const $ = id => document.getElementById(id);
 const SUGGESTION = "What tools do you have? Read application APP-0001 and summarize it in two sentences.";
-let source = null, calls = null, working = null;
+const API = "/api/v1/sessions";
+let session = null, shownEvents = 0, shownFindings = 0, poller = null, working = null;
 
 // All server and user values are written with textContent, never as HTML.
 function el(tag, cls, text) {
@@ -105,93 +103,110 @@ function el(tag, cls, text) {
   if (text != null) node.textContent = String(text);
   return node;
 }
+function append(node) { $("transcript").insertBefore(node, working); node.scrollIntoView({ block: "end" }); return node; }
 function message(kind, who, text) {
-  $("empty").hidden = true;
   const box = el("div", "msg " + kind);
   box.append(el("span", "who", who), document.createTextNode(text));
-  $("transcript").append(box);
-  box.scrollIntoView({ block: "end" });
-  return box;
+  return append(box);
 }
-function setStatus(text) { $("run-status").textContent = text || ""; $("run-status").className = (text || "").split(" ")[0]; }
+function setState(text) { $("state").textContent = text; $("state").className = text; }
+function setReady(ready) { $("send").disabled = !ready; $("new-session").disabled = !ready; }
 
-function addCall(e) {
-  if (e.action_type === "session") return;  // start/end markers, not tool calls
-  const meta = e.interception_metadata || {};
-  const details = e.action_details || {};
-  const hit = (meta.auditor_decisions || []).find(d => d.decision !== "ALLOW");
-  const why = [meta.reason_code || (hit ? hit.rule_id : ""), hit ? "(" + hit.auditor + ")" : ""].filter(Boolean).join(" ");
-  if (!calls) { calls = el("div", "calls"); $("transcript").insertBefore(calls, working); }
-  const line = el("div", "call");
-  line.append(el("span", "arrow", "→"), el("span", "", details.name || e.action_type),
-              el("span", meta.final_decision || "", meta.final_decision || ""), el("span", "why", why));
-  calls.append(line);
-  line.scrollIntoView({ block: "end" });
-}
-
-function showResult(run) {
-  setStatus(run.status + (run.detail ? " (" + run.detail + ")" : ""));
-  if (working) working.remove();
-  working = null;
-  for (const f of run.findings || []) {
+function showEvidence(data) {
+  for (const e of data.events.slice(shownEvents)) {
+    if (e.action_type === "session") continue;  // start/end markers, not tool calls
+    const meta = e.interception_metadata || {};
+    const details = e.action_details || {};
+    const hit = (meta.auditor_decisions || []).find(d => d.decision !== "ALLOW");
+    const reason = meta.reason_code && meta.reason_code !== "EXECUTED" ? meta.reason_code : (hit ? hit.rule_id : "");
+    const line = el("div", "call");
+    line.append(el("span", "arrow", "→"), el("span", "", details.name || e.action_type),
+                el("span", meta.final_decision || "", meta.final_decision || ""),
+                el("span", "why", [reason, hit ? "(" + hit.auditor + ")" : ""].filter(Boolean).join(" ")));
+    append(line);
+  }
+  shownEvents = data.events.length;
+  for (const f of data.findings.slice(shownFindings)) {
     const line = el("div", "finding");
     line.append(el("b", f.severity, f.severity), document.createTextNode("  " + f.rule_id + "  · " + f.plugin));
-    $("transcript").append(line);
+    append(line);
   }
-  const text = run.reply || (run.status === "failed" ? "The run failed before the agent answered." : "The agent gave no text answer.");
-  message(run.reply ? "agent" : "system", run.reply ? "agent" : "system", text);
+  shownFindings = data.findings.length;
 }
 
-function watch(runId, userText) {
-  if (source) source.close();
-  $("transcript").querySelectorAll(".msg, .calls, .finding").forEach(node => node.remove());
-  calls = null;
-  $("run-id").textContent = runId;
-  message("user", "you", userText == null ? "(messages are not stored; this is an earlier run)" : userText);
-  working = message("system", "system", "starting…");
-  source = new EventSource("/api/v1/runs/" + runId + "/stream");
-  source.addEventListener("status", m => {
-    const status = JSON.parse(m.data).status;
-    setStatus(status);
-    if (working) working.lastChild.textContent = status === "queued" ? "waiting for a free slot…" : "the agent is working…";
-  });
-  source.addEventListener("action", m => addCall(JSON.parse(m.data)));
-  source.addEventListener("result", m => {
-    source.close();
-    showResult(JSON.parse(m.data));
-    $("start").disabled = false;
-    loadRecent();
-  });
-  source.onerror = () => { $("error").textContent = "Live connection lost. Open the run under recent runs to reload it."; $("start").disabled = false; };
-}
-
-async function loadRecent() {
-  const data = await (await fetch("/api/v1/runs")).json();
-  $("recent").replaceChildren();
-  for (const r of data.runs.slice(0, 10)) {
-    const item = el("li");
-    const open = el("button", "", r.run_id);
-    open.addEventListener("click", () => watch(r.run_id, null));
-    item.append(open, document.createTextNode("  "), el("span", r.status, r.status),
-                document.createTextNode("  " + r.created_at.replace("T", " ").replace("Z", " UTC")));
-    $("recent").append(item);
+async function startSession() {
+  setReady(false);
+  setState("starting");
+  $("error").textContent = "";
+  $("session-id").textContent = "–";
+  if (session) fetch(API + "/" + session, { method: "DELETE", keepalive: true }).catch(() => {});
+  session = null; shownEvents = 0; shownFindings = 0; working = null;
+  $("transcript").replaceChildren();
+  const note = message("system", "system", "starting a new session: OpenCode server and control gateway…");
+  try {
+    const response = await fetch(API, { method: "POST" });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "start failed");
+    session = (await response.json()).session_id;
+  } catch (problem) {
+    note.lastChild.textContent = "The session could not be started. Press + new session to try again.";
+    setState("down");
+    $("new-session").disabled = false;
+    return;
   }
+  note.lastChild.textContent = "Session ready. The agent remembers earlier messages until you start a new session.";
+  $("session-id").textContent = session.slice(0, 12);
+  setState("ready");
+  setReady(true);
+  $("prompt").focus();
 }
 
 async function send() {
   $("error").textContent = "";
   const prompt = $("prompt").value.trim();
   if (!prompt) { $("error").textContent = "Type a message first, or press tab for a suggestion."; $("prompt").focus(); return; }
-  $("start").disabled = true;
-  const response = await fetch("/api/v1/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }) });
-  if (!response.ok) {
-    const problem = await response.json().catch(() => ({}));
-    $("error").textContent = typeof problem.detail === "string" ? problem.detail : "The run could not be started.";
-    $("start").disabled = false;
+  if (!session) return;
+  setReady(false);
+  setState("working");
+  $("prompt").value = "";
+  message("user", "you", prompt);
+  working = el("div", "msg system");
+  working.append(el("span", "who", "system"), document.createTextNode("the agent is working…"));
+  $("transcript").append(working);
+  working.scrollIntoView({ block: "end" });
+  const current = session;
+  poller = setInterval(async () => {  // tool calls appear while the agent is still working
+    const r = await fetch(API + "/" + current + "/events").catch(() => null);
+    if (r && r.ok && current === session && working) showEvidence(await r.json());
+  }, 400);
+  let response = null;
+  try {
+    response = await fetch(API + "/" + current + "/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }) });
+  } catch (problem) { /* handled below */ }
+  clearInterval(poller);
+  if (current !== session) return;  // a new session was started meanwhile
+  if (response && response.ok) {
+    const data = await response.json();
+    showEvidence(data);
+    working.remove(); working = null;
+    message(data.reply ? "agent" : "system", data.reply ? "agent" : "system",
+            data.reply || (data.ok ? "The agent gave no text answer." : "The agent did not finish this message."));
+    append(el("div", "gap"));
+    setState("ready");
+    setReady(true);
+    $("prompt").focus();
     return;
   }
-  $("prompt").value = "";
-  watch((await response.json()).run_id, prompt);
+  working.remove(); working = null;
+  const detail = response ? (await response.json().catch(() => ({}))).detail : null;
+  if (response && response.status === 404) {
+    $("prompt").value = prompt;
+    await startSession();
+    $("error").textContent = "The previous session had expired, so a new one was started. Send your message again.";
+    return;
+  }
+  $("error").textContent = typeof detail === "string" ? detail : "The message could not be sent.";
+  setState("ready");
+  setReady(true);
 }
 
 $("prompt").placeholder = SUGGESTION;
@@ -203,14 +218,18 @@ $("prompt").addEventListener("keydown", event => {
     $("prompt").value = SUGGESTION;
   } else if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
-    if (!$("start").disabled) send();
+    if (!$("send").disabled) send();
   }
 });
-$("start").addEventListener("click", send);
+$("send").addEventListener("click", send);
+$("new-session").addEventListener("click", startSession);
+window.addEventListener("pagehide", () => {
+  if (session) fetch(API + "/" + session, { method: "DELETE", keepalive: true }).catch(() => {});
+});
 
 fetch("/healthz").then(r => r.json()).then(d => { $("commit").textContent = d.commit; }).catch(() => {});
 fetch("/api/v1/info").then(r => r.json()).then(d => { $("model").textContent = d.model || "not set"; $("scope").textContent = d.application; }).catch(() => {});
-loadRecent();
+startSession();
 </script>
 </body>
 </html>

@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 """Web app: health check, config files, the one-shot run API and the static frontend."""
 import json
 import os
@@ -121,3 +122,34 @@ app.include_router(runs.router)
 app.mount("/css", StaticFiles(directory=STATIC / "css"), name="css")
 app.mount("/js", StaticFiles(directory=STATIC / "js"), name="js")
 app.mount("/", StaticFiles(directory=STATIC / "html", html=True), name="html")
+=======
+"""Web app: health check, the free-agent session API and the static frontend."""
+from contextlib import asynccontextmanager
+import os
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+
+from web import sessions
+
+STATIC = Path(__file__).resolve().parents[1] / "static"
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    yield
+    await sessions.shutdown()  # stop every session's OpenCode server and gateway
+
+
+app = FastAPI(title="AI Control Layer", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok", "commit": os.environ.get("GIT_SHA", "dev")}
+
+
+app.include_router(sessions.router)
+app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
+>>>>>>> Stashed changes

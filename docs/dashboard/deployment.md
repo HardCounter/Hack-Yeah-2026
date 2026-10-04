@@ -98,32 +98,39 @@ browser ──HTTPS──> Caddy ──> app container
 - **The API contract is not fixed yet.** The infrastructure only needs FastAPI to answer `/healthz`
   and serve `/static`. Endpoints are added later without touching the deployment.
 
-### Run API and the OpenCode wrapper page (implemented)
+### Session API and the OpenCode wrapper page (implemented)
 
-The jury page is at `/opencode-wrapper`. It sends one free-form message to an OpenCode agent that runs
-with our plugin, and shows the agent's reply and the gateway's decision for every tool call. Scenarios
-and the test suite live elsewhere; this page has neither.
+The jury page is at `/opencode-wrapper`. It is a chat with an OpenCode agent that runs with our plugin.
+It shows the agent's replies and the gateway's decision for every tool call. Scenarios and the test
+suite live elsewhere; this page has neither.
 
-`web/runs.py` starts `simulation.opencode_runner --free` as a subprocess in its own folder under
-`/data/pipeline-runs`. In free mode the agent gets a generic prompt and is offered every registered
-tool, including the ones policy forbids, so blocks are visible. Each run is still assigned to
-`APP-0001`, because the gateway needs one case per session.
+Opening the page starts a **session** (`web/sessions.py`): one long-lived OpenCode server
+(`opencode serve`) plus one control gateway (`intercept.local --catalog-all`). Messages are sent to
+the running server with `opencode run --server`, so only the session start pays the start-up cost.
+Measured on the instance with `gpt-4.1-mini`: about 1-3 s to start a session, then about 2-4 s per message.
+
+- The agent gets a generic prompt and is offered every registered tool, including the ones policy
+  forbids, so blocks are visible. It remembers earlier messages until a new session is started.
+- All sessions start from one synthetic bank, generated once when the app starts. The gateway gives
+  each session its own copy, so one visitor's writes do not show up in another's session.
+- Each session is assigned to `APP-0001`, because the gateway needs one case per session, and has the
+  policy's tool-call budget (30 calls).
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/v1/info` | Model and assigned application |
-| `POST /api/v1/runs` | Start a run with `{"prompt": "..."}`. Returns `202` and a `run_id` |
-| `GET /api/v1/runs` | The 50 most recent runs |
-| `GET /api/v1/runs/{id}` | Status (`queued`, `running`, `finished`, `failed`), the agent's `reply` and the verifier output |
-| `GET /api/v1/runs/{id}/events` | Sanitized events (each with the gateway's `reason_code`) and findings |
-| `GET /api/v1/runs/{id}/stream` | Server-Sent Events: `status`, one `action` per event, then a final `result` |
+| `POST /api/v1/sessions` | Start a session. Returns `201` and a `session_id` once it is ready |
+| `POST /api/v1/sessions/{id}/messages` | Send `{"prompt": "..."}`. Returns the agent's `reply`, plus all `events` and `findings` so far |
+| `GET /api/v1/sessions/{id}/events` | Sanitized events (each with the gateway's `reason_code`) and findings; polled while the agent works |
+| `DELETE /api/v1/sessions/{id}` | Stop the session's processes |
 
-- `finished` means the agent completed; `failed` means the run itself broke or timed out.
-- Limits: one run at a time, at most three waiting, `RUN_TIMEOUT_S` (300 s) per run, `RUNS_DAILY_CAP`
-  (100) runs per day. Over the limit the API answers `429`.
-- Not available: raw tool arguments and results (events are sanitized by design). The message is passed
-  to the agent but not stored.
-- Tests (`tests/test_web_runs.py`) use a stub runner, so they need no OpenCode and no API key.
+- Limits: `MAX_SESSIONS` (6) live sessions, where the least recently used idle one makes room for a new
+  one; sessions idle for `SESSION_IDLE_S` (900 s) are closed; `RUN_TIMEOUT_S` (120 s) per message;
+  `RUNS_DAILY_CAP` (500) messages per day. Over a limit the API answers `429`.
+- Sessions live in memory. A deploy or restart ends them; the page then starts a new one.
+- Not available: raw tool arguments and results (events are sanitized by design). Messages are passed
+  to the agent but not stored by the web layer.
+- Tests (`tests/test_web_sessions.py`) use a fake backend, so they need no OpenCode and no API key.
 
 ### Guard vs agent
 
