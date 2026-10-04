@@ -26,6 +26,7 @@ from tracing import get_logger
 from intercept.governed.baseline import (
     Baseline, ensure_governed_schema, load_baseline, norm_name, persist_baseline, screening_source_version,
 )
+from intercept.governed.reason_families import classify
 from intercept.governed.registry import InProcessFeedbackChannel, RegistryAdapter, RegistryCallCancelled
 
 IDENTITY_HINTS = frozenset({
@@ -405,6 +406,7 @@ class GovernedGateway:
         allowed = decision.decision in ("ALLOW", "ALERT", "REDACT")
         trace.log("intercept", "action.decided", session=proposal.session_id, action=proposal.action_id,
                   tool=proposal.tool, decision=decision.decision, reason=decision.reason_code,
+                  family=decision.reason_family,
                   tool_error=(allowed and isinstance(result, Mapping) and "error" in result) or None,
                   overhead_ms=round(decision.interception_overhead_ms, 2))
         return decision, result
@@ -816,6 +818,7 @@ class GovernedGateway:
                        started: float, state: _Run, *, backend_ms: float = 0.0) -> GatewayDecision:
         return GatewayDecision(
             action_id=action_id, decision=decision, reason_code=reason,
+            reason_family=None if decision == "ALLOW" else classify(reason),
             policy_version=state.contract.policy_version,
             auditor_decisions=tuple(self._safe_auditor_row(r) for r in auditor_rows),
             modified_arguments=modified,
@@ -890,7 +893,7 @@ class GovernedGateway:
 
     def _deny_without_policy(self, state: _Run, proposal: ActionProposal, reason: str) -> GatewayDecision:
         return GatewayDecision(action_id=proposal.action_id, decision="BLOCK", reason_code=reason,
-                               policy_version=state.contract.policy_version)
+                               reason_family=classify(reason), policy_version=state.contract.policy_version)
 
     async def finish(self, session_id: str) -> None:
         state = self._runs.get(session_id)

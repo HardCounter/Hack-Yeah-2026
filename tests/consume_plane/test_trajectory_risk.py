@@ -1,3 +1,4 @@
+import json
 import asyncio
 
 import pytest
@@ -161,3 +162,117 @@ def test_plugin_reports_each_level_once_and_proposes_feedback(harness):
     el = h.manager.metrics.get("trajectory_expected_loss", session_id="sess_1", agent="onboarding-agent",
                                plugin="trajectory-risk")
     assert el >= 15
+
+
+# --- Gap coverage ---
+
+def egress(seq, host="evil.example", status="completed"):
+    return action(seq, action_type="egress_http", status=status,
+                  action_details={"method": "GET", "host": host, "path": "/"})
+
+
+def llm(seq, tokens):
+    return action(seq, action_type="llm_call",
+                  metrics={"input_tokens": tokens, "output_tokens": 0, "latency_ms": 1.0, "cost_usd": 0.0})
+
+
+def renumber(actions):
+    """Give mixed hand-built actions consecutive seq numbers."""
+    from dataclasses import replace
+    return [replace(a, seq=i, event_id=f"evt_sess_1_{i}") for i, a in enumerate(actions, 1)]
+
+
+@pytest.mark.parametrize(("loss", "level"), [(0, "low"), (2.999, "low"), (3.0, "medium"), (7.99, "medium"),
+                                             (8.0, "high"), (15.0, "critical"), (100, "critical")])
+def test_level_boundaries(loss, level):
+    assert RiskModel().level(loss) == level
+
+
+def test_config_merge_keeps_unrelated_keys_and_never_mutates_defaults():
+    from consume_plane.plugins.trajectory_risk import DEFAULTS
+    m = RiskModel({"signal_weights": {"tool_error": 0.9}, "prerequisites": {"reject_application": ["read_documents"]}})
+    assert m.cfg["signal_weights"]["tool_error"] == 0.9
+    assert m.cfg["signal_weights"]["gateway_blocked"] == 0.15                      # merged per key
+    assert m.cfg["prerequisites"] == {"reject_application": ["read_documents"]}    # replaced as a whole
+    assert DEFAULTS["signal_weights"]["tool_error"] == 0.05
+    assert RiskModel().cfg["prerequisites"] == {"create_client": ["screen_sanctions"]}
+    assert RiskModel({"levels": {"medium": 1.0}}).level(1.0) == "medium"
+
+
+def test_redacted_failed_and_alert_signals():
+    alert = action(3, tool="read_documents", args={"app_id": "APP-0003"},
+                   interception_metadata={"final_decision": "ALERT", "policy_version": "v1"})
+    a = assess(session("read_application", ("read_documents", {"status": "redacted"})) + [alert]
+               + [step(4, "extract_fields", status="failed")])
+    assert [s.name for s in a.signals] == ["gateway_redacted", "gateway_alert", "tool_error"]
+
+
+def test_token_budget_pressure_fires_once():
+    a = assess(renumber([llm(1, 15000), step(2, "read_application"), llm(3, 2000), step(4, "read_documents")]))
+    assert [s.name for s in a.signals] == ["budget_pressure"]      # 15000 < 0.8 * 20000 <= 17000
+    assert a.signals[0].event_id == "evt_sess_1_4"
+
+
+def test_egress_is_a_step_and_taints_only_later_steps():
+    a = assess(renumber([egress(1), step(2, "read_application"), egress(3, status="blocked")]))
+    assert [s.tool for s in a.steps] == ["egress:evil.example", "read_application"]
+    assert a.steps[0].consequence == 4.0 and a.steps[0].probability == pytest.approx(0.02)
+    assert a.steps[1].probability == pytest.approx(1 - 0.98 * 0.9)
+    assert [s.name for s in a.signals] == ["untrusted_external_content", "gateway_blocked"]
+
+
+def test_id_pattern_ignores_non_ids_and_is_configurable():
+    plain = session(("read_documents", {"args": {"app_id": "APP-0003", "note": "hello", "short": "APP-12"}}))
+    assert assess(plain).signals == []
+    custom = session(("read_documents", {"args": {"app_id": "APP-0003", "ref": "case:42"}}))
+    assert [s.name for s in assess(custom, id_pattern=r"^case:\d+$").signals] == ["out_of_scope_target"]
+
+
+def test_assessment_is_deterministic():
+    actions = session("fetch_url", CREATE, CREATE, ("run_code", {"side_effect": "irreversible", "status": "blocked"}))
+    assert assess(actions) == assess(actions)
+
+
+def test_clean_session_emits_metrics_but_no_findings(harness):
+    actions = session(*KYC_READS, CREATE)
+    h = harness(actions, [TrajectoryRisk])
+    h.reader.add_contract(CONTRACT)
+    asyncio.run(h.run())
+    assert h.findings() == [] and h.channel.signals == []
+    assert h.manager.metrics.get("trajectory_expected_loss", session_id="sess_1", agent="onboarding-agent",
+                                 plugin="trajectory-risk") == pytest.approx(0.26)
+
+
+def test_jump_to_critical_halts_without_approval_step(harness):
+    actions = session(("delete_client", {"side_effect": "irreversible", "args": {"client_id": "CLI-0007"}}))
+    h = harness(actions, [TrajectoryRisk], plugin_config={"trajectory-risk": {"levels": {"critical": 1.0}}},
+                feedback=FeedbackConfig(allowed_actions={"trajectory-risk": ["REQUIRE_APPROVAL_FOR", "HALT_SESSION"]}))
+    h.reader.add_contract(CONTRACT)
+    asyncio.run(h.run())
+    assert [f.rule_id for f in h.findings()] == ["risk.trajectory_critical"]
+    assert [s.action for s in h.channel.signals] == ["HALT_SESSION"]
+    assert "CLI-0007" not in json.dumps(h.findings()[0].to_dict())
+
+
+def test_high_uses_configured_approval_tools_and_default_feedback_denies(harness):
+    actions = session(*KYC_READS, CREATE, CREATE)                  # duplicate write: medium -> high
+    cfg = {"trajectory-risk": {"approval_tools": ["create_client"], "levels": {"medium": 0.5, "high": 1.0}}}
+    h = harness(actions, [TrajectoryRisk], plugin_config=cfg,
+                feedback=FeedbackConfig(allowed_actions={"trajectory-risk": ["REQUIRE_APPROVAL_FOR"]}))
+    h.reader.add_contract(CONTRACT)
+    asyncio.run(h.run())
+    assert [s.action for s in h.channel.signals] == ["REQUIRE_APPROVAL_FOR"]
+    assert "create_client" in json.dumps(h.channel.signals[0].policy_modifications)
+
+    h = harness(actions, [TrajectoryRisk], plugin_config=cfg)      # no allowed_actions: proposal is dropped
+    h.reader.add_contract(CONTRACT)
+    asyncio.run(h.run())
+    assert any(f.rule_id == "risk.trajectory_high" for f in h.findings()) and h.channel.signals == []
+
+
+def test_invalid_config_fails_plugin_load(harness):
+    from consume_plane.runtime.loader import PluginLoadError
+    h = harness(session("read_application"), [TrajectoryRisk],
+                plugin_config={"trajectory-risk": {"signal_weights": {"vibes": 0.9}}})
+    with pytest.raises(PluginLoadError, match="unknown signal_weights"):
+        asyncio.run(h.run())

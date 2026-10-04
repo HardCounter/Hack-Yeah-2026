@@ -72,7 +72,6 @@ class GovernedRuntime:
         from consume_plane.adapters.persistence import PersistenceEventSource, PersistenceTrajectoryReader, PersistenceFindingSink
         from consume_plane.plugins.outcome_verifier import OutcomeVerifier
         from consume_plane.plugins.trajectory_risk import TrajectoryRisk
-        from consume_plane.plugins.gateway_violations import GatewayViolations
         import registry
 
         self.audit_path = Path(self.ctx.db).with_name(f"{self.ctx.session_id}.evidence.db")
@@ -124,7 +123,7 @@ class GovernedRuntime:
             plugins={"trajectory-risk": PluginEntry(name="trajectory-risk", config=self.consumer_config["trajectory_risk"])},
         )
         self.manager = await build_manager(cfg, source=self.source, reader=self.reader, sinks=[self.sink],
-                                           channel=InProcessFeedbackChannel(self.gateway, credential), extra_plugins=[TrajectoryRisk, GatewayViolations])
+                                           channel=InProcessFeedbackChannel(self.gateway, credential), extra_plugins=[TrajectoryRisk])
         self.verifier = OutcomeVerifier(bank_paths={self.ctx.session_id: Path(self.ctx.db)}, result_store=self.store)
         await self.verifier.setup(SetupContext(self.verifier.name, {}, self.manager.registry.plugins[0].log))
         self.manager.registry.plugins.append(LoadedPlugin(self.verifier, self.verifier.name, self.verifier.version,

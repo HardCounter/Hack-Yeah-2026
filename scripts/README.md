@@ -45,7 +45,7 @@ refuses to start while the first is running. After Ctrl+C,
 | Process | Planes | Created | Log |
 |---|---|---|---|
 | `intercept.service.local` (port 8080) | Layer 1 gateway | At start | `gateway.log` |
-| (same process, `GovernedRuntime`) | Layer 2 evidence store `bank-runs/<session_id>.evidence.db` and Layer 3 consume plane (trajectory-risk, gateway-violations, outcome verifier, feedback to Layer 1) | When `/intercept-run` binds the session | `control-layer.log` |
+| (same process, `GovernedRuntime`) | Layer 2 evidence store `bank-runs/<session_id>.evidence.db` and Layer 3 consume plane (trajectory-risk, outcome verifier, feedback to Layer 1) | When `/intercept-run` binds the session | `control-layer.log` |
 | `persistence.http_api` (port 8790) | Read-only REST API over `bank-runs/` | At start | `read-api.log` |
 
 The pipeline reports ready only after the gateway answers and the API serves a data read. The

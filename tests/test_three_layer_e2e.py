@@ -77,6 +77,7 @@ def test_missing_sanctions_write_prevented_and_lifecycle_verifies(sessions):
     agent.scripted(s)
     create = s.runtime.decisions[-1]
     assert create.reason_code == "SCREENING_NOT_COMPLETE"
+    assert create.reason_family == "PREREQUISITE"  # deny classified by Layer 1, not a consume plugin
     assert create.decision in {"BLOCK", "REQUIRE_APPROVAL"}
     with sqlite3.connect(s.ctx.db) as con:
         assert con.execute("SELECT COUNT(*) FROM clients WHERE application_id=?", (s.app_id,)).fetchone()[0] == 0
@@ -86,8 +87,6 @@ def test_missing_sanctions_write_prevented_and_lifecycle_verifies(sessions):
     assert create_event["status"] in {"blocked", "pending_approval"}
     # Persisted blocked trajectory is handled by the real consumer ledger.
     assert s.runtime.manager.ledger.is_settled(create_event["event_id"], "trajectory-risk", "1.0.0")
-    findings = s.runtime.runner.run(s.runtime.sink.findings(s.id))
-    assert any(create_event["event_id"] in f["evidence_event_ids"] for f in findings)
 
 
 def test_scope_drift_drives_real_risk_feedback_then_restricts(sessions):

@@ -29,7 +29,7 @@
         "required": ["id", "type", "config"],
         "properties": {
           "id": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"},
-          "type": {"enum": ["tool_allowlist", "pattern_scanner", "webhook"]},
+          "type": {"enum": ["tool_allowlist", "pattern_scanner", "domain_blocklist", "webhook"]},
           "config": {"type": "object"}
         },
         "allOf": [
@@ -44,6 +44,15 @@
              "properties": {
                "patterns": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}},
                "action": {"enum": ["BLOCK", "REDACT", "ALERT"]}
+             }
+           }}}},
+          {"if": {"properties": {"type": {"const": "domain_blocklist"}}},
+           "then": {"properties": {"config": {
+             "type": "object", "additionalProperties": false, "required": ["domains", "action"],
+             "properties": {
+               "domains": {"type": "array", "maxItems": 512,
+                           "items": {"type": "string", "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$"}},
+               "action": {"enum": ["BLOCK", "REQUIRE_APPROVAL", "ALERT"]}
              }
            }}}},
           {"if": {"properties": {"type": {"const": "webhook"}}},

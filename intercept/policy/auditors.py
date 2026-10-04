@@ -16,6 +16,31 @@ CLASSIFIED = {
     "private_key": re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.DOTALL),
     "api_key": re.compile(r"\bpgw_live_[A-Za-z0-9]+\b"),
 }
+DOMAIN = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")
+HOST_TOKEN = re.compile(r"(?i)(?<![a-z0-9-])(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}")
+
+
+def _hosts(value):
+    """Hostnames named in a string: URL hosts, email domains and bare domain tokens."""
+    found = set()
+    for token in re.split(r"[\s\"'<>()\[\],;]+", value):
+        if "://" in token:
+            try:
+                token = urlsplit(token).hostname or ""
+            except ValueError:
+                continue
+        token = token.rpartition("@")[2]
+        try:  # internationalized names are compared in their punycode form
+            token = token.encode("idna").decode("ascii")
+        except UnicodeError:
+            pass
+        found.update(match.lower().rstrip(".") for match in HOST_TOKEN.findall(token))
+    return found
+
+
+def _blocklisted(host, domains):
+    labels = host.split(".")
+    return any(".".join(labels[i:]) in domains for i in range(len(labels) - 1))
 
 
 def _contains_literal(value, pattern):
@@ -93,6 +118,12 @@ def validate_specs(specs):
                 raise ValueError("invalid classified scanner")
             if not isinstance(c["classes"], list) or not c["classes"] or any(x not in CLASSIFIED for x in c["classes"]):
                 raise ValueError("unknown privacy or secret class")
+        elif spec["type"] == "domain_blocklist":
+            if set(c) != {"domains", "action"} or c["action"] not in ("BLOCK", "REQUIRE_APPROVAL", "ALERT"):
+                raise ValueError("invalid domain blocklist")
+            if (not isinstance(c["domains"], list) or len(c["domains"]) > 512
+                    or any(not isinstance(d, str) or not DOMAIN.fullmatch(d) for d in c["domains"])):
+                raise ValueError("blocklist entries must be lowercase hostnames")
         elif spec["type"] == "webhook":
             if set(c) != {"endpoint", "timeout_ms", "on_failure"}:
                 raise ValueError("invalid webhook")
@@ -183,6 +214,22 @@ class Pipeline:
                         changed |= decision == "REDACT"
                 except ValueError:
                     decision, code = "BLOCK", "SIGNATURE_IN_KEY"
+            elif spec["type"] == "domain_blocklist":
+                domains = frozenset(config["domains"])
+
+                def strings(value):
+                    if isinstance(value, str):
+                        yield value
+                    elif isinstance(value, list):
+                        for v in value:
+                            yield from strings(v)
+                    elif isinstance(value, dict):
+                        for k, v in value.items():
+                            yield from strings(k)
+                            yield from strings(v)
+
+                if any(_blocklisted(host, domains) for text in strings(checked["arguments"]) for host in _hosts(text)):
+                    decision, code = config["action"], "DOMAIN_BLOCKLISTED"
             elif blocked:
                 # Semantic/external work never needs to run after a hard deny.
                 code = "SKIPPED_HARD_DENY"
