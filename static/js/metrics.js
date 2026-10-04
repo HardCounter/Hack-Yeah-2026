@@ -34,11 +34,33 @@
     };
   }
 
-  function kpi(view, label, value, sub, tone) {
+  function kpi(view, label, value, sub, tone, extra) {
     const d = el('a', 'kpi'); d.href = '#metrics/' + view; d.title = 'Show the records behind this number';
     const v = el('span', 'value' + (tone ? ' v-' + tone : ''), value);
-    d.append(el('span', 'label', label), v, el('span', 'sub', sub));
+    d.append(el('span', 'label', label), v, el('span', 'sub', sub), ...(extra ? [extra] : []));
     return d;
+  }
+
+  // Tokens per time slice, oldest left, from the recorded actions behind the Model spend total. Hover a bar for its numbers.
+  function spendChart(rows) {
+    const N = 20, H = 24, NS = 'http://www.w3.org/2000/svg';
+    const node = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+    const svg = node('svg', { class: 'spark', viewBox: `0 0 ${N * 5} ${H}`, preserveAspectRatio: 'none', role: 'img' });
+    if (!rows.length) return svg;
+    const end = Date.now(), start = Math.min(...rows.map(a => +time(a))), w = Math.max(1, (end - start) / N);
+    const sums = Array(N).fill(0), cost = Array(N).fill(0);
+    for (const a of rows) { const i = Math.min(N - 1, Math.floor((time(a) - start) / w)); sums[i] += a.usage.total_tokens; cost[i] += a.usage.cost_usd; }
+    const max = Math.max(...sums) || 1;
+    svg.setAttribute('aria-label', `Tokens per ${Math.round(w / 60e3)} minutes, peak ${fmtNum(max)}`);
+    sums.forEach((n, i) => {
+      const h = n ? Math.max(1, n / max * H) : 0, g = node('g', {}), t = node('title', {});
+      t.textContent = `${fmtTime(new Date(start + i * w))}–${fmtTime(new Date(start + (i + 1) * w))}
+${fmtNum(n)} tokens · ${usd(cost[i])}`;
+      g.append(t, node('rect', { class: 'hit', x: i * 5, y: 0, width: 5, height: H }),
+        node('rect', { class: 'bar', x: i * 5 + .5, y: H - h, width: 4, height: h }));
+      svg.append(g);
+    });
+    return svg;
   }
 
   function render(fresh) {
@@ -52,7 +74,7 @@
       kpi('held', 'Held for approval', num(by?.REQUIRE_APPROVAL), 'requests awaiting a human', 'hold'),
       kpi('tasks', 'Tasks succeeded', tasks.total ? pct(tasksOk, tasks.total) + '%' : '—', `${tasksOk} of ${tasks.total} agent tasks`, 'allow'),
       kpi('spend', 'Model spend', usage ? usd(usage.totals.cost_usd) : '—',
-        usage ? `${fmtNum(usage.totals.total_tokens)} tokens${usage.totals.source === 'reported' ? '' : ' · estimate'}` : 'tokens'),
+        usage ? `${fmtNum(usage.totals.total_tokens)} tokens${usage.totals.source === 'reported' ? '' : ' · estimate'}` : 'tokens', null, spendChart(actions)),
       kpi('latency', 'Gateway p95', ms(perf?.interception_overhead_ms.p95), perf ? `all checks · p50 ${ms(perf.interception_overhead_ms.p50)}` : 'all checks'),
     );
 

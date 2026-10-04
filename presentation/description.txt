@@ -31,7 +31,16 @@ Sentinel Interlock was started from scratch at HackYeah 2026. No code or design 
 
 
 
+https://hackyeah.hardcounter.alejez.pl/
 Table number A7
 HardCounter
 
 
+
+
+
+
+How to open the project?
+
+
+The quickest way to see Sentinel Interlock is the hosted demo at https://hackyeah.hardcounter.alejez.pl/, which needs no setup. To run it yourself, clone https://github.com/HardCounter/Hack-Yeah-2026 and run cp .env.example .env, then docker compose up -d --build. Open http://localhost to get the live dashboard; the health check is at http://localhost/healthz. If you'd rather run it without Docker, install uv (Python 3.12) and use uv sync --locked from the repo root. Then uv run python -m simulation.agent APP-0001 --driver scripted (or scripts/run_demo.sh) runs the governed end-to-end KYC agent demo offline, and uv run --locked --offline pytest (or scripts/test.sh) runs the full self-testing suite with its allowed, blocked and redacted cases. Both work offline and need no API key. To turn on the AI-based checks, such as the semantic goal-alignment judge, put OPENAI_API_KEY in .env and set GOAL_JUDGE=1. You can change the live policy by switching between the lenient, standard and strict presets in config/presets/, and changes take effect without a restart.
