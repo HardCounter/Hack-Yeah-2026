@@ -43,7 +43,7 @@
     return s;
   }
 
-  const samples = [documentedSession(), ...Array.from({ length: 17 }, (_, i) => sampleSession(i))];
+  const samples = App.sessions = [documentedSession(), ...Array.from({ length: 17 }, (_, i) => sampleSession(i))];
   const jitter = Object.fromEntries(samples.map(s => [s.id, (rnd() - .5) * .5]));  // keeps equal-impact dots apart
 
   const svg = $('#riskMap');
@@ -60,13 +60,13 @@
 
   function drawFrame() {
     svg.append(node('rect', { x: M.l, y: M.t, width: PW, height: PH, class: 'plot' }));
-    for (const p of [0, .25, .5, .75, 1]) {
-      svg.append(node('line', { x1: x(p), x2: x(p), y1: M.t, y2: M.t + PH, class: 'grid-line' }),
-        node('text', { x: x(p), y: M.t + PH + 16, 'text-anchor': 'middle', class: 'tick' }, p.toFixed(2)));
+    for (let p = 0; p <= 1; p += .125) {  // labelled every 0.25, a line in between too
+      svg.append(node('line', { x1: x(p), x2: x(p), y1: M.t, y2: M.t + PH, class: 'grid-line' }));
+      if (p * 4 % 1 === 0) svg.append(node('text', { x: x(p), y: M.t + PH + 16, 'text-anchor': 'middle', class: 'tick' }, p.toFixed(2)));
     }
+    for (let c = 1; c <= 10; c++) svg.append(node('line', { x1: M.l, x2: M.l + PW, y1: y(c), y2: y(c), class: 'grid-line' }));
     for (const [c, name] of IMPACT_TICKS) {
-      svg.append(node('line', { x1: M.l, x2: M.l + PW, y1: y(c), y2: y(c), class: 'grid-line' }),
-        node('text', { x: M.l - 6, y: y(c) + 4, 'text-anchor': 'end', class: 'tick' }, `${c} ${name}`));
+      svg.append(node('text', { x: M.l - 6, y: y(c) + 4, 'text-anchor': 'end', class: 'tick' }, `${c} ${name}`));
     }
     svg.append(node('line', { x1: M.l, x2: M.l + PW, y1: M.t + PH, y2: M.t + PH, class: 'axis' }),
       node('line', { x1: M.l, x2: M.l, y1: M.t, y2: M.t + PH, class: 'axis' }),
@@ -111,6 +111,6 @@
   const swatch = (cls, text) => { const s = el('span'); s.append(el('i', cls), text); return s; };
   $('#riskLegend').append(
     ...Risk.levels.slice().reverse().map(([lvl]) => swatch(lvl, MEANING[lvl])),
-    el('p', 'legend-note', 'Size = steps taken · hover a dot for its steps'));
+    el('p', 'legend-note', 'Size - steps taken'), el('p', 'legend-note', 'Hover a dot for its steps'));
   render();
 })();

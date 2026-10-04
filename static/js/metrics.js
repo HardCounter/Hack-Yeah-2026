@@ -8,7 +8,7 @@
     ['REDACTED', 'PII-PESEL', 'Personal data', 'Open KYC file for PESEL [REDACTED_PESEL]…'],
     ['REDACTED', 'PII-IBAN', 'Personal data', 'Set payout account to [REDACTED_IBAN]…'],
     ['BLOCKED', 'SEC-KEY', 'Secret scanner', 'Use key [REDACTED_SECRET] to call the registry…'],
-    ['ESCALATED', 'TOOL-BULK', 'Action approval', 'Freeze all accounts flagged in…'],
+    ['HELD', 'TOOL-BULK', 'Action approval', 'Freeze all accounts flagged in…'],
     ['BLOCKED', 'EXP-DESER', 'Exploit signatures', 'Load these weights with pickle.loads(…)'],
     ['ALLOWED', '—', null, 'What documents are required for a sole trader…'],
     ['ALLOWED', '—', null, 'Explain the difference between KYC and CDD…'],
@@ -40,14 +40,17 @@
   function render(fresh) {
     const ev = App.events, n = ev.length;
     const count = v => ev.filter(e => e.verdict === v).length;
-    const blocked = count('BLOCKED'), redacted = count('REDACTED'), escalated = count('ESCALATED');
+    const blocked = count('BLOCKED'), redacted = count('REDACTED'), held = count('HELD');
     const tokens = ev.reduce((s, e) => s + e.tokens, 0);
+    // A task (one agent session on the risk map) succeeded if it finished without being halted.
+    const tasks = App.sessions, tasksOk = tasks.filter(s => Risk.level(s.loss) !== 'CRITICAL').length;
     const gw = ev.map(e => e.controls.filter(c => c.name !== 'AI injection check').reduce((s, c) => s + c.ms, 0));
     $('#kpis').replaceChildren(
-      kpi('Requests', fmtNum(n), 'since start'),
-      kpi('Blocked', fmtNum(blocked), `${pct(blocked, n)}% of requests`, 'block'),
-      kpi('Redacted', fmtNum(redacted), `${pct(redacted, n)}% forwarded clean`, 'warn'),
-      kpi('Held for approval', fmtNum(escalated), 'awaiting a human', 'hold'),
+      kpi('Requests', fmtNum(n), 'prompts and tool calls since start'),
+      kpi('Blocked', fmtNum(blocked), `requests · ${pct(blocked, n)}% of all`, 'block'),
+      kpi('Redacted', fmtNum(redacted), `requests · ${pct(redacted, n)}% forwarded clean`, 'warn'),
+      kpi('Held for approval', fmtNum(held), 'requests awaiting a human', 'hold'),
+      kpi('Tasks succeeded', pct(tasksOk, tasks.length) + '%', `${tasksOk} of ${tasks.length} agent tasks`, 'allow'),
       kpi('Model spend', '$' + (tokens / 1e6 * PRICE_PER_MTOK).toFixed(2), `${fmtNum(tokens)} tokens`),
       kpi('Gateway p95', ms(quantile(gw, .95)), 'deterministic checks'),
     );

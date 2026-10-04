@@ -6,11 +6,13 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const sleep = ms => new Promise(r => setTimeout(r, reduced ? 0 : ms));
 const fmtTime = d => d.toLocaleTimeString('en-GB', { timeZone: 'Europe/Warsaw' });
-const fmtNum = n => Number(n).toLocaleString('en-GB');
+const fmtNum = n => Number(n).toLocaleString('en-GB').replace(/,/g, ' ');  // space as thousands separator
+/* Preset names are stored lowercase; show them capitalised, e.g. "Standard (edited)" */
+const label = name => name.replace(/^(lenient|standard|strict)/, w => w[0].toUpperCase() + w.slice(1));
 
 /* Decision words used across the console, mapped to colour classes */
-const TONE = { BLOCKED: 'block', REDACTED: 'warn', ESCALATED: 'hold', ALLOWED: 'allow',
-  ACTIVE: 'allow', BLOCK: 'block', REDACT: 'warn', ESCALATE: 'hold', ALERT: 'warn', FAIL: 'block', INCOMPLETE: 'warn', PASS: 'allow',
+const TONE = { BLOCKED: 'block', REDACTED: 'warn', HELD: 'hold', ALLOWED: 'allow',
+  ACTIVE: 'allow', BLOCK: 'block', REDACT: 'warn', ALERT: 'warn', FAIL: 'block', INCOMPLETE: 'warn', PASS: 'allow',
   LOW: 'allow', MEDIUM: 'warn', HIGH: 'block', CRITICAL: 'crit',
   'FAILED POSTCONDITIONS': 'block', 'VERIFICATION INCOMPLETE': 'warn', 'VERIFIED SUCCESS': 'allow' };
 const badge = word => el('span', 'badge ' + (TONE[word] || 'neutral'), word);
@@ -47,6 +49,7 @@ const App = {
   configName: null,
   tokensUsed: 0,
   events: [],          // audit log, newest first
+  sessions: [],        // agent sessions (tasks) on the risk map
   listeners: {},
   on(evt, fn) { (this.listeners[evt] ||= []).push(fn); },
   emit(evt, data) { (this.listeners[evt] || []).forEach(fn => fn(data)); },
@@ -54,12 +57,14 @@ const App = {
   setActive(name, config) {
     this.configName = name; this.config = config;
     // only server-side configs are remembered; an edited, unsaved one lasts until reload
-    if (/^[a-z0-9][a-z0-9_-]*$/.test(name)) try { localStorage.setItem('activeConfig', name); } catch {}
-    $$('.activeName').forEach(n => n.textContent = name);
+    if (/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) try { localStorage.setItem('activeConfig', name); } catch {}
+    this.tokensUsed = 0;  // the session budget restarts with each config
+    $$('.activeName').forEach(n => n.textContent = label(name));
     this.emit('config', config);
   },
   record(event) {
     this.events.unshift(event);
+    this.tokensUsed += event.tokens || 0;
     if (this.events.length > 500) this.events.pop();
     this.emit('event', event);
   },

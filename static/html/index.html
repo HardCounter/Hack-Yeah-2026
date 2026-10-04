@@ -26,7 +26,7 @@
   </div>
   <nav class="wrap tabs" aria-label="Sections">
     <a href="/opencode-wrapper/"><span class="n">1</span><span class="t">Prompt it</span><span class="d">Send a prompt to OpenCode</span></a>
-    <a href="#config"><span class="n">2</span><span class="t">Config</span><span class="d">Choose and edit the control settings</span></a>
+    <a href="#config"><span class="n">2</span><span class="t">Config</span><span class="d">Configure your agentic tools</span></a>
     <a href="#metrics"><span class="n">3</span><span class="t">Metrics</span><span class="d">Decisions, cost, latency and audit log</span></a>
     <a href="#tests"><span class="n">4</span><span class="t">Tests</span><span class="d">Self-test suite and agent checks</span></a>
   </nav>
@@ -39,7 +39,6 @@
     <div class="page-head">
       <div>
         <h1 id="h-config">Config</h1>
-        <p>A config sets what the controls do: budgets, the injection threshold, how personal data and secrets are handled, and which agent tools need approval. Pick one, adjust it, and make it active.</p>
       </div>
     </div>
 
@@ -71,8 +70,11 @@
 
         <fieldset class="section">
           <h3>Prompt injection</h3>
-          <label class="slider"><span>AI check blocks at score ≥</span><input type="range" name="block_threshold" min="0.5" max="0.99" step="0.01"><output data-for="block_threshold"></output></label>
-          <p class="hint">Lower blocks more. Presets: lenient 0.95, standard 0.90, strict 0.80.</p>
+          <p class="hint">How sure the AI check must be that a message is an attack. Each level must be at or below the one above it; below the last one the message passes.</p>
+          <label class="slider"><span>Block when the AI is at least this sure</span><input type="range" name="block_threshold" min="0.7" max="0.99" step="0.01"><output data-for="block_threshold"></output></label>
+          <p class="hint">Presets: lenient 95%, standard 90%, strict 80%.</p>
+          <label class="slider"><span>Hold for human approval from</span><input type="range" name="approve_threshold" min="0.5" max="0.99" step="0.01"><output data-for="approve_threshold"></output></label>
+          <label class="slider"><span>Alert only from</span><input type="range" name="alert_threshold" min="0.3" max="0.99" step="0.01"><output data-for="alert_threshold"></output></label>
           <div class="two">
             <label class="field"><span>Known attack phrases <small>one per line, literal match</small></span><textarea name="patterns" rows="6"></textarea></label>
             <label class="field"><span>On match</span><select name="patterns_action"><option value="BLOCK">Block</option><option value="REDACT">Redact</option><option value="ALERT">Alert only</option></select></label>
@@ -98,7 +100,7 @@
         <fieldset class="section">
           <h3>Save as a new config</h3>
           <div class="two">
-            <label class="field"><span>Name <small>lowercase, digits, - and _</small></span><input type="text" name="name" pattern="[a-z0-9][a-z0-9_\-]{0,39}" maxlength="40" placeholder="e.g. strict-eu"></label>
+            <label class="field"><span>Name <small>letters, digits, - and _</small></span><input type="text" name="name" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,39}" maxlength="40" placeholder="e.g. strict-eu"></label>
             <label class="field"><span>Admin token <small>required to save on the server</small></span><input type="password" name="token" autocomplete="off"></label>
           </div>
           <label class="field"><span>Description</span><input type="text" name="description" maxlength="200"></label>
@@ -116,11 +118,10 @@
     <div class="page-head">
       <div>
         <h1 id="h-metrics">Metrics</h1>
-        <p>What the control layer decided, what it cost and how fast it was.</p>
       </div>
       <div class="actions">
         <label class="cap muted">Show
-          <select id="mFilter"><option value="">All decisions</option><option>BLOCKED</option><option>REDACTED</option><option>ESCALATED</option><option>ALLOWED</option></select>
+          <select id="mFilter"><option value="">All decisions</option><option>BLOCKED</option><option>REDACTED</option><option value="HELD">Held for approval</option><option>ALLOWED</option></select>
         </label>
         <button class="btn ghost" id="mExport" type="button">Export audit log (JSONL)</button>
       </div>
@@ -184,7 +185,6 @@
     <div class="page-head">
       <div>
         <h1 id="h-tests">Tests</h1>
-        <p>Positive cases must be allowed, negative cases must be blocked or redacted. The same suite runs from a fresh clone without an API key.</p>
       </div>
       <div class="actions">
         <span class="cmd"><code>uv run pytest</code><button class="btn ghost sm" id="copyCmd" type="button">Copy</button></span>

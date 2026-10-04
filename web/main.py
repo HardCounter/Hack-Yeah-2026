@@ -15,7 +15,7 @@ from web import sessions
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "static"
 PRESETS = ROOT / "config" / "presets"  # committed lenient / standard / strict
-NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}")
 MAX_CONFIG_BYTES = 64_000
 
 
@@ -68,6 +68,10 @@ def validate(config: dict, tools: set[str]) -> None:
     guard = config.get("semantic_guard")
     need(isinstance(guard, dict) and type(guard.get("block_threshold")) in (int, float)
          and 0 < guard["block_threshold"] <= 1, "semantic_guard.block_threshold must be in (0, 1]")
+    # Optional lower tiers: hold for approval, then alert only. Each at or below the one above.
+    levels = [guard[k] for k in ("block_threshold", "approve_threshold", "alert_threshold") if k in guard]
+    need(all(type(v) in (int, float) and 0 < v <= 1 for v in levels) and levels == sorted(levels, reverse=True),
+         "semantic_guard thresholds must be in (0, 1] with block >= approve >= alert")
     try:
         Pipeline(config.get("auditors"))
     except (ValueError, TypeError) as e:
@@ -104,8 +108,8 @@ async def save_config(name: str, request: Request, authorization: str = Header("
     if not secrets.compare_digest(authorization.encode(), f"Bearer {token}".encode()):
         raise HTTPException(401, "admin token required")
     if not NAME.fullmatch(name):
-        raise HTTPException(422, "name: lowercase letters, digits, - and _, up to 40 characters")
-    if (PRESETS / f"{name}.json").exists():
+        raise HTTPException(422, "name: letters, digits, - and _, up to 40 characters")
+    if name.lower() in {p.stem for p in PRESETS.glob("*.json")}:
         raise HTTPException(409, "presets are read-only; save under another name")
     body = await request.body()
     if len(body) > MAX_CONFIG_BYTES:

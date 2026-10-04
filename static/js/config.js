@@ -2,6 +2,8 @@
 (() => {
   const form = $('#cfgForm'), f = form.elements;
   const PRESETS = ['lenient', 'standard', 'strict'];
+  const NEW = 'New config';
+  const THRESHOLDS = ['block_threshold', 'approve_threshold', 'alert_threshold'];  // highest first
   const AUDITORS = {
     signature: { id: 'signature-scanner', type: 'pattern_scanner', config: { patterns: [], action: 'BLOCK' } },
     privacy: { id: 'privacy-scanner', type: 'classified_scanner', config: { classes: ['pesel', 'iban'], action: 'REDACT' } },
@@ -19,7 +21,7 @@
   function showState() {
     const s = $('#cfgState');
     const active = editing === App.configName && !dirty;
-    s.textContent = dirty ? 'Unsaved changes' : active ? 'Active' : PRESETS.includes(editing) ? 'Preset' : 'Saved';
+    s.textContent = dirty ? 'Unsaved changes' : active ? 'Active' : PRESETS.includes(editing) ? 'Preset' : editing === NEW ? 'Not saved' : 'Saved';
     s.className = 'badge ' + (dirty ? 'warn' : active ? 'allow' : 'neutral');
     $('#cfgActivate').disabled = active;
     $('#cfgActivate').textContent = dirty ? 'Apply changes' : 'Make active';
@@ -28,9 +30,19 @@
 
   const showOutputs = () => form.querySelectorAll('output[data-for]').forEach(o => {
     const v = Number(f[o.dataset.for].value);
-    o.textContent = o.dataset.for === 'block_threshold' ? v.toFixed(2) : fmtNum(v);
+    o.textContent = THRESHOLDS.includes(o.dataset.for) ? Math.round(v * 100) + '%' : fmtNum(v);
   });
-  form.addEventListener('input', e => { showOutputs(); if (!['name', 'token', 'description'].includes(e.target.name)) markDirty(); });
+  // Keep block >= approval >= alert: moving one slider pushes the others out of its way.
+  function orderThresholds(moved) {
+    const i = THRESHOLDS.indexOf(moved);
+    if (i < 0) return;
+    const v = +f[moved].value;
+    THRESHOLDS.forEach((n, j) => {
+      if (j < i && +f[n].value < v) f[n].value = v;
+      if (j > i && +f[n].value > v) f[n].value = v;
+    });
+  }
+  form.addEventListener('input', e => { orderThresholds(e.target.name); showOutputs(); if (!['name', 'token', 'description'].includes(e.target.name)) markDirty(); });
   form.addEventListener('change', e => { if (e.target.type === 'checkbox') markDirty(); });
 
   function renderTools(c) {
@@ -48,19 +60,22 @@
 
   function fill(name, c) {
     loaded = structuredClone(c); editing = name; dirty = false;
-    $('#cfgEditing').textContent = name;
+    $('#cfgEditing').textContent = label(name);
     $('#cfgDesc').textContent = c.description || 'No description.';
     f.tokens.value = c.budget.tokens;
     f.tool_calls.value = c.budget.tool_calls;
     f.max_output_tokens.value = c.max_output_tokens;
     f.cost_usd.value = c.budget.cost_usd ?? '';
-    f.block_threshold.value = c.semantic_guard?.block_threshold ?? 0.9;
+    const g = c.semantic_guard || {};
+    f.block_threshold.value = g.block_threshold ?? 0.9;
+    f.approve_threshold.value = g.approve_threshold ?? f.block_threshold.value - 0.15;
+    f.alert_threshold.value = g.alert_threshold ?? f.approve_threshold.value - 0.15;
     const sig = auditor(c, 'signature');
     f.patterns.value = sig.config.patterns.join('\n');
     f.patterns_action.value = sig.config.action;
     f.privacy_action.value = auditor(c, 'privacy').config.action;
     f.secret_action.value = auditor(c, 'secret').config.action;
-    f.name.value = PRESETS.includes(name) ? '' : name;
+    f.name.value = PRESETS.includes(name) || name === NEW ? '' : name;
     f.description.value = c.description || '';
     renderTools(c); showOutputs(); showState();
     $$('#cfgList button').forEach(b => b.setAttribute('aria-pressed', b.value === name));
@@ -74,7 +89,8 @@
     c.require_approval = checked('approve');
     c.budget = { ...c.budget, tokens: +f.tokens.value, tool_calls: +f.tool_calls.value, cost_usd: f.cost_usd.value === '' ? null : +f.cost_usd.value };
     c.max_output_tokens = +f.max_output_tokens.value;
-    c.semantic_guard = { on_error: 'BLOCK', ...c.semantic_guard, block_threshold: +f.block_threshold.value };
+    c.semantic_guard = { on_error: 'BLOCK', ...c.semantic_guard, block_threshold: +f.block_threshold.value,
+      approve_threshold: +f.approve_threshold.value, alert_threshold: +f.alert_threshold.value };
     const set = (key, conf) => {
       const a = auditor(c, key); a.config = { ...a.config, ...conf };
       c.auditors = c.auditors.filter(x => x.id !== a.id).concat(a);
@@ -108,8 +124,7 @@
       ul.append(el('li', 'picker-group', title));
       for (const it of list) {
         const li = el('li'), b = el('button'); b.type = 'button'; b.value = it.name;
-        const name = el('span', 'mono', it.name); name.append(el('span', 'sub', it.description || ''));
-        b.append(name);
+        b.append(el('span', 'mono', label(it.name)));
         if (it.name === App.configName) b.append(badge('ACTIVE'));
         b.setAttribute('aria-pressed', it.name === editing);
         b.onclick = () => load(it.name);
@@ -117,7 +132,18 @@
       }
     };
     group('Presets', items.filter(i => i.preset));
+    const li = el('li'), add = el('button', 'picker-add', '+ New config'); add.type = 'button';
+    add.setAttribute('aria-pressed', editing === NEW);
+    add.onclick = newConfig;
+    li.append(add); ul.append(li);
     group('Saved', items.filter(i => !i.preset));
+  }
+
+  // A new config starts from the standard preset's values, with no name yet.
+  async function newConfig() {
+    if (dirty && !confirmDiscard()) return;
+    try { fill(NEW, { ...await App.api('/standard'), description: '' }); say('Adjust the settings, then name and save it below.'); f.name.focus(); }
+    catch (e) { say('Could not start a new config: ' + e.message, true); }
   }
 
   $('#cfgActivate').onclick = async () => {
@@ -125,7 +151,7 @@
     const name = dirty ? `${editing} (edited)` : editing;
     App.setActive(name, c);
     loaded = c; dirty = false;
-    say(`"${name}" is now active in this browser.`);
+    say(`"${label(name)}" is now active in this browser.`);
     showState(); refreshList();
   };
 
@@ -138,8 +164,8 @@
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const name = f.name.value.trim();
-    if (!f.name.checkValidity() || !name) { say('Enter a name: lowercase letters, digits, - and _.', true); f.name.focus(); return; }
-    if (PRESETS.includes(name)) { say('Presets are read-only. Choose another name.', true); f.name.focus(); return; }
+    if (!f.name.checkValidity() || !name) { say('Enter a name: letters, digits, - and _.', true); f.name.focus(); return; }
+    if (PRESETS.includes(name.toLowerCase())) { say('Presets are read-only. Choose another name.', true); f.name.focus(); return; }
     const c = { ...collect(), name };
     try {
       await App.api('/' + encodeURIComponent(name), {

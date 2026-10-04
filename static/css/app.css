@@ -127,6 +127,8 @@ tr.fresh td { animation: fresh 900ms ease-out; }
 .picker button:hover { background: var(--paper-2); }
 .picker button[aria-pressed="true"] { background: var(--paper-3); box-shadow: inset 0.1875rem 0 0 var(--ink); font-weight: 600; }
 .picker .sub { display: block; font: 400 .8125rem/1.4 var(--sans); color: var(--ink-3); }
+.picker .picker-add { background: var(--paper-2); color: var(--ink-2); font-weight: 600; }
+.picker .picker-add:hover { background: var(--paper-3); }
 .picker-group { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); padding: 0.625rem 1rem 0.25rem; background: var(--paper-2); border-top: thin solid var(--rule); }
 
 
@@ -142,6 +144,7 @@ tr.fresh td { animation: fresh 900ms ease-out; }
 
 /* Metrics */
 .kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); background: var(--paper); border: thin solid var(--rule); margin-bottom: 1.25rem; }
+#kpis { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .kpi { padding: 0.875rem 1rem; min-width: 0; }
 .kpi + .kpi { border-left: thin solid var(--rule); }
 .kpi .label { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); }
@@ -202,8 +205,8 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
   .grid.split, .grid.sidebar, .grid.halves { grid-template-columns: minmax(0, 1fr); }
   .risk-grid { grid-template-columns: minmax(0, 1fr); }
   .risk-side { border-left: 0; border-top: thin solid var(--rule); }
-  .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .kpi:nth-child(4) { border-left: 0; }
+  .kpis, #kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .kpi:nth-child(3n+1) { border-left: 0; }
   .kpi:nth-child(n+4) { border-top: thin solid var(--rule); }
 }
 @media (max-width: 40em) {
@@ -211,7 +214,7 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
   .tabs { grid-template-columns: 1fr; }
   .tabs a + a { padding-left: 0; border-left: 0; border-top: thin solid var(--rule); }
   .tabs .d { display: none; }
-  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpis, #kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kpi:nth-child(odd) { border-left: 0; }
   .kpi:nth-child(4) { border-left: thin solid var(--rule); }
   .kpi:nth-child(n+3) { border-top: thin solid var(--rule); }
