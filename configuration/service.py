@@ -162,7 +162,9 @@ class ConfigService:
                 data = source.read(1_000_001)
             if len(data) > 1_000_000:
                 raise ValueError("state too large")
-            state = ConfigState.model_validate(parse_json(data)).model_dump(mode="json", exclude_unset=True)
+            raw = parse_json(data)
+            upgraded = self._upgrade(raw)
+            state = ConfigState.model_validate(raw).model_dump(mode="json", exclude_unset=True)
             if state["schema_version"] != 1 or set(state["configs"]) != set(PRESET_NAMES):
                 raise ValueError("invalid state")
             for name, entry in state["configs"].items():
@@ -174,10 +176,36 @@ class ConfigService:
                     selected["config"]["name"] != selected["name"] or
                     revision(validate_policy(selected["config"])) != selected["revision"]):
                 raise ValueError("invalid selected snapshot")
+            if upgraded:
+                self._write(state)
             self._mark_initialized()
             return state
         except ConfigError:
             raise ConfigError(503, "config_unavailable") from None
+
+    def _upgrade(self, raw):
+        """A config stored under an older schema is replaced by the shipped preset, so a schema change
+        cannot leave the service unavailable. Configs that still validate are kept as saved."""
+        def outdated(config):
+            try:
+                validate_policy(config)
+                return False
+            except ConfigError:
+                return True
+
+        changed = False
+        for name in PRESET_NAMES:
+            if outdated(raw["configs"][name]["config"]):
+                config = validate_policy(parse_json((self.presets_dir / f"{name}.json").read_bytes()))
+                raw["configs"][name] = {"config": config, "revision": revision(config), "updated_at": now()}
+                changed = True
+        selected = raw["selection"]
+        if outdated(selected["config"]):
+            entry = raw["configs"][selected["name"]]
+            raw["selection"] = {"name": selected["name"], "revision": entry["revision"],
+                                "selected_at": now(), "config": entry["config"]}
+            changed = True
+        return changed
 
     def _write(self, state):
         data = canonical(state)

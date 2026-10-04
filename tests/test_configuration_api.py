@@ -237,3 +237,20 @@ def test_reserved_auditor_identifier_does_not_relax_general_secret_filter():
     for value in ("synthetic-secret", "secret-scanner-extra", "password", "ghp_synthetic"):
         with pytest.raises(ValueError):
             token(value, required=True)
+
+
+def test_state_from_an_older_schema_is_upgraded_instead_of_failing(api):
+    client, service = api
+    edited = client.get("/api/v1/configs/strict").json()
+    edited["budget"]["tokens"] = 4321
+    assert client.put("/api/v1/configs/strict", json=edited, headers=HEADERS).status_code == 200
+    state = json.loads(service.path.read_text())
+    for entry in (state["configs"]["lenient"], state["configs"]["standard"], state["selection"]):
+        del entry["config"]["intercept"]["semantic_guard"]["allowed_models"]  # written before the field existed
+    service.path.write_text(json.dumps(state))
+
+    listed = {c["name"]: c for c in client.get("/api/v1/configs").json()}
+    assert listed["standard"]["selected"] and not listed["standard"]["requires_selection"]
+    assert client.get("/api/v1/configs/standard").json()["intercept"]["semantic_guard"]["allowed_models"]
+    assert client.get("/api/v1/configs/strict").json()["budget"]["tokens"] == 4321  # a valid edit survives
+    assert ConfigService(service.directory).snapshot_for_intercept()["name"] == "standard"
