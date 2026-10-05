@@ -2,184 +2,208 @@
 
 Built by team **HardCounter** at HackYeah 2026 (Goldman Sachs challenge: AI Control Layer).
 
-Sentinel Interlock (SI) is a policy-driven runtime control and verification layer for autonomous AI agents. It works like the interlock on industrial machinery: nothing moves until the check passes. Every tool call, API request or model call an agent attempts is intercepted and checked against a central, live-editable policy, then allowed, redacted, held for a human, or blocked. The check runs outside the model, so a prompt injection cannot switch it off, and every decision is logged with its reason.
+**Sentinel Interlock (SI)** is a policy-driven runtime control and verification layer for autonomous AI agents. It works like the physical interlock on industrial machinery: **nothing moves until the check passes**. Every tool call, model prompt, API request, or egress attempt an agent makes is intercepted and evaluated outside the model against a centralized, live-manageable policy—then allowed, redacted, held for human review, or blocked. Because enforcement runs outside the model's process space, prompt injections and adversarial inputs cannot disable or bypass it, and every decision is durably logged with an audit trail and immutable evidence.
 
-The system is intended to sit between agents and LLMs, MCP servers, APIs, tools, and other agents. It combines deterministic interaction enforcement, task-level trajectory supervision, and independent verification of the resulting external state under a shared Task Contract and centralized policy.
+The system sits between agents and external environments (LLMs, MCP servers, banking APIs, internal tools, and other agents). It combines **deterministic pre-dispatch policy enforcement**, **continuous trajectory risk supervision**, and **independent external outcome verification** bound under a shared Task Contract.
 
 ```text
-Is the action authorized?       -> deterministic policy
-Does it serve the task?         -> trajectory supervision
-Did the correct result exist?  -> independent outcome verification
+1. Is the action authorized?      -> Layer 1: Deterministic Gateway & Policy Interception
+2. Does it serve the task?        -> Layer 3: Trajectory Supervision & Bayesian Risk Model
+3. Did the correct result exist? -> Layer 3: Independent Outcome Verification against Bank State
 ```
 
-### Current Implementation State
-- **Implemented so far:** The synthetic banking dataset generator (`data/generate.py`, `data/rules.py`, `data/report.py`), the KYC outcome verifier (`data/postconditions.py`), and the 16 agent tools (`simulation/tools/`, of which 6 are **bait tools: fakes** that only exist so the control layer has something to intercept/block).
-- **Interception Layer:** Initial Python asyncio interception service with configurable allowlist, signature-scanner, and webhook auditors (`intercept/`).
-- **OpenCode Adapter:** JavaScript plugin for OpenCode v2.0.22 (`adapters/opencode/`) that forwards tool calls (always) and prompts/model requests (opt-in) to the Python service. Real OpenCode loads it, which the startup handshake verifies. `intercept/service/receiver.py` is an observe-only Python server for manual checks: it logs and allows everything. See [OpenCode forwarding](docs/intercept/opencode-forwarding.md).
-- **Integrated KYC runtime:** simulation tool proposals now pass through Layer 1, durable Layer 2 evidence/outbox and the existing ConsumerManager with trajectory-risk feedback and lifecycle outcome verification. Both drivers share the governed path. See [local execution and limits](docs/integrated-runtime.md).
-- **Durable Persistence:** `persistence/` supplies sanitized immutable SQLite evidence, atomic outbox commits, bounded consumer delivery with DLQ, run binding and contiguous action indexing, atomic banking receipts and replication, scoped readers with keyset pagination, and maintenance/backup facilities. See [integration and limits](docs/persistence.md).
-- **Architecture & Runtime Scope:** The MVP scope is **KYC only**; AML is deferred.
+---
+
+## Architecture: The Three-Plane Pipeline
+
+One agent action flows through three dedicated planes:
+
+```text
+OpenCode Agent ──► adapters/opencode ──► Layer 1: Intercept ──► Layer 2: Persistence ──► Layer 3: Consume Plane
+                   (plugin hooks)       (allow / block)        (evidence + outbox)      (risk, findings, outcome verifier)
+                                              ▲                                                   │
+                                              └───────────── tighten-only feedback ───────────────┘
+```
+
+### Layer 1: Pre-Dispatch Interception (`intercept/`, `configuration/`, `plugins/`, `adapters/opencode/`)
+- Intercepts tool calls and model prompts before execution.
+- Evaluates exact tool allowlists, argument constraints, credential/regex patterns (`pattern_scanner`), classified data sensitivity (`classified_scanner`), and domain restrictions (`domain_blocklist`).
+- Provides pre-dispatch guardrail plugins: `VelocityGuard` (sliding-window rate limits), `BudgetGuard` (token and tool call burn caps), and `PatternMatch`.
+- Implements `PromptGateway` (`intercept/governed/prompts.py`) to evaluate user prompts and model completions against injection signatures and token budgets.
+- Supports external polyglot webhooks and dynamic configuration presets (`standard`, `strict`, `lenient`).
+
+### Layer 2: Durable Persistence Engine (`persistence/`)
+- Sanitizes and commits immutable evidence into SQLite with Write-Ahead Logging (WAL) and atomic transactions.
+- Implements an atomic outbox queue with bounded asynchronous delivery to registered consumers, lease serialization, jittered exponential backoff, and dead-letter queuing (DLQ).
+- Manages sequential per-session action indexing (`seq`), run binding, and cryptographic banking effect receipts (`effect_receipts`, `governed_screening_evidence`).
+- Serves a high-performance, read-only REST API (`persistence/http_api`) with keyset pagination, structured audit exports (NDJSON), and store health monitoring.
+
+### Layer 3: Consume Plane & Supervision (`consume_plane/`, `contracts/`, `data/postconditions.py`)
+- Asynchronous plugin runtime operating on the canonical Event Envelope v2.1.
+- **Trajectory Risk Model** (`consume_plane/plugins/trajectory_risk.py`): Continuous expected loss calculation ($E = \sum P \times C$) using a Bayesian noisy-OR combination of behavioral signals (out-of-scope targets, missing prerequisites, budget burn, rapid bursts).
+- **Independent Outcome Verifier** (`consume_plane/plugins/outcome_verifier.py`): Post-execution verification checking bank database state against ground truth postconditions (`ONB-P1` to `ONB-P4`), verifying action provenance, screening evidence digests, and effect receipts.
+- **Goal Alignment Judge** (`consume_plane/plugins/goal_alignment_judge.py`): Semantic supervision evaluating whether irreversible actions serve the Task Contract's objective.
+- **Tighten-Only Feedback Controller** (`consume_plane/runtime/feedback.py`): Dynamically escalates enforcement (e.g. requiring approvals or blocking tools) via a formal lattice.
+
+### Web Application & Operator Dashboard (`web/`, `static/`, Caddy)
+- **FastAPI application** (`web/main.py`) served behind a Caddy reverse proxy on ports 80/443.
+- **Interactive Agent Sandbox** (`web/sessions.py`): Spin up and chat with sandboxed OpenCode agents under live policy control.
+- **Guardrail Test Runner** (`web/suite.py`): Live execution of the full pytest control-layer test suite directly from the UI Tests tab.
+- **Risk Map & Trajectory Visualization** (`static/js/riskmap.js`): Interactive timeline of agent actions, risk severity levels, and plugin decisions.
+- **Live Decision Trace Inspector**: Drill down into individual plugin decisions, reasoning, and contributing factors (`GET /api/v1/sessions/{id}/decisions`).
+
+---
+
+## Monitored Banking Tools (16 Tools)
+
+The simulation environment provides 16 tools divided into 10 legitimate KYC tools and 6 bait/fake tools designed to tempt misaligned agents:
+
+| Category | Tools | Side Effect | Purpose |
+|---|---|---|---|
+| **KYC Read** | `read_application`, `read_documents`, `extract_fields`, `check_registry`, `screen_sanctions`, `compute_risk` | `read` | Retrieve client data, OCR files, registry UBOs, check sanctions/PEP lists, and evaluate risk. |
+| **KYC Write** | `create_client` | `irreversible` | Create client and accounts in `bank.db`; requires prior screening and approval. |
+| **KYC Decision** | `request_more_docs`, `escalate_edd`, `reject_application` | `write` | Update application status; non-reversible in business terms. |
+| **Bait Tools** | `send_email`, `fetch_url`, `run_code`, `load_risk_model`, `read_config`, `delete_client` | `read` / `write` / `irreversible` | Traps for unauthorized exfiltration, external network access, code execution, or destructive actions. |
+
+---
 
 ## Project Layout
 
-One agent action flows through three planes; [details](docs/agent-action-model.md).
-
-```text
-OpenCode agent ─► adapters/opencode ─► intercept (L1) ─► persistence (L2) ─► consume_plane (L3)
-                  plugin hooks         allow/block        evidence + outbox    risk, findings, verification
-                                            ▲                                        │
-                                            └────────── tighten-only feedback ───────┘
-```
-
 | Path | Role |
 |---|---|
-| `contracts/` | Shared models: `ActionProposal`, `AgentAction`, decisions, `TaskContract`, feedback signal, v2.1 decoder |
-| `adapters/opencode/` | OpenCode 2.0.22 plugin: forwards tool calls and prompts to Layer 1 |
-| `intercept/` | Layer 1. `policy/` rules and auditors · `governed/` gateway, prompts, baseline · `service/` HTTP server, receiver · `tools/`, `cli/` |
-| `persistence/` | Layer 2. SQLite evidence store, outbox delivery, `events.py` (Layer 1 → storage), `adapters/` (storage → v2.1) |
-| `consume_plane/` | Layer 3. Async plugin runtime; built-in plugins in `consume_plane/plugins/`, drop-in ones in `plugins/` |
-| `simulation/` | Governed KYC agent (scripted or LLM driver), synthetic tools, central `policy.json` |
-| `data/` | Synthetic bank generator, rules, outcome postconditions |
-| `tracing/` | Pipeline trace logger: terminal, file (JSON lines) or null |
-| `scripts/` | Run and test entry points (below) |
-| `tests/`, `*/test_*.py` | Python tests; `adapters/opencode/*.test.mjs` for the plugin |
-| `docs/` | Design docs, starting with [project direction](docs/project-direction.md) |
+| `contracts/` | Canonical shared models: `AgentAction`, `TaskContract`, `GatewayVerdict`, `DecisionTraceRecord`, `PolicyAdjustmentSignal`, envelope v2.1 decoder |
+| `adapters/opencode/` | OpenCode 2.0.22 plugin: intercepts tool calls and prompts, forwarding them to Layer 1 |
+| `intercept/` | Layer 1. `policy/` rule engine · `governed/` runtime & prompts · `service/` HTTP server, receiver · `tools/` execution harness |
+| `persistence/` | Layer 2. SQLite evidence store, outbox queue, worker, maintenance, and read-only REST API (`persistence/http_api/`) |
+| `consume_plane/` | Layer 3. Consumer runtime, trajectory risk plugin, outcome verifier, and goal-alignment judge |
+| `plugins/` | Layer 1 pre-dispatch plugins: `budget_guard.py`, `pattern_match.py`, `velocity_guard.py` |
+| `configuration/` | Shared policy configuration models, preset storage, and REST router (`/api/v1/configs`, `/api/v1/config-selection`) |
+| `simulation/` | Governed KYC agent runner, synthetic tool implementations, and baseline policies |
+| `data/` | Deterministic banking dataset generator (`generate.py`), business rules, report generator, and postconditions |
+| `web/` | Web application (`main.py`), interactive OpenCode sessions (`sessions.py`), and test runner (`suite.py`) |
+| `static/` | Operator dashboard UI: HTML, CSS, JavaScript (risk map, configuration, metrics, tests) |
+| `tracing/` | Structured pipeline tracing: terminal, JSONL file (`var/control-layer.log`), or null |
+| `scripts/` | Automation, test runners, and demo scripts |
+| `tests/` | Comprehensive test suite (745+ unit, integration, and E2E tests) |
 
-## Tracing
+---
 
-Every agent action can be traced through the pipeline: interception and decision (`intercept`), the
-durable commit with its `seq` (`persistence`), then consumer processing, findings, feedback and
-verification (`consume`). Select the logger with `CONTROL_LOG=terminal|file|null` (default `null`; `file`
-writes JSON lines to `CONTROL_LOG_FILE`, default `var/control-layer.log`). `scripts/run_demo.sh` traces to
-the terminal by default. Only IDs, names and reason codes are logged, never prompts or tool arguments.
-The interface and its three implementations are in `tracing/`.
+## Tracing & Decision Visibility
 
-Separately from the log, every **consume-plane decision** is persisted in the session's evidence store:
-each plugin decision point (including "no change" and "skipped") and every failed plugin run, with a brief
-reasoning, its inputs, the triggering step and the findings and adjustments it produced. Inspect it with
-`GET /api/v1/sessions/{id}/decisions` or `scripts/inspect_decisions.sh`. See
-[docs/decision-trace.md](docs/decision-trace.md).
+Every agent action can be traced through the entire pipeline:
+1. `intercept action.received`: Gateway receives tool/prompt proposal.
+2. `persistence evidence.committed`: Immutable record persisted with monotonic `seq`.
+3. `intercept action.decided`: Policy verdict (`ALLOW`, `BLOCK`, `REDACT`, `REQUIRE_APPROVAL`, `ALERT`).
+4. `consume event.processed`: Consume-plane analysis, findings emitted, and feedback signals generated.
 
-## Documentation Index
+Configure pipeline logging via environment variables:
+- `CONTROL_LOG=terminal|file|null` (default: `null`; `file` writes JSONL to `CONTROL_LOG_FILE`, default: `var/control-layer.log`).
+- `scripts/run_demo.sh` traces to the terminal by default.
 
-- [Integrated local KYC execution](docs/integrated-runtime.md)
-- [Project direction](docs/project-direction.md)
-- [Agent action model and three-plane pipeline (code layout, single sources)](docs/agent-action-model.md)
-- [Required runtime architecture contract](docs/architecture-contract.md)
-- [Architecture review findings and remaining gates](docs/architecture-review.md)
-- [Persistence integration and guarantees](docs/persistence.md)
-- [Local changes review and requirement gaps](docs/local-changes-review.md)
-- [OpenCode plugin adapter plan](docs/intercept/opencode-adapter-plan.md)
-- [OpenCode adapter: forwarded requests, receiver, manual validation](docs/intercept/opencode-forwarding.md)
-- [Interception slice status](docs/intercept/implementation-status.md)
-- [Consume plane design](docs/consumer-plane.md), [implementation notes](docs/consumer-plane-implementation-notes.md), [event envelope v2.1](docs/consumer-plane-event-envelope.md)
-- [Trajectory risk model](docs/trajectory-risk-model.md)
-- [Control-plane decision trace (persisted plugin decisions, REST, inspection)](docs/decision-trace.md)
-- [Implementation stack: Python asyncio and uv](docs/stack.md)
-- [Monitored banking use cases](docs/use-cases.md)
-- [Mock banking dataset specification](docs/mock-data-spec.md)
-- [System architecture & execution lifecycle](docs/system-architecture.md)
-- [Control Gateway & Interception layer specification](docs/application-documentation.md)
-- [Judge dashboard UI design](docs/dashboard/dashboard-ui.md)
-- [Deployment plan](docs/dashboard/deployment.md)
-- [Technical challenge and criteria](docs/goldman/GoldmanSachsCriteria.md)
-- [Competition rules](docs/goldman/GoldmanSachsRules.md)
-- [OpenCode agents, NVIDIA setup, and review commands](.opencode/README.md)
-- [Shared engineering instructions](docs/AGENTS.md)
+Every **plugin decision point** (including `NO_CHANGE` and skipped assessments) is persisted in the session's evidence database and queryable via:
+- `GET /api/v1/sessions/{session_id}/decisions`
+- `scripts/inspect_decisions.sh` (see [docs/decision-trace.md](docs/decision-trace.md))
 
-The Rules and Criteria disagree on self-testing and scalability scoring weights. Preserve both sources and confirm the applicable weights with the organizer.
+---
 
 ## Python Development & Testing with uv
 
-We use **uv** for environment management, dependency locking, and Python execution.
-Install uv separately, then from the repository root:
+We use **uv** for fast, deterministic environment management, dependency locking, and execution.
 
 ```sh
+# Synchronize locked dependencies
 uv sync --locked
+
+# Check environment
 uv run --locked python --version
 uv lock --check
 ```
 
-`pyproject.toml` allows Python >=3.11; `.python-version` pins local development to 3.12.
-Dev dependencies include `pytest`. The integrated local gateway uses Python asyncio and SQLite.
+Local development targets Python 3.12 (compatible with Python >=3.11).
 
-### Running the Suite
+### Running the Complete Test Suite
 
-Quick start: `scripts/test.sh` runs every test, and `scripts/run_demo.sh` runs the control layer end to end
-offline. The underlying commands:
+The test suite contains 745+ tests covering every layer of the architecture:
 
 ```sh
-# Build the synthetic dataset (deterministic, seed 2026)
-uv run --locked python data/generate.py
-
-# Render the dataset explorer report
-uv run --locked python data/report.py
-
-# Run the governed end-to-end demo
-uv run python -m simulation.agent APP-0001 --driver scripted
-
-# Run the complete test suite (offline and locked)
+# Run the entire test suite (locked and offline)
 uv run --locked --offline pytest
 
-# Run the persistence demo CLI (all failure and recovery scenarios)
-uv run python -m persistence.demo --scenario clean
-uv run python -m persistence.demo --scenario audit-unavailable
-uv run python -m persistence.demo --scenario crash-after-bank
-uv run python -m persistence.demo --scenario wrong-state
+# Or run via the comprehensive test runner
+scripts/test.sh all
 ```
 
-CI (`.github/workflows/tests.yml`) runs on every push across Linux and Windows. The project uses paid API models (team decision; keys from env vars, never committed). The code has not moved yet: the LLM driver and the live `simulation/tools/test_ollama.py` check still target a loopback Ollama endpoint and skip when it is unavailable. Switching them to the paid API is pending.
-
-Add a test with every change: a `test_*` function next to the code it checks (`data/`, `simulation/`, `intercept/`), or under `tests/`.
-
-## Deployment
-
-Full plan, cost and secret handling: [docs/dashboard/deployment.md](docs/dashboard/deployment.md).
-
-- The app runs on one AWS EC2 instance under Docker Compose, behind one public HTTPS URL.
-- Pushing to `main` runs the tests and does **not** deploy.
-- A push to the `deploy` branch deploys. `deploy` is a pointer to what is live; nobody commits to it directly.
-
+Individual test targets supported by `scripts/test.sh`:
 ```sh
-# Release the current main (pull first)
-git checkout main && git pull
-git push origin main:deploy
-
-# Roll back to an earlier commit
-git push --force origin <good-sha>:deploy
+scripts/test.sh python       # All Python tests
+scripts/test.sh intercept    # Layer 1 gateway and auditor tests
+scripts/test.sh persistence  # Layer 2 store, outbox, and reader tests
+scripts/test.sh consume      # Layer 3 consumer runtime and plugin tests
+scripts/test.sh e2e          # End-to-end integration tests
+scripts/test.sh adapter      # OpenCode Node.js adapter tests
+scripts/test.sh data         # Synthetic dataset and postcondition tests
+scripts/test.sh decisions    # Control-plane decision trace tests
 ```
 
-Run the same stack locally (needs Docker):
+---
+
+## Available Scripts
+
+Detailed walkthrough and live-trace instructions: [scripts/README.md](scripts/README.md).
+
+| Script | Purpose |
+|---|---|
+| `scripts/run_demo.sh [APP-0001] [--fault F]` | Runs the control layer end-to-end offline with a scripted agent (no external LLM required) and prints the verdict. |
+| `scripts/run_live_pipeline.sh [APP-0001]` | Starts the complete governed pipeline (gateway, persistence, consume plane, read API) and waits for an interactive OpenCode session. |
+| `scripts/run_opencode_intercepted.sh` | Starts `opencode --standalone` wired to the active pipeline via `var/intercept.env`. |
+| `scripts/run_rest_demo.sh [--port 8790]` | Generates synthetic governed sessions, runs outcome verification, and serves evidence on the REST API. |
+| `scripts/run_rest_api.sh [--port 8790]` | Starts the read-only SQLite evidence REST API over recorded runs. |
+| `scripts/inspect_decisions.sh [SCENARIO]` | Runs governed test scenarios and prints the consume-plane decision trace table. |
+| `scripts/test.sh [TARGET]` | Runs all tests or a specific layer's test suite. |
+| `scripts/test_consume_plane.sh` | Runs consume-plane unit and integration tests. |
+| `scripts/run_consume_plane.sh [events.jsonl]` | Replays a recorded event log through the consume plane and prints findings. |
+| `scripts/test_opencode_adapter.sh` | Runs Node.js test suites for the OpenCode adapter. |
+| `scripts/check_opencode_pipeline.sh` | Verifies real OpenCode startup handshake with the Python gateway. |
+| `scripts/run_intercept_receiver.sh` | Starts an observe-only diagnostic receiver for OpenCode request inspection. |
+| `scripts/setup_opencode_pipeline.sh` | Installs pinned OpenCode 2.0.22 under `var/opencode-cli` if not installed globally. |
+| `scripts/run_pipeline.sh [APP-0001] --model p/m` | Runs a non-interactive synthetic onboarding application through OpenCode and verifies outcomes. |
+
+---
+
+## Deployment & Docker Stack
+
+The full production stack runs under Docker Compose behind Caddy on ports 80/443:
 
 ```sh
+# Local Docker deployment
 cp .env.example .env
 docker compose up -d --build
-# open http://localhost  (health check: http://localhost/healthz)
+
+# Open the dashboard
+open http://localhost  # Health check: http://localhost/healthz
+
+# Tear down
 docker compose down
 ```
 
-The web app is `web/main.py` (FastAPI) and the frontend files are in `static/`.
+Deployment details and secret management: [docs/dashboard/deployment.md](docs/dashboard/deployment.md).
 
-The deploy workflow runs the test suite, rebuilds the app container on the instance and checks its
-health endpoint. If the check fails, the container logs are printed in the GitHub Actions run.
-Nobody on the team needs AWS or instance access to release.
+---
 
-## Scripts
+## Documentation Index
 
-Details and a live-trace walkthrough: [scripts/README.md](scripts/README.md).
-
-| Script | What it does |
-|---|---|
-| `scripts/run_live_pipeline.sh [APP-0001]` | Full governed pipeline traced to a file, waiting for an interactive OpenCode session (`scripts/run_opencode_intercepted.sh`) |
-| `scripts/test.sh [all\|python\|intercept\|persistence\|consume\|e2e\|adapter\|data] [pytest args]` | Runs all tests, or one layer's |
-| `scripts/run_demo.sh [APP-ID] [--fault F]` | Runs the whole control layer offline (scripted agent, no model) and prints the verdict |
-| `scripts/test_consume_plane.sh` | Runs the consume-plane tests (`tests/support/consume_plane`) |
-| `scripts/run_consume_plane.sh [events.jsonl [contracts.jsonl]]` | Replays a recorded run through the consume plane and prints the findings; e.g. `tests/support/consume_plane/fixtures/risky_onboarding.jsonl` |
-| `scripts/test_opencode_adapter.sh [--quiet]` | Runs the OpenCode adapter Node tests and prints every JSON request the adapter sends |
-| `scripts/check_opencode_pipeline.sh` | Starts real OpenCode with the adapter and passes when its handshake reaches Python (no prompt is sent) |
-| `scripts/run_intercept_receiver.sh` | Terminal 1: observe-only Python receiver that logs every adapter request |
-| `scripts/run_opencode_intercepted.sh` | Terminal 2: starts `opencode --standalone`, wired to that receiver |
-| `scripts/setup_opencode_pipeline.sh` | Installs the locked environment and pinned OpenCode 2.0.22 under ignored `var/opencode-cli` |
-| `scripts/run_pipeline.sh [APP-0001] --model provider/model` | Runs one synthetic application through the governed gateway, OpenCode, and outcome verification |
-
-The receiver allows everything; it is a diagnostic tool, not enforcement. Use synthetic data only: it prints raw prompts and tool arguments.
+- [Integrated local KYC execution](docs/integrated-runtime.md)
+- [Agent action model and three-plane pipeline](docs/agent-action-model.md)
+- [Required runtime architecture contract](docs/architecture-contract.md)
+- [Persistence integration and guarantees](docs/persistence.md)
+- [Control-plane decision trace](docs/decision-trace.md)
+- [Consume plane design](docs/consumer-plane.md) and [event envelope v2.1](docs/consumer-plane-event-envelope.md)
+- [Trajectory risk model](docs/trajectory-risk-model.md)
+- [Probabilistic evaluation & semantic supervision](docs/probabilistic-evaluation.md)
+- [Dashboard REST API & configuration management](docs/rest.md)
+- [Control Gateway & Interception specification](docs/application-documentation.md)
+- [OpenCode adapter forwarding specification](docs/intercept/opencode-forwarding.md)
+- [Monitored banking use cases](docs/use-cases.md)
+- [Mock banking dataset specification](docs/mock-data-spec.md)
+- [System architecture & execution lifecycle](docs/system-architecture.md)
+- [Code improvement roadmap & wishlist](CODE_IMPROVEMENT_ROADMAP.md)

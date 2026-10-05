@@ -9,10 +9,10 @@ queries in `persistence/query.py` and `persistence/query_usage.py`. Tests includ
 Remaining evidence endpoints return **501 `not_implemented`**, not fabricated data, in normal mode.
 Frontend examples require explicit `--example-mode` / `create_app(example_mode=True)` and carry
 `X-Data-Source: example`; successful normal reads carry `X-Data-Source: persisted`.
-Example-contract tests remain in `tests/test_http_api_stub.py`.
+Example-contract tests remain in `tests/support/test_http_api_stub.py`.
 **Configuration management is implemented, not a stub:** the shared `configuration/` router
 provides updates and backend selection, backed by durable JSON state. Tests:
-`tests/test_configuration_api.py`, `tests/test_configuration_intercept.py`, `tests/test_web.py`.
+`tests/support/test_configuration_api.py`, `tests/support/test_configuration_intercept.py`, `tests/support/test_web.py`.
 This document is the contract the implementation and the dashboard build against. Where the persistence layer cannot yet supply a
 field, [section 8](#8-required-persistence-changes) lists the change. Until that change lands, the
 field is returned as `null`.
@@ -1050,6 +1050,7 @@ Model definitions and the generated OpenAPI schema are in `configuration/models.
 | `intercept.feedback.max_ttl_s` | integer, 1–86,400; stored-only |
 | `intercept.feedback.max_signals_per_session_per_minute` | integer, 1–1,000; stored-only |
 | `intercept.feedback.allowed_actions` | stored-only map; older configs may retain `velocity-guard`, but it no longer uses async feedback |
+| `intercept.semantic_guard.allowed_models` | string list; stored-only allowed model IDs |
 | `intercept.semantic_guard.block_threshold`, `approve_threshold`, `alert_threshold` | finite numbers, `0 ≤ alert ≤ approve ≤ block ≤ 1`; stored-only risk-score thresholds, not adherence percentages |
 | `intercept.semantic_guard.on_error` | must be `BLOCK`; stored-only |
 
@@ -1058,6 +1059,7 @@ Auditor types are a discriminated union:
   each 1–256 characters. They are not executable regular expressions.
 - `classified_scanner`: `config: {classes: string[], action}`. 1–5 classes drawn from
   `pesel`, `iban`, `aws_access_key`, `private_key`, `api_key`.
+- `domain_blocklist`: `config: {domains: string[], action}`. At most 256 domain hostnames.
 - `tool_allowlist`: `config: {allowed_tools: string[]}`; at most 100 registered tool names.
 
 Scanner `action` is `BLOCK`, `REDACT`, `REQUIRE_APPROVAL` or `ALERT`.
@@ -1253,8 +1255,8 @@ to evidence, not configuration writes.
 
 Normal reads never call schema migrations, writer methods or `EventStore.initialize()`. They use
 `mode=ro`, `PRAGMA query_only=ON`, bound SQL parameters, a 1-second busy timeout and a 5-second
-SQLite query deadline. Scans are capped at 128 stores; loaded query results are capped at
-10,000 rows / 8 MiB of string data. Overflow fails closed with 503. Symlinked stores and
+SQLite query deadline. Scans are capped at 2,000 stores; loaded query results are capped at
+100,000 rows / 64 MiB of string data. Overflow fails closed with 503. Symlinked stores and
 incompatible schemas are rejected. These are local, bounded demo queries, not a scalable
 distributed read service.
 
@@ -1324,7 +1326,7 @@ curl -OJ "$BASE/export/sessions/ALLOWED_SESSION_ID"
 The positive workflow is independently verified against persisted bank state. Rejected attempts
 appear in the timeline and export. This demonstrates actual evidence, not static example panels.
 
-### 5.17 `PluginDecision`
+### 5.18 `PluginDecision`
 
 Written by the consume-plane manager (`consume_plane/runtime/manager.py`) into the `plugin_decisions`
 table of the session's evidence store. Plugins create decided entries with

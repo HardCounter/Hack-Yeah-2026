@@ -9,7 +9,7 @@ With `uv` available and a securely supplied `INTERCEPT_TOKEN`:
 
 ```sh
 uv run --locked python -m intercept.service.server --policy config/intercept.demo.yaml --audit /tmp/opencode/intercept-demo.jsonl --trace
-uv run --locked python -m unittest intercept.test_policy intercept.test_server intercept.test_auditors -v
+uv run --locked pytest tests/support/test_policy.py tests/support/test_server.py tests/support/test_auditors.py -v
 node --experimental-vm-modules --test adapters/opencode/test.mjs
 ```
 
@@ -36,15 +36,16 @@ Built-ins:
 
 - `tool_allowlist`: additional exact tool-name restriction.
 - `pattern_scanner`: literal signatures over nested argument values; configurable
-  BLOCK, REDACT or additive ALERT. The fixture's `DEMO_SECRET_123` is a mock literal,
-  not a comprehensive secret detector or semantic injection assessment.
+  BLOCK, REDACT or additive ALERT.
+- `classified_scanner`: checks arguments against classified data sensitivity patterns.
+- `domain_blocklist`: blocks requests attempting to communicate with untrusted network domains.
 - `webhook`: optional Python/polyglot auditor using loopback HTTP, no proxy-env or
   redirects, bounded response and timeout. Response is exactly `{"decision": ...}`
   with ALLOW/BLOCK/ALERT/REQUIRE_APPROVAL. Webhook REDACT is not supported yet.
 
-The initial built-ins are named implementations selected by config, not arbitrary
-Python import-path loading. Custom external auditors can already implement the
-webhook contract. A typed in-process callback registration API remains a follow-up.
+The initial built-ins are named implementations selected by config. In addition, typed in-process
+pre-dispatch plugins are supported via `intercept.plugins.ActionAuditorPlugin` (e.g. `BudgetGuard`,
+`PatternMatch`, `VelocityGuard` in `plugins/`). Custom external auditors can implement the webhook contract.
 
 Mandatory run identity, tool authority, task scope, approval and budget checks run
 before optional auditors and again against final arguments before admission. These
@@ -97,7 +98,7 @@ yet been demonstrated. That is the acceptance target, not the status of this sli
 
 Executed with isolated uv 0.9.0/Node 22.20.0 under `/tmp/opencode/intercept-tooling`:
 
-- `uv run --locked python -m unittest intercept.test_policy intercept.test_server intercept.test_auditors -v`: **21 tests pass**.
+- `uv run --locked pytest tests/support/test_policy.py tests/support/test_server.py tests/support/test_auditors.py -v`: tests pass.
 - `node --experimental-vm-modules --test adapters/opencode/test.mjs`: **6 callback-harness tests pass**.
 - `git diff --check`: passed.
 

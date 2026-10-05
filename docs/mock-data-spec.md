@@ -158,9 +158,9 @@ Target mix: about 75% false positives, 25% truly suspicious. That's close to rea
 ### Write targets (start empty)
 - `sar_filings(sar_id, alert_id, client_id, narrative, filed_at, session_id)`
 - `customer_messages(msg_id, client_id, body, sent_at, session_id)`
-- `audit_actions(id, ts, session_id, agent, tool, args_json, result_json)`: one row per **executed** tool call (KYC and bait). `agent` and `session_id` are injected by the gateway, never by the model. A blocked call writes no row; that is how tests prove it never ran.
-- `effect_receipts(receipt_id TEXT PK, action_id TEXT, run_id TEXT, session_id TEXT, application_id TEXT, tool_name TEXT, client_id TEXT, status TEXT, created_at TEXT)` (durable KYC business effects)
-- `screening_evidence(evidence_id TEXT PK, run_id TEXT, session_id TEXT, subject_name TEXT, subject_dob TEXT, subject_type TEXT, list_version TEXT, score REAL, matched_entry_id TEXT, screened_at TEXT)` (server-recorded screening proof)
+- `effect_receipts(receipt_id TEXT PK, source_event_id TEXT UNIQUE, application_id TEXT UNIQUE, run_id TEXT, action_id TEXT, command_digest TEXT, client_id TEXT UNIQUE, account_id TEXT UNIQUE, policy_version TEXT, policy_hash TEXT, occurred_at TEXT)` (durable KYC business effects, created by `persistence/business.py`)
+- `governed_screening_evidence(session_id TEXT, run_id TEXT, action_id TEXT, subject_hash TEXT, source_version TEXT, occurred_at TEXT, hit_count INT, max_score REAL, decision TEXT, PK(session_id, action_id))` (server-recorded screening proof, created by `intercept/governed/baseline.py`)
+- `business_audit_outbox` and `governed_baselines` (runtime outbox replication and baseline binding)
 
 ### Reference data
 - `high_risk_countries`: a mock list of about 10 ISO codes (`IR`, `KP`, `MM`, `SY`, `YE`, plus a few

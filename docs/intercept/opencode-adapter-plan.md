@@ -8,7 +8,7 @@ The available development environment reports OpenCode `v2.0.22`. The [OpenCode 
 
 ## Repository workflow
 
-- Work on the existing `intercept` branch. It is currently checked out; its `HEAD` is an ancestor of `main` and currently matches the observed main commit. Preserve any later branch changes; do not reset, replace, merge, or cherry-pick branches without direction from the team.
+- Development takes place on `main`. Preserve existing history; do not reset, replace, merge, or cherry-pick branches without direction from the team.
 - Use the repository's `uv` project and lockfile for Python environment, application, and test commands. Do not substitute raw `pip` or an ad-hoc virtual environment. The OpenCode plugin itself follows the runtime's supported JavaScript/TypeScript mechanism; `uv` does not replace that toolchain.
 - Use synthetic fixtures only. Never read or log real credentials, private keys, or unnecessary PII.
 

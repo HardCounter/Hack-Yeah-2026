@@ -121,9 +121,11 @@ class AgentAction:
     status: ActionStatus                # see 3.3
     payload: ActionPayload              # typed by kind, see 3.2
 
-    gateway: GatewayVerdict             # what Layer 1 decided, see 3.4
-    usage: Usage | None                 # tokens, cost, latency
+    action_id: str | None = None        # correlation ID across intent/result/receipt
+    gateway: GatewayVerdict | None = None # what Layer 1 decided (omitted for lifecycle events)
+    usage: Usage | None = None          # tokens, cost, latency
     fault_injected: bool = False        # scripted fault, for test attribution only
+    raw: Mapping[str, Any] = field(default_factory=dict)
 ```
 
 ### 3.2 Action kinds and payloads
@@ -134,7 +136,7 @@ ActionKind = Literal["prompt", "tool_use", "egress", "session", "approval", "con
 
 | `kind` | Emitted when | Payload type | Key fields |
 |---|---|---|---|
-| `prompt` | An LLM request passes the gateway (allowed or blocked) | `PromptPayload` | `model`, `provider`, `messages: list[MessageRef]`, `completion: MessageRef \| None`, `tool_calls_requested: list[ToolCallIntent]`, `stop_reason` |
+| `prompt` | An LLM request passes the gateway (allowed or blocked) | `PromptPayload` | `model`, `provider`, `messages: tuple[ContentRef, ...]`, `completion: ContentRef \| None`, `tool_calls_requested: tuple[ToolCallIntent, ...]`, `stop_reason` |
 | `tool_use` | A tool or MCP call passes the gateway | `ToolUsePayload` | `tool`, `side_effect: "read" \| "write" \| "irreversible"`, `transport: "inproc" \| "mcp" \| "http"`, `args: dict`, `result: ContentRef \| None`, `error: str \| None` |
 | `egress` | A plain HTTP egress request | `EgressPayload` | `method`, `host`, `path`, `status_code`, `body: ContentRef \| None` |
 | `session` | Session start/end | `SessionPayload` | `phase: "started" \| "ended"`, `contract_id`, `policy_version`, `end_reason` |
@@ -166,7 +168,7 @@ class GatewayVerdict:
     final: Literal["ALLOW", "BLOCK", "REDACT", "REQUIRE_APPROVAL", "ALERT"]
     policy_version: str
     decisions: tuple[AuditorDecision, ...]   # per-auditor: name, decision, rule_id, latency_ms
-    interception_overhead_ms: float
+    interception_overhead_ms: float | None = None
 ```
 
 ### 3.5 Content references and trust
@@ -246,14 +248,11 @@ class SetupContext:
     plugin_name: str
     config: Mapping[str, Any]          # this plugin's block from consume_plane.yaml
     log: Logger                        # structured; never log raw content
-    state: PluginStateStore            # optional durable KV scoped to this plugin
 
 class PluginContext(Protocol):
     plugin_name: str
     config: Mapping[str, Any]
     log: Logger
-    state: PluginStateStore
-    clock: Clock                       # event-time; use action.ts, not wall-clock, for windows
 
     # --- read the persistence layer (section 5) ---
     async def trajectory(self, *, up_to: int | None = None,
@@ -265,6 +264,7 @@ class PluginContext(Protocol):
     def emit_finding(self, finding: FindingDraft) -> None: ...
     def emit_metric(self, name: str, value: float, **labels: str) -> None: ...
     def propose_adjustment(self, proposal: AdjustmentProposal) -> None: ...
+    def record_decision(self, decision: str, reasoning: str = "", **factors: Any) -> None: ...
 
     async def run_blocking(self, fn: Callable[..., T], *args: Any) -> T: ...
 ```
@@ -336,18 +336,23 @@ It is what "the agent actually did" means for postconditions such as ONB-P5.
 ### 5.3 Task Contract
 
 ```python
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TaskContract:
     contract_id: str
     session_id: str
     agent_id: str
-    role: str
-    objective: str
-    target_ids: frozenset[str]          # e.g. {"APP-0007"}; drives scope/drift checks
-    allowed_tools: frozenset[str]
-    postconditions: tuple[str, ...]     # ["ONB-P1", ...]
+    task_type: str
+    target_ids: tuple[str, ...]          # e.g. ("APP-0007",); drives scope/drift checks
+    allowed_tools: tuple[str, ...]
     budget: Budget                      # tokens, tool_calls, cost_usd
-    policy_version: str
+    read_only: bool
+    strict_mode: bool
+    created_at: datetime
+    run_id: str | None = None
+    principal_id: str | None = None
+    case_id: str | None = None
+    policy_hash: str | None = None
+    feed_version: str | None = None
 ```
 
 The contract is written by the orchestrator, not the agent (`use-cases.md`, "Task contract").
@@ -670,10 +675,10 @@ Controller rules, all deterministic:
 2. **Method gate.** Semantic plugins may propose only `ALERT` and `REQUIRE_APPROVAL_FOR` (rule 4.4.4).
 3. **Allowed by config.** `feedback.allowed_actions[plugin]` limits which actions each plugin may
    propose, with a global `feedback.enabled` kill switch.
-4. **Dedup and rate limit.** An identical `(scope, action, tools)` that is already active is merged
-   (the TTL is extended, up to `max_ttl_s`). At most `max_signals_per_session_per_minute` signals.
+4. **Dedup and rate limit.** An identical `(scope, action, tools)` that is already active is rejected
+   as `already_active`. At most `max_signals_per_session_per_minute` signals.
 5. **Scope.** `agent` scope requires `feedback.allow_agent_scope: true`. The default is session only.
-6. **Traceability.** Every accepted or rejected proposal is stored (`consumer_feedback_log`) with
+6. **Traceability.** Every accepted or rejected proposal is logged in memory (`self.log`) with
    the plugin, the triggering event, the reason, and the outcome. Layer 1 confirms by emitting a
    `control` event (`adjustment_applied`), which comes back through Queue 2. That closes the loop
    in the audit trail.
@@ -706,12 +711,12 @@ class FindingSink(Protocol):
 |---|---|
 | `MemorySink` (tests) | 1 |
 | `JsonlSink` → `runs/<run_id>/findings.jsonl` (exportable audit evidence) | 1 |
-| `StoreSink` → `consumer_findings` collection in the Layer 2 store | 3 |
-| `SseSink` → feeds `/api/v1/events/stream` for the dashboard | 3 |
+| `PersistenceFindingSink` → `consumer_findings` table in the Layer 2 SQLite store | Implemented |
+| `StoreSink` → direct external collection sink | Planned |
+| `SseSink` → live SSE stream for dashboard | Planned |
 
-Sink failures are retried in the sink with bounded backoff. They do not fail plugin handling,
-because the ledger already records the plugin as `done` and the buffered findings are kept in
-an outbox (`consumer_outbox` in the ledger DB) until a sink accepts them.
+Sink failures trigger delivery redelivery in the manager. An asynchronous ledger outbox
+table (`consumer_outbox`) for decoupled sink buffering is a planned improvement.
 
 ---
 
@@ -726,8 +731,8 @@ Ordered by build priority. Each maps to scenarios in `use-cases.md`.
 | `scope-drift` | det. | `tool_use` | Access to IDs outside `contract.target_ids`; tools outside `contract.allowed_tools` that Layer 1 let through as `ALERT` | ONB-15 | `BLOCK_TOOLS` after repeats |
 | `repeat-side-effect` | det. | `tool_use` (`side_effect != read`) | Second executed write/irreversible call on the same target | ONB-11 | `BLOCK_TOOLS` |
 | `step-order` | det. | `tool_use` | Write call without a required prior step in the trajectory (for example `create_client` with no `screen_sanctions` for the same name) | ONB-03, ONB-10 | `REQUIRE_APPROVAL_FOR` the write tool |
-| `outcome-verifier` | det. | `session` (`ended`) | Runs `verify_onboarding` from `data/postconditions.py` against `bank.db` and `audit_actions`; one finding per failed postcondition; `unverifiable` if the check cannot run | ONB-07, -08, -10, -11, -13 | none (after the fact; detection only, it cannot undo) |
-| `trajectory-grader` | **semantic** | `tool_use` with `side_effect = irreversible` | Judgement by a paid API model of whether the trajectory still serves `contract.objective`; tool results passed as untrusted, delimited data | ONB-17 class | `REQUIRE_APPROVAL_FOR` only |
+| `outcome-verifier` **(implemented)** | det. | `session` (`ended`) | Runs `verify_onboarding` from `data/postconditions.py` against `bank.db` and audit tables; emits one summary finding `outcome.kyc_verification` | ONB-07, -08, -10, -11, -13 | none (after the fact; detection only, it cannot undo) |
+| `goal-alignment-judge` **(implemented)** | **semantic** | `tool_use` with `side_effect = irreversible` | Judgement by LLM of whether the trajectory serves `contract.objective` | ONB-17 class | `REQUIRE_APPROVAL_FOR` only |
 | `trajectory-risk` **(implemented)** | det. | `tool_use`, `egress` | Expected loss = Σ P(failure) × consequence over the trajectory; P from noisy-OR of observable signals ([model](trajectory-risk-model.md)) | ONB-03, -11, -12, -15, BAIT-15 | `REQUIRE_APPROVAL_FOR` at high, `HALT_SESSION` at critical |
 
 Notes:
@@ -736,8 +741,8 @@ Notes:
   *prevent* the write. Here they provide trajectory evidence and catch writes that Layer 1 missed.
   The test suite must not credit the consumer plane with preventing them.
 - `outcome-verifier` reads `bank.db` through its own read-only connection (the trusted verification
-  path). It never reads the agent's final message. "Verified", "failed postcondition", and
-  "could not verify" are three different finding outcomes.
+  path). It verifies action provenance, effect receipts, and screening evidence. The result status
+  is recorded with canonical codes `VERIFIED_SUCCESS`, `FAILED_POSTCONDITIONS`, or `VERIFICATION_INCOMPLETE`.
 - `trajectory-grader` is optional and is marked `live`/semantic in reports. If no model is running,
   it reports `unavailable` instead of passing.
 
@@ -808,24 +813,31 @@ the thresholds that act as policy (loop limits, budget ratios, allowed feedback 
 
 ## 12. Package layout
 
+Canonical models are shared in the root `contracts/` package:
+- `contracts/action.py`: `AgentAction`, payloads, `ContentRef`, `GatewayVerdict`, `Usage`
+- `contracts/task_contract.py`: `TaskContract`, `Budget`
+- `contracts/wire.py`: Envelope v2.1 decoding (`decode_action`)
+- `contracts/decision.py`: Gateway decision types
+- `contracts/feedback.py`: `PolicyAdjustmentSignal`, `AdjustmentAction`
+- `contracts/verification.py`: Verification statuses and postcondition checks
+
 ```text
 consume_plane/
 ├── __init__.py
 ├── __main__.py                 # python -m consume_plane --config consume_plane.yaml
 ├── sdk.py                      # public surface for plugin authors: re-exports below
 ├── model/
-│   ├── actions.py              # AgentAction, payloads, ContentRef, GatewayVerdict, Usage
-│   ├── contract.py             # TaskContract, Budget
-│   ├── outputs.py              # FindingDraft, Finding, AdjustmentProposal, PolicyAdjustmentSignal
-│   └── decode.py               # envelope v2.1 → AgentAction (section 3.6)
+│   └── outputs.py              # FindingDraft, Finding, AdjustmentProposal, DecisionTraceRecord
 ├── ports/
 │   ├── event_source.py         # EventSource, Delivery
 │   ├── trajectory.py           # TrajectoryReader, Trajectory helper
 │   ├── sinks.py                # FindingSink, MetricSink
+│   ├── plugin.py               # ConsumerPlugin, PluginContext, SetupContext
 │   └── feedback.py             # FeedbackChannel
 ├── adapters/
 │   ├── memory.py               # MemoryEventSource, MemoryTrajectoryReader, MemorySink
 │   ├── jsonl.py                # JsonlReplaySource, JsonlTrajectoryReader, JsonlSink
+│   ├── persistence.py          # PersistenceEventSource, PersistenceTrajectoryReader, PersistenceFindingSink
 │   └── inprocess_feedback.py
 ├── runtime/
 │   ├── config.py               # load + validate consume_plane.yaml
@@ -833,19 +845,14 @@ consume_plane/
 │   ├── registry.py             # loaded plugins, subscription matching
 │   ├── context.py              # PluginContext impl, output buffering, permission checks
 │   ├── ledger.py               # SQLite completion ledger + outbox + per-plugin dead letters
-│   ├── manager.py              # receive loop, partitions, settle, breaker, shutdown
+│   ├── manager.py              # receive loop, partitions, settle, shutdown
 │   ├── feedback.py             # FeedbackController (tighten-only lattice)
 │   └── metrics.py              # aggregator + health snapshot
 └── plugins/                    # built-ins (section 10)
-    ├── usage_accountant.py
-    ├── loop_detector.py
-    ├── scope_drift.py
-    ├── repeat_side_effect.py
-    ├── step_order.py
     ├── outcome_verifier.py
-    └── trajectory_grader.py
+    ├── trajectory_risk.py
+    └── goal_alignment_judge.py
 
-plugins/                        # drop-in directory (Way 1); example: velocity_guard.py
 consume_plane.yaml
 tests/support/consume_plane/
 ├── conftest.py                 # builders: make_action(), make_session(), fixture trajectories
@@ -854,18 +861,18 @@ tests/support/consume_plane/
 ├── test_manager.py
 ├── test_ledger.py
 ├── test_feedback.py
-├── plugins/test_<plugin>.py
-└── fixtures/runs/*.jsonl       # recorded/synthetic sessions for ONB scenarios
+├── test_trajectory_risk.py
+├── test_outcome_verifier.py
+├── test_goal_alignment_judge.py
+├── test_decision_model.py
+├── test_decisions.py
+└── fixtures/                   # recorded/synthetic sessions for ONB scenarios
 ```
 
-`model/actions.py` and `model/contract.py` are candidates to move into the shared `contract/`
-package from `system-architecture.md` §8 once Layer 1 and Layer 2 use them too. Until then,
-`consume_plane/` must not import from `proxy/` or `sim/`.
+*(Note: root `plugins/` contains Layer 1 pre-dispatch plugins; drop-in consumer plugins are loaded from custom paths specified in `plugin_dirs` in `consume_plane.yaml`).*
 
 Dependencies: standard library only for the runtime (dataclasses, asyncio, sqlite3, importlib).
-`PyYAML` (MIT) is needed for config. A local `httpx` (BSD) client is needed only for
-`trajectory-grader`. If the team adopts Pydantic for the shared event schema, `model/` switches to
-it without changing the plugin protocol.
+`PyYAML` (MIT) is needed for config. `llm/` is used by `goal-alignment-judge`.
 
 ---
 
@@ -874,30 +881,29 @@ it without changing the plugin protocol.
 | Rule | Where enforced |
 |---|---|
 | Plugins cannot resolve `ContentRef` without `needs_content` | `runtime/context.py` raises `PermissionError` |
-| Plugins have no write handle on `agent_actions` | `TrajectoryReader` is read-only. The Mongo/SQLite adapter opens a read-only connection or user |
+| Plugins have no write handle on `agent_actions` | `TrajectoryReader` is read-only. The SQLite adapter opens a read-only connection |
 | Findings and logs carry event IDs, not content | Code review plus a test that scans emitted findings for PESEL, IBAN, and key patterns from the fixtures |
 | Plugin directory is trusted config | Documented. Startup warns if `plugin_dirs` is world-writable |
-| Untrusted content fed to a model is delimited and labelled | `trajectory-grader` prompt template, tested with the ONB-17 fixture |
+| Untrusted content fed to a model is delimited and labelled | Judge prompt templates |
 | Feedback can only tighten | `FeedbackController` lattice plus tests |
-| Every intervention is traceable | `consumer_feedback_log` plus Layer 1's `control` event |
+| Every intervention is traceable | In-memory log (`self.log`) plus Layer 1's `control` event |
 
 ---
 
 ## 14. Test plan
 
-All tests use the memory and JSONL adapters. They need no Layer 1, Layer 2, or model.
+All tests use the memory, JSONL, and persistence adapters.
 
 | Area | Positive case | Negative case |
 |---|---|---|
-| Decode | v2.0 and v1.0 envelopes produce equal `AgentAction` | Unknown `kind` routes to `"*"` subscribers only; malformed JSON is nacked as `decode_error` |
+| Decode | v2.1 envelopes produce equal `AgentAction` | Unsupported versions (v1.0, v2.0) rejected; malformed JSON fails with `DecodeError` |
 | Loader | File plugin with `PLUGINS` loads; `module:Class` loads | Missing `name`, sync `handle`, duplicate name, or import error gives a clear startup error (and `skip` mode skips) |
 | Subscription | Plugin receives only matching kinds/tools/agents | Non-matching event never reaches `handle` |
 | Trajectory snapshot | `ctx.trajectory()` contains the current event and earlier ones | Later events already in the store are excluded |
 | Content permission | Plugin with `needs_content` resolves a ref | Plugin without it gets `PermissionError` |
 | At-least-once | Redelivered event does not rerun plugins that succeeded and produces no duplicate findings | Failing plugin is retried, then dead-lettered; event still acked; other plugins unaffected |
-| Timeout and breaker | Slow plugin times out without blocking other sessions | Breaker opens after N failures and closes after cooldown |
-| Ordering | Same-session events handled in `seq` order under concurrency | Different sessions processed in parallel (timing test with a slow plugin) |
-| Feedback | Valid tighten proposal publishes a signal and is logged | Loosening, a disallowed action, a semantic `HALT_SESSION`, or rate-limit excess is rejected and logged |
+| Ordering | Same-session events handled in `seq` order under concurrency | Different sessions processed in parallel |
+| Feedback | Valid tighten proposal publishes a signal and is logged | Loosening, a disallowed action, or duplicate proposal is rejected |
 | Built-ins | ONB-01, ONB-02, ONB-14 trajectories produce no high findings | ONB-03, -10, -11, -12, -15 trajectories produce the expected `rule_id` |
 | Outcome verifier | ONB-01 session end gives `verified` | ONB-07 gives `postcondition.ONB-P2` failed; a missing DB gives `unverifiable`, not a pass |
 | Privacy | — | No finding or log line in the ONB-09 / ONB-16 runs contains the planted PESEL, IBAN, or key |

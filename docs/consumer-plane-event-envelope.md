@@ -59,11 +59,11 @@ adapters; uppercase internal decision/status fields require renaming and mapping
 ### Required fields
 
 `action_id` is an optional top-level stable action correlation extension shared by
-intent/result/receipt evidence. It is available in `AgentAction.raw`.
+intent/result/receipt evidence. It is available as `AgentAction.action_id` and in `AgentAction.raw`.
 
 `schema_version` (must be `"2.1"`), `event_id`, `seq`, `ts`, `session_id`, `agent_id`,
 `action_type`, `status`. All other fields are optional. `interception_metadata` is omitted for
-events that did not pass the gateway (`session`, and `approval` when it is written by the human queue).
+lifecycle events (`session` and `approval`).
 
 ### Field rules
 
@@ -86,7 +86,7 @@ events that did not pass the gateway (`session`, and `approval` when it is writt
 | `session` | `session` | `phase: started\|ended`*, `contract_id`, `policy_version`, `end_reason` |
 | `approval` | `approval` | `target_event_id`*, `decision: approved\|rejected\|expired`*, `approver_role`, `delay_ms` |
 | `control` | `control` | `change: policy_reloaded\|adjustment_applied\|adjustment_expired`*, `policy_version`, `signal_id` |
-| anything else | the raw string | kept as-is and delivered only to plugins that subscribe to `"*"` |
+| anything else | unsupported | fails closed with `ValueError` at the Layer 2 adapter boundary |
 
 `*` = required within `action_details`.
 
@@ -108,9 +108,10 @@ content store before it enqueues the event.
 ## Delivery guarantees the consume plane relies on
 
 1. An event is written to the store before it is put on Queue 2.
-2. Queue 2 delivers at least once, with ack/nack. A nack carries a `retry_after_s` hint, and
-   Layer 2 owns backoff and the message-level DLQ.
-3. Within a session, Queue 2 delivers in `seq` order except during redelivery.
+2. Queue 2 delivers at least once. Consumer exceptions trigger jittered exponential backoff
+   and message-level dead lettering (DLQ).
+3. Within a session for a given consumer, Queue 2 delivers in `seq` order; pending/retrying events
+   hold back subsequent claims until acknowledged or moved to DLQ.
 
 ## Not supported
 

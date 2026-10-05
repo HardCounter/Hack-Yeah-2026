@@ -48,7 +48,7 @@ flowchart LR
         BUS[(Event log / queue)]
         STORE[(Analytics store<br/>DuckDB / SQLite)]
         EVAL[Evaluator /<br/>Outcome Verifier]
-        DASH[Dashboard / reports<br/>(Streamlit)]
+        DASH[Dashboard / reports<br/>(FastAPI + Web UI)]
     end
 
     API[(Local / Upstream LLM)]
@@ -83,7 +83,7 @@ Runs independently of downstream monitoring. Powered by the deterministic mock d
 | Item | Detail |
 |---|---|
 | Generator | Implemented stdlib-only `random.Random`, seed 2026; generator contains a byte-identical-output self-check. No Faker dependency. |
-| Volumes | Targets: ~150 clients, 230 accounts, 9,000 transactions (90 days history), 15 applications, 60 alerts; actual counts must come from execution. |
+| Volumes | Generated: 150 clients, 231 accounts, ~9,354 transactions (90 days history), 17 applications (APP-0001 to APP-0017), 47 documents, 60 alerts. |
 | Tables | `clients`, `accounts`, `transactions`, `onboarding_applications`, `alerts`, `company_registry`, `sanctions_list`, `pep_list`, `documents`; runtime evidence/linkage additions are still required. |
 | Planted Anomalies | Sanctions hits, PEP flags, prompt injections in OCR/memos, expired passports, structuring cash deposits, rapid movement via high-risk jurisdictions. |
 | Sealed Ground Truth | Written to `data/ground_truth.json` (contains actual labels, expected dispositions, and correct resolutions; unseen by agents). |

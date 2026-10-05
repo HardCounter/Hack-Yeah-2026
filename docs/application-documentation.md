@@ -234,41 +234,44 @@ of the trusted control plane; agent inputs cannot choose handlers or endpoints:
 1. **In-Application Callbacks (In-Process):** Fast, zero-overhead Python/Go functions implementing a standard `ActionAuditor` interface. Ideal for fast local regex, allowlists, argument bounds checking, and token budgets.
 2. **Webhook Callbacks (HTTP/gRPC):** Authorized allowlisted endpoints receive only policy-permitted sanitized data, with authentication, bounded time/size and validated decision schemas. Mandatory callback failure blocks/pauses; never defaults to ALLOW. Sending private data externally requires approval.
 
-#### Example Auditor Configuration (`gateway_config.yaml`)
-```yaml
-interception:
-  port: 8080
-  strict_mode: false # Pinned for each run; async feedback can only tighten via audited intervention
-  
-  auditors:
-    # 1. In-process deterministic validator (ordered chain)
-    - name: "tool-allowlist"
-      type: "in_process"
-      handler: "core.auditors.allowlist:ToolAllowlistAuditor"
-      config:
-        allowed_tools: ["read_application", "read_documents", "screen_sanctions", "create_client"]
-        block_action: "reject"
-
-    # 2. Secret & PII scanner
-    - name: "credential-shield"
-      type: "in_process"
-      handler: "core.auditors.security:CredentialShieldAuditor"
-      config:
-        patterns: ["aws_secret", "private_key", "password"]
-
-    # 3. External Webhook for complex or polyglot rule checks
-    - name: "compliance-evaluator"
-      type: "webhook"
-      endpoint: "http://127.0.0.1:9090/audit/action"
-      timeout_ms: 150
+#### Example Policy Configuration (JSON Preset from `config/presets/standard.json`)
+```json
+{
+  "name": "standard",
+  "description": "Standard banking KYC onboarding policy with balanced safety controls",
+  "budget": {
+    "tokens": 20000,
+    "tool_calls": 30,
+    "cost_usd": null
+  },
+  "allowed_tools": [
+    "read_application", "read_documents", "extract_fields",
+    "check_registry", "screen_sanctions", "compute_risk",
+    "create_client", "request_more_docs", "escalate_edd", "reject_application"
+  ],
+  "auditors": [
+    {
+      "id": "secret_scanner",
+      "type": "pattern_scanner",
+      "config": {
+        "patterns": ["sk-ant-", "ghp_", "Bearer "],
+        "action": "BLOCK"
+      }
+    },
+    {
+      "id": "domain_guard",
+      "type": "domain_blocklist",
+      "config": {
+        "domains": ["pastebin.com", "webhook.site"],
+        "action": "BLOCK"
+      }
+    }
+  ]
+}
 ```
 
-#### Dynamic Configuration Hot-Reloading
-The policy engine continuously monitors the centralized policy file (e.g. `gateway_config.yaml` / `policy.yaml`) for file modification events (via inotify / file watcher). When configuration files are modified (e.g. judges adjusting thresholds, toggling allowlists, or updating token budgets during evaluation):
-- Updated policies are immediately validated against schemas and swapped in-memory. Invalid or partially written configuration is rejected; the last valid snapshot remains active and a sanitized reload-failure event is emitted.
-- A validated policy snapshot is atomically activated for new runs and new sessions; each in-flight run remains bound to the pinned policy version in its Task Contract.
-- Any authorized emergency tightening for an in-flight run is an explicit, scoped, versioned, monotonic overlay/intervention; it may tighten or pause, but never relax the run's bound hard constraints. Record its issuer, scope, reason, lifetime, and intervention ID. Re-evaluate affected pending actions and invalidate approvals that no longer match the active policy/overlay versions.
-- A `policy_reloaded` event records the old and new content-hashed policy version hashes and activation outcome.
+#### Dynamic Configuration Selection
+Policy presets are stored under `config/presets/` and selected dynamically via the REST API (`PUT /api/v1/config-selection` in `configuration/api.py`), which atomically updates `var/config/state.json` via file locking. The active preset is pinned per session upon session initialization. Filesystem inotify hot-reloading remains a planned feature.
 
 ### 2.3 Backend Routing & Deferred Fallback
 
@@ -583,24 +586,25 @@ class ConsumerModule(Protocol):
         ...
 ```
 
-### 5.4 Gateway-Dashboard API Contract (for Judge UI)
+### 5.4 Gateway & Web Application API Endpoints
 
-To power the judge-facing audit ledger UI defined in `docs/dashboard-ui.md`, the Gateway exposes the following lightweight HTTP/SSE endpoints:
+To power the judge-facing audit ledger UI defined in [docs/dashboard/dashboard-ui.md](dashboard/dashboard-ui.md), the system exposes endpoints divided across Layer 1 / Configuration management, Web Suite & Sessions, and Layer 2 Persistence Read API:
 
-> These are the **Layer 1 (gateway)** endpoints: live decisions and controls. History
-> (trajectories, single actions, detection events, usage and budget metrics, interventions,
-> verification results, audit export) comes from the separate read-only persistence API
-> specified in [rest.md](rest.md). Both use the `/api/v1` prefix and do not share a path.
+> Configuration management and web suite APIs run on the web/app process (`web/main.py:app` on port 8000, proxied via Caddy). Persisted evidence reads run on the read API (`persistence/http_api` on port 8790). See [rest.md](rest.md).
 
-| Endpoint | Method | Purpose | Payload / Response |
+| Endpoint | Method | Status | Purpose / Payload |
 |---|---|---|---|
-| `/api/v1/inspect` | `POST` | **Sandbox Attack Console**: Uses the same enforcement path; identity/contract/policy are resolved server-side. | Req: prompt or tool proposal plus session reference (no self-selected authority). Res: sanitized verdict/pipeline/output, action ID and bound policy version. |
-| `/api/v1/events/stream` | `GET` | **Live Feed**: Server-Sent Events (SSE) streaming decisions in real-time. Excerpts are sanitized/masked. | `data: {"event_id": "...", "ts": "...", "verdict": "BLOCKED", "rule": "ONB-P1", "excerpt": "[REDACTED_DATA]", "latency_ms": 1.2}` |
-| `/api/v1/policy` | `GET` | **Policy Inspector**: Returns current policy version, loaded rules, and strictness mode. | `{"version": "v12", "mode": "strict", "rules_count": 18, "last_reloaded": "..."}` |
-| `/api/v1/policy/mode` | `POST` | **Admin-only Strictness Toggle**: Publishes a validated version for new sessions; active contracts stay pinned. | Requires `Authorization: Bearer <ADMIN_SECRET>`. Req: `{"mode": "lenient"|"standard"|"strict"}`. Res: `{"status": "ok", "active_mode": "strict", "version": "v13"}`. Public demo users cannot mutate global policy. |
-| `/api/v1/approvals/{approval_id}/decide` | `POST` | **Human Approval Decision**: Authorized compliance reviewer records decision for paused action. | Requires `Authorization: Bearer <ADMIN_SECRET>`. Req: `{"decision": "ALLOW"|"BLOCK", "canonical_arguments_sha256": "...", "single_use_nonce": "..."}`. Consumes nonce atomically upon re-checked dispatch. |
-| `/api/v1/suite/status` | `GET` | **Test Suite Strip**: Returns actual executed results, never scenario-table counts. | Before tests exist: `{"status": "not_run", "total": null, "passed": null}`. Later include commit, policy/feed versions, command, timestamp and positive-case counts. |
-| `/api/v1/scenario/replay` | `POST` | **Sandbox Outcome Replay**: Verifies a preserved bank-state snapshot and baseline through a read-only path. | Scenario/snapshot IDs, per-check evidence and `VERIFIED_SUCCESS`, `FAILED_POSTCONDITIONS` or `VERIFICATION_INCOMPLETE`; no claim a completed write was blocked. |
+| `/api/v1/configs` | `GET` | Implemented | **List Configurations**: Returns presets and custom configurations with summary metadata. |
+| `/api/v1/configs/{name}` | `GET`, `PUT` | Implemented | **Read/Update Configuration**: Inspects or updates a specific configuration preset/custom policy. |
+| `/api/v1/config-selection` | `PUT` | Implemented | **Preset Selector**: Selects the active preset for new sessions (`{"name": "standard"}`). |
+| `/api/suite/runs` | `POST` | Implemented | **Run Test Suite**: Executes pytest control layer suite in a background subprocess. |
+| `/api/suite/runs/latest` | `GET` | Implemented | **Suite Status**: Returns execution status and case verdicts for the guardrail test suite. |
+| `/opencode-wrapper/api/sessions` | `POST` | Implemented | **Interactive Session**: Starts a new sandboxed OpenCode chat session. |
+| `/opencode-wrapper/api/sessions/{id}/messages` | `POST` | Implemented | **Interactive Chat**: Sends user prompt to agent and streams/returns response events. |
+| `/api/v1/inspect` | `POST` | Planned | **Sandbox Attack Console**: Ad-hoc proposal evaluation against active policy. |
+| `/api/v1/events/stream` | `GET` | Planned | **Live SSE Feed**: Real-time Server-Sent Events stream of decisions. |
+| `/api/v1/approvals/{id}/decide` | `POST` | Planned | **Human Approval Decision**: Compliance reviewer decision for paused actions. |
+| `/api/v1/scenario/replay` | `POST` | Planned | **Sandbox Outcome Replay**: Evaluates outcome verification on seeded bank states. |
 
 ---
 
@@ -614,14 +618,14 @@ The architecture is designed to be set up on a developer's machine in minutes, w
 +--------------------------------------------------------------------------+
 | Single Local Host / Developer Machine                                   |
 |                                                                          |
-|  [Agent Process]  (Python / Node / AutoGen / LangGraph / Claude Code)    |
+|  [Agent Process]  (Python / Node / OpenCode / AutoGen / LangGraph)       |
 |        │                                                                 |
 |        ▼ (localhost:8080)                                                |
 |  +────────────────────────────────────────────────────────────────────+  |
 |  | Local Control Gateway Process                                      |  |
-|  |  ├── Interception Engine (FastAPI / ASGI / Go Daemon)               |  |
+|  |  ├── Interception Engine (FastAPI / ASGI)                          |  |
 |  |  ├── In-Process Policy Registry & Dynamic Policy Cache             |  |
-|  |  ├── Transparent LLM & MCP Provider Routing Table                 |  |
+|  |  ├── Transparent LLM & Tool Interception Gateway                   |  |
 |  |  └── Critical Evidence Commit + SQLite Outbox                    |  |
 |  +────────────────────────────────────────────────────────────────────+  |
 |        │                                                                 |
@@ -636,12 +640,12 @@ The architecture is designed to be set up on a developer's machine in minutes, w
 |  +────────────────────────────────────────────────────────────────────+  |
 |  | Consumer & Risk Intelligence Daemon                                 |  |
 |  |  ├── Metric Aggregators & Cost Sinks                               |  |
-|  |  ├── Trajectory Anomaly & Loop Detectors                           |  |
-|  |  └── Feedback Signal Bus ───[IPC Socket / Shared Memory]───► (Cache)|
+|  |  ├── Trajectory Risk & Outcome Verifier                            |  |
+|  |  └── Feedback Signal Bus ───[In-Process / Shared Memory]───►       |  |
 |  +────────────────────────────────────────────────────────────────────+  |
 |        │                                                                 |
 |        ▼                                                                 |
-|  [Local Web UI / Observability Dashboard] (localhost:3000)               |
+|  [Local Web UI / Observability Dashboard] (localhost:8000 / :80)         |
 +--------------------------------------------------------------------------+
 ```
 
