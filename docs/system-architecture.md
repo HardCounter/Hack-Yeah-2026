@@ -194,7 +194,7 @@ tool responses; event/ground-truth joins alone cannot prove a business outcome.
 | **Analytics store** | DuckDB or SQLite (Postgres / ClickHouse for large scale). Tables: `llm_calls`, `tool_calls`, `lifecycle`, `faults`, `ground_truth` |
 | **Trace builder** | Reconstructs per-case traces from correlation IDs (`X-Run-Id`, `X-Case-Id`, `X-Step-Id`) |
 | **Outcome Verifier / Evaluator** | Queries persisted bank state and trusted baseline independently; checks KYC state invariants, separately identifies trace-assisted process checks, reports success/failure/incomplete; AML deferred. |
-| **Dashboard / reports** | Streamlit UI displaying security posture, active guardrails, blocked threats, and budget consumption |
+| **Dashboard / reports** | FastAPI + Web UI (served behind Caddy) displaying security posture, active guardrails, blocked threats, session trajectories, and budget consumption |
 
 ### 5.2 Metric families
 
@@ -389,7 +389,7 @@ ai-control-layer/
 | Event log | JSONL files, SQLite | Kafka / Redpanda |
 | Analytics store | DuckDB | ClickHouse / Postgres |
 | Document fixture storage | Local filesystem | S3 / MinIO (fixtures only; no raw prompt blobs) |
-| Dashboard | Fast Web UI / Streamlit | Grafana |
+| Dashboard | FastAPI + Web UI | Grafana |
 | Tool servers | FastAPI, or MCP servers | Same |
 
 ---

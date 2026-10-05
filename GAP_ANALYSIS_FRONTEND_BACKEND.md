@@ -122,15 +122,16 @@ The platform consists of two distinct backend processes exposed to clients throu
   ```
 - In `loadSession`:
   ```javascript
-  const [detail, trajectory] = await Promise.all([
+  const [detail, trajectory, trace] = await Promise.all([
     get(`/sessions/${id}`),
-    get(`/trajectories/session/${id}?view=full&kinds=tool_use&include_detections=false&limit=1000`)
+    get(`/trajectories/session/${id}?view=full&kinds=tool_use&include_detections=false&limit=1000`),
+    get(`/sessions/${id}/decisions?limit=1000`).catch(() => null)
   ]);
   ```
 - **Impact:**
-  - If 50 sessions exist, every 30 seconds the browser fires **1 + (50 * 2) = 101 HTTP requests** simultaneously.
+  - If 50 sessions exist, every 30 seconds the browser fires **1 + (50 * 3) = 151 HTTP requests** simultaneously.
   - In `persistence/query.py`, SQLite connections have `busy_timeout=1000` (1 second).
-  - SQLite WAL mode allows concurrent readers, but opening 100 simultaneous SQLite connection threads in Python's `asyncio.to_thread` pool can exhaust thread pool workers, causing requests to stall or fail with `503 store_unavailable`.
+  - SQLite WAL mode allows concurrent readers, but opening 150 simultaneous SQLite connection threads in Python's `asyncio.to_thread` pool can exhaust thread pool workers, causing requests to stall or fail with `503 store_unavailable`.
 
 ### 3.5 Error Envelope Format Inconsistency
 

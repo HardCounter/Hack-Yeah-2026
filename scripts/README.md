@@ -70,8 +70,8 @@ return 501 unless explicitly started with `--example-mode`.
 
 | Script | What it does |
 |---|---|
-| `test.sh [all\|python\|intercept\|persistence\|consume\|e2e\|adapter\|data\|decisions] [pytest args]` | All tests (default) or one layer's. |
-| `test_consume_plane.sh` | Consume-plane tests only. |
+| `test.sh [all\|python\|data\|adapter] [pytest args]` | All tests (`all`, default), all Python tests (`python`), dataset postconditions (`data`), or Node adapter tests (`adapter`). |
+| `test_consume_plane.sh [pytest args]` | Consume-plane tests only (`tests/support/consume_plane`). |
 | `test_opencode_adapter.sh [--quiet]` | OpenCode adapter Node tests; prints every JSON request the plugin sends. |
 | `check_opencode_pipeline.sh` | Starts real OpenCode and passes when the adapter's handshake reaches Python (no prompt sent). |
 

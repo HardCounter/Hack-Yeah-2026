@@ -1229,7 +1229,7 @@ None of these changes alters Event Envelope v2.1 or the decision semantics.
   session-binding integration into interception. Config state is separate from evidence SQLite.
 
 - **New:** `docs/rest.md` (this file).
-- **New code:** the `persistence/http_api/` stub (FastAPI and uvicorn) and `tests/test_http_api_stub.py`.
+- **New code:** the `persistence/http_api/` stub (FastAPI and uvicorn) and `tests/support/test_http_api_stub.py`.
 - **Startup:** `simulation/live_pipeline.py` (`scripts/run_live_pipeline.sh`) starts the API next to
   the gateway. The new `scripts/run_rest_api.sh` runs it on its own. Both are documented in
   [scripts/README.md](../scripts/README.md).

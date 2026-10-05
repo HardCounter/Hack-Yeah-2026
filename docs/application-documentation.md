@@ -234,7 +234,8 @@ of the trusted control plane; agent inputs cannot choose handlers or endpoints:
 1. **In-Application Callbacks (In-Process):** Fast, zero-overhead Python/Go functions implementing a standard `ActionAuditor` interface. Ideal for fast local regex, allowlists, argument bounds checking, and token budgets.
 2. **Webhook Callbacks (HTTP/gRPC):** Authorized allowlisted endpoints receive only policy-permitted sanitized data, with authentication, bounded time/size and validated decision schemas. Mandatory callback failure blocks/pauses; never defaults to ALLOW. Sending private data externally requires approval.
 
-#### Example Policy Configuration (JSON Preset from `config/presets/standard.json`)
+#### Example Policy Configuration (Excerpt from `config/presets/standard.json`)
+> **Note:** The snippet below is an illustrative excerpt focusing on auditors and budgets. Full presets accepted by `PolicyConfig` validation require all top-level fields: `name`, `description`, `allowed_tools`, `admin_tools`, `budget`, `allowed_models`, `max_output_tokens`, `require_approval`, `feed_version`, `controls`, and `auditors`. See `config/presets/` and `docs/rest.md` §5.15 for the full specification.
 ```json
 {
   "name": "standard",

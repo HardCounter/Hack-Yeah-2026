@@ -41,7 +41,7 @@ OpenCode Agent ──► adapters/opencode ──► Layer 1: Intercept ──�
 ### Layer 3: Consume Plane & Supervision (`consume_plane/`, `contracts/`, `data/postconditions.py`)
 - Asynchronous plugin runtime operating on the canonical Event Envelope v2.1.
 - **Trajectory Risk Model** (`consume_plane/plugins/trajectory_risk.py`): Continuous expected loss calculation ($E = \sum P \times C$) using a Bayesian noisy-OR combination of behavioral signals (out-of-scope targets, missing prerequisites, budget burn, rapid bursts).
-- **Independent Outcome Verifier** (`consume_plane/plugins/outcome_verifier.py`): Post-execution verification checking bank database state against ground truth postconditions (`ONB-P1` to `ONB-P4`), verifying action provenance, screening evidence digests, and effect receipts.
+- **Independent Outcome Verifier** (`consume_plane/plugins/outcome_verifier.py`): Post-execution verification checking bank database state against ground truth postconditions (`ONB-P1` to `ONB-P6`), verifying action provenance, screening evidence digests, and effect receipts.
 - **Goal Alignment Judge** (`consume_plane/plugins/goal_alignment_judge.py`): Semantic supervision evaluating whether irreversible actions serve the Task Contract's objective.
 - **Tighten-Only Feedback Controller** (`consume_plane/runtime/feedback.py`): Dynamically escalates enforcement (e.g. requiring approvals or blocking tools) via a formal lattice.
 
@@ -133,16 +133,18 @@ uv run --locked --offline pytest
 scripts/test.sh all
 ```
 
-Individual test targets supported by `scripts/test.sh`:
+Test runners and individual targets:
 ```sh
-scripts/test.sh python       # All Python tests
-scripts/test.sh intercept    # Layer 1 gateway and auditor tests
-scripts/test.sh persistence  # Layer 2 store, outbox, and reader tests
-scripts/test.sh consume      # Layer 3 consumer runtime and plugin tests
-scripts/test.sh e2e          # End-to-end integration tests
-scripts/test.sh adapter      # OpenCode Node.js adapter tests
-scripts/test.sh data         # Synthetic dataset and postcondition tests
-scripts/test.sh decisions    # Control-plane decision trace tests
+scripts/test.sh all           # Every Python test + OpenCode Node adapter tests
+scripts/test.sh python        # All Python tests via uv run pytest
+scripts/test.sh data          # Synthetic dataset and postcondition tests (ONB-P1..P6)
+scripts/test.sh adapter       # OpenCode Node.js adapter tests
+scripts/test_consume_plane.sh # Dedicated Layer 3 consume-plane suite (tests/support/consume_plane)
+
+# To run specific layers directly via pytest:
+uv run pytest tests/support/test_governed_gateway.py tests/support/test_governed_prompts.py  # Layer 1
+uv run pytest tests/support/test_persistence*.py                                            # Layer 2
+uv run pytest tests/support/test_three_layer_e2e.py                                          # Cross-layer E2E
 ```
 
 ---
