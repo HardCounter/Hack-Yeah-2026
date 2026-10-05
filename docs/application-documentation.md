@@ -596,15 +596,15 @@ To power the judge-facing audit ledger UI defined in [docs/dashboard/dashboard-u
 | Endpoint | Method | Status | Purpose / Payload |
 |---|---|---|---|
 | `/api/v1/configs` | `GET` | Implemented | **List Configurations**: Returns presets and custom configurations with summary metadata. |
-| `/api/v1/configs/{name}` | `GET`, `PUT` | Implemented | **Read/Update Configuration**: Inspects or updates a specific configuration preset/custom policy. |
-| `/api/v1/config-selection` | `PUT` | Implemented | **Preset Selector**: Selects the active preset for new sessions (`{"name": "standard"}`). |
+| `/api/v1/configs/{name}` | `GET`, `PUT` | Implemented | **Read/Update Configuration**: Inspects (`GET`) or updates (`PUT`) a policy preset. Mutation requires `Authorization: Bearer <ADMIN_SECRET>` in production (security gap tracked in `GAP_ANALYSIS_FRONTEND_BACKEND.md`). |
+| `/api/v1/config-selection` | `PUT` | Implemented | **Preset Selector**: Selects active preset for new sessions (`{"name": "standard"}`). Requires `Authorization: Bearer <ADMIN_SECRET>` in production (gap tracked in `GAP_ANALYSIS_FRONTEND_BACKEND.md`). |
 | `/api/suite/runs` | `POST` | Implemented | **Run Test Suite**: Executes pytest control layer suite in a background subprocess. |
 | `/api/suite/runs/latest` | `GET` | Implemented | **Suite Status**: Returns execution status and case verdicts for the guardrail test suite. |
 | `/opencode-wrapper/api/sessions` | `POST` | Implemented | **Interactive Session**: Starts a new sandboxed OpenCode chat session. |
 | `/opencode-wrapper/api/sessions/{id}/messages` | `POST` | Implemented | **Interactive Chat**: Sends user prompt to agent and streams/returns response events. |
 | `/api/v1/inspect` | `POST` | Planned | **Sandbox Attack Console**: Ad-hoc proposal evaluation against active policy. |
 | `/api/v1/events/stream` | `GET` | Planned | **Live SSE Feed**: Real-time Server-Sent Events stream of decisions. |
-| `/api/v1/approvals/{id}/decide` | `POST` | Planned | **Human Approval Decision**: Compliance reviewer decision for paused actions. |
+| `/api/v1/approvals/{id}/decide` | `POST` | Planned | **Human Approval Decision**: Compliance reviewer decision for paused actions. Requires `Authorization: Bearer <ADMIN_SECRET>`. |
 | `/api/v1/scenario/replay` | `POST` | Planned | **Sandbox Outcome Replay**: Evaluates outcome verification on seeded bank states. |
 
 ---

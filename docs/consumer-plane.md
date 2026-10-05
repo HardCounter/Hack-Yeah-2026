@@ -748,7 +748,7 @@ Notes:
 - `outcome-verifier` reads `bank.db` through its own read-only connection (the trusted verification
   path). It verifies action provenance, effect receipts, and screening evidence. The result status
   is recorded with canonical codes `VERIFIED_SUCCESS`, `FAILED_POSTCONDITIONS`, or `VERIFICATION_INCOMPLETE`.
-- `trajectory-grader` is optional and is marked `live`/semantic in reports. If no model is running,
+- `goal-alignment-judge` is optional and is marked `live`/semantic in reports. If no model is running,
   it reports `unavailable` instead of passing.
 
 ---
@@ -784,7 +784,7 @@ consume_plane:
       loop-detector: [BLOCK_TOOLS]
       scope-drift: [ALERT, BLOCK_TOOLS]
       usage-accountant: [REQUIRE_APPROVAL_FOR, HALT_SESSION]
-      trajectory-grader: [ALERT, REQUIRE_APPROVAL_FOR]
+      goal-alignment-judge: [ALERT, REQUIRE_APPROVAL_FOR]
 
 plugins:
   usage-accountant:
@@ -796,8 +796,8 @@ plugins:
   outcome-verifier:
     handler: "consume_plane.plugins.outcome_verifier:OutcomeVerifier"
     config: {bank_db: "data/bank.db"}
-  trajectory-grader:
-    handler: "consume_plane.plugins.trajectory_grader:TrajectoryGrader"
+  goal-alignment-judge:
+    handler: "consume_plane.plugins.goal_alignment_judge:GoalAlignmentJudge"
     enabled: false
     config: {provider: "anthropic", model: "claude-haiku-4-5", api_key_env: "LLM_API_KEY"}
   velocity-observer:            # illustrative consumer from consumer_plugins/, not Layer 1
@@ -925,7 +925,7 @@ Run command: `uv run pytest tests/support/consume_plane -q`.
 | **1. Core runtime** | Ports, memory/JSONL adapters, loader, registry, context, ledger, manager, `python -m consume_plane` running against `JsonlReplaySource` | Loader, subscription, at-least-once, timeout, and ordering tests; a consumer-only velocity observer fixture emits findings to `findings.jsonl` |
 | **2. Built-ins** | `usage-accountant`, `loop-detector`, `scope-drift`, `repeat-side-effect`, `step-order`, `outcome-verifier` | Built-in and outcome-verifier tests green on fixture trajectories for the listed ONB scenarios |
 | **3. Integration** | Layer 2 adapters (`EventSource`, `TrajectoryReader`), `StoreSink`, `SseSink`, `InProcessFeedbackChannel` wired to Layer 1 cache, `/consumer/health` | One end-to-end run (ONB-15): Layer 1 event → store → Queue 2 → `scope-drift` → signal → Layer 1 blocks the **next** out-of-scope call, and the dashboard shows the finding |
-| **4. Optional** | Feedback controller hardening, config hot reload, `trajectory-grader`, webhook plugin adapter | Each has tests; semantic results are labelled as such in the dashboard |
+| **4. Optional** | Feedback controller hardening, config hot reload, `goal-alignment-judge`, webhook plugin adapter | Each has tests; semantic results are labelled as such in the dashboard |
 
 Phases 0–2 depend on nothing else in the repository and can start now. Phase 3 is blocked on
 Layer 2's choice of store and queue.
