@@ -104,14 +104,15 @@ Shared data volume: configuration state, synthetic bank and SQLite evidence stor
   server token is empty or missing, config writes are denied while reads remain available.
 - **Evidence API:** Caddy sends evidence routes to the separate read API. Configuration routes stay
   on the web app. Both processes use `/data/config`, while the evidence API starts with
-  `--disable-config-writes`. For local frontend development, Compose allows the origins in
+  configuration writes disabled. For local frontend development, Compose allows the origins in
   `DEV_CORS_ORIGINS` (space-separated; defaults to localhost and 127.0.0.1 on port 5173).
   The API is published to the host on loopback port `API_PORT` (default 8790) for that local
   development use; it is not exposed on public interfaces. Set both variables in `.env` as needed.
 - **HTTPS proxy headers:** Compose enables Uvicorn proxy-header handling only for the app service.
-  It trusts forwarded headers from its private Compose network because Caddy is the public ingress;
-  the app has no published host port. Do not reuse this wildcard trust setting for a directly
-  exposed Uvicorn process.
+  It trusts only Caddy's fixed IPv4 address, not every peer on the network. Compose uses private
+  subnet `172.30.0.0/24` with Caddy `.2`, app `.3` and evidence API `.4`; set
+  `COMPOSE_NETWORK_PREFIX` to another private three-octet prefix if the subnet conflicts locally.
+  The app has no published host port.
 
 ### Session API and the OpenCode wrapper page (implemented)
 

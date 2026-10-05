@@ -233,7 +233,9 @@ class AuditReader:
             exported_bytes = 0
             after_offset = 0
 
-            with open(tmp_dest, "w", encoding="utf-8") as f:
+            # Keep LF on every platform so the byte quota describes the actual
+            # JSONL file; flush the writable descriptor before atomic publication.
+            with open(tmp_dest, "w", encoding="utf-8", newline="\n") as f:
                 while True:
                     async with self.store._lock:
                         def _sync_fetch_chunk(after: int):
@@ -275,7 +277,7 @@ class AuditReader:
 
                     after_offset = rows[-1][1]
 
-            with open(tmp_dest, "rb") as f:
+                f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_dest, dest)
             return exported_rows

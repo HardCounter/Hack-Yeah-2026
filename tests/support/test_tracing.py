@@ -5,6 +5,7 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -42,9 +43,10 @@ def test_terminal_logger_writes_one_line_and_never_serializes_structures():
 def test_file_logger_appends_json_lines(tmp_path):
     path = tmp_path / "nested" / "trace.log"
     logger = FileLogger(path)
-    logger.log("persistence", "evidence.committed", event_id="evt_1", seq=3, text="x" * 500)
+    logger.log("persistence", "evidence.committed", event_id="evt_1", seq=3, text="é" * 500)
     logger.log("consume", "event.processed", event="evt_1", outcome="acked")  # reserved key: renamed
-    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert "…".encode("utf-8") in path.read_bytes()
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert [(r["layer"], r["event"]) for r in rows] == [("persistence", "evidence.committed"), ("consume", "event.processed")]
     assert rows[0]["seq"] == 3 and len(rows[0]["text"]) <= tracing.MAX_VALUE_CHARS + 1
     assert rows[0]["ts"].endswith("+00:00")
@@ -69,12 +71,12 @@ def test_governed_run_traces_all_three_layers(tmp_path):
     if not (ROOT / "data" / "bank.db").exists():
         subprocess.run([sys.executable, "data/generate.py"], cwd=ROOT, check=True, capture_output=True)
     trace = tmp_path / "trace.log"
-    env = {**os.environ, "CONTROL_LOG": "file", "CONTROL_LOG_FILE": str(trace)}
+    env = {**os.environ, "CONTROL_LOG": "file", "CONTROL_LOG_FILE": str(trace), "PYTHONIOENCODING": "utf-8"}
     done = subprocess.run([sys.executable, "-m", "simulation.agent", "APP-0003", "--driver", "scripted",
-                           "--fault", "skip_step:screen_sanctions"],
-                          cwd=ROOT, env=env, capture_output=True, text=True, timeout=180)
+                          "--fault", "skip_step:screen_sanctions"],
+                          cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", timeout=180)
     assert done.returncode == 1  # VERIFICATION_INCOMPLETE, as documented
-    rows = [json.loads(line) for line in trace.read_text().splitlines()]
+    rows = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
     events = [(r["layer"], r["event"]) for r in rows]
 
     # the session-start evidence is committed first, then the session is announced, then actions follow
@@ -92,8 +94,8 @@ def test_governed_run_traces_all_three_layers(tmp_path):
     [verification] = [r for r in rows if r["event"] == "verification"]
     assert verification["status"] == "VERIFICATION_INCOMPLETE"
     # trace values are identifiers and codes only: no raw applicant data
-    declared_name = json.loads(subprocess.run(
-        [sys.executable, "-c", "import sqlite3,json;print(sqlite3.connect('data/bank.db').execute("
-         "\"select declared from onboarding_applications where application_id='APP-0003'\").fetchone()[0])"],
-        cwd=ROOT, capture_output=True, text=True, check=True).stdout)["name"]
-    assert declared_name not in trace.read_text()
+    with sqlite3.connect(ROOT / "data" / "bank.db") as db:
+        declared_name = json.loads(db.execute(
+            "select declared from onboarding_applications where application_id='APP-0003'"
+        ).fetchone()[0])["name"]
+    assert declared_name not in trace.read_text(encoding="utf-8")

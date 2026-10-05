@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sqlite3
+import stat
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
@@ -29,7 +30,8 @@ def test_prepare_isolated_gateway_only_agent_and_safe_provider_config(tmp_path):
     assert config["agents"]["onboarding-agent"]["tools"] == {}
     assert config["plugins"][0]["options"]["registerTools"] is True
     assert config["providers"] == json.loads(provider.read_text())["providers"]
-    assert os.stat(config_path).st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
     with pytest.raises(ValueError, match="isolated"):
         prepare_project(repo / "nested", repo, "APP-0001", "contract_demo_v1", "mock/test", "http://127.0.0.1:8080")
     provider.write_text('{"providers":{"mock":{"options":{"apiKey":"sk-test-12345678901234567890"}}}}')
@@ -122,5 +124,64 @@ def test_export_run_writes_canonical_and_privacy_limited_artifacts(tmp_path):
     assert json.loads((output / "contract.json").read_text()) == {"contract_id": "contract_x"}
     assert "PRIVATE PERSON NAME" not in (output / "findings.jsonl").read_text()
     assert json.loads((output / "verification.json").read_text())["checks"][0]["detail"] == "MISSING_RECEIPT"
-    assert os.stat(output).st_mode & 0o777 == 0o700
-    assert all(os.stat(output / name).st_mode & 0o777 == 0o600 for name in ("events.jsonl", "findings.jsonl", "contract.json", "verification.json"))
+    if os.name == "posix":
+        assert stat.S_IMODE(output.stat().st_mode) == 0o700
+        assert all(stat.S_IMODE((output / name).stat().st_mode) == 0o600
+                   for name in ("events.jsonl", "findings.jsonl", "contract.json", "verification.json"))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="descriptor permission operation is POSIX-only")
+def test_atomic_write_closes_descriptor_and_removes_temp_after_fchmod_failure(tmp_path, monkeypatch):
+    import simulation.pipeline_support as support
+
+    opened = []
+    mkstemp = support.tempfile.mkstemp
+
+    def tracked_mkstemp(**kwargs):
+        fd, name = mkstemp(**kwargs)
+        opened.append((fd, name))
+        return fd, name
+
+    def fail_fchmod(*_):
+        raise PermissionError("simulated chmod failure")
+
+    monkeypatch.setattr(support.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(support.os, "fchmod", fail_fchmod)
+    with pytest.raises(PermissionError, match="simulated"):
+        support._atomic_write(tmp_path / "result.json", "{}")
+
+    fd, temp_name = opened[0]
+    with pytest.raises(OSError):
+        os.fstat(fd)
+    assert not os.path.exists(temp_name)
+
+
+def test_atomic_write_works_without_posix_descriptor_permissions(tmp_path, monkeypatch):
+    import simulation.pipeline_support as support
+
+    monkeypatch.delattr(support.os, "fchmod", raising=False)
+    path = tmp_path / "result.json"
+    support._atomic_write(path, '{"ok":true}')
+    assert json.loads(path.read_text(encoding="utf-8")) == {"ok": True}
+    assert not list(tmp_path.glob(".pipeline-*"))
+
+
+def test_atomic_write_closes_descriptor_when_fdopen_fails(tmp_path, monkeypatch):
+    import simulation.pipeline_support as support
+
+    opened = []
+    real_mkstemp = support.tempfile.mkstemp
+    def tracked_mkstemp(**kwargs):
+        result = real_mkstemp(**kwargs)
+        opened.append(result)
+        return result
+    def fail_fdopen(*_args, **_kwargs):
+        raise OSError("simulated fdopen failure")
+    monkeypatch.setattr(support.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(support.os, "fdopen", fail_fdopen)
+    with pytest.raises(OSError, match="simulated fdopen"):
+        support._atomic_write(tmp_path / "result.json", "{}")
+    fd, temporary = opened[0]
+    with pytest.raises(OSError):
+        os.fstat(fd)
+    assert not os.path.exists(temporary)

@@ -143,7 +143,15 @@ components; pytest remains a development dependency. Run the synthetic checks:
 uv run --locked --offline pytest
 ```
 
+Backup/restore verification flushes a writable, nontruncating temporary-file descriptor before
+replacement, including on Windows. Principal-scoped JSONL exports use UTF-8 with LF newlines on
+every platform and flush their original writable stream before publication; byte quotas therefore
+describe the actual file bytes. The concurrency benchmark checks all 500 persisted identities
+and fully drained durable delivery, without imposing a hardware-dependent delivery deadline.
+Production shutdown deadlines and timeout recovery remain covered by the lifecycle tests.
+
 The persistence test suite includes:
+
 - `tests/support/test_persistence.py`: Core event store, outbox, and delivery operations.
 - `tests/support/test_persistence_failures.py`: Failure modes, corruption, and retry backoff.
 - `tests/support/test_persistence_schema.py`: Schema migrations, metadata, and constraints.

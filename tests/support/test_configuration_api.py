@@ -96,7 +96,8 @@ def test_every_preset_is_editable_and_selectable(api, name):
     ("PUT", "/api/v1/configs/standard", " " * 64001, {}, 413, "config_too_large"),
     ("POST", "/api/v1/configs/standard", "{}", {}, 405, "method_not_allowed"),
     ("GET", "/api/v1/config-selection", "", {}, 405, "method_not_allowed"),
-])
+], ids=["wrong-media-type", "malformed-json", "duplicate-name", "nonfinite-json", "invalid-policy",
+        "missing-config", "invalid-name", "invalid-selection", "oversize-body", "wrong-method", "selection-get"])
 def test_management_errors_are_sanitized(api, method, path, body, headers, status, code):
     client, _ = api
     headers = {"Content-Type": "application/json", **headers}
@@ -288,7 +289,7 @@ def test_read_only_config_install_does_not_initialize_or_write(tmp_path, monkeyp
         assert {path.name: path.read_bytes() for path in service.directory.iterdir()} == before
 
 
-@pytest.mark.parametrize("trusted_proxy,status", [("172.18.0.5", 200), ("127.0.0.1", 403)])
+@pytest.mark.parametrize("trusted_proxy,status", [("172.30.0.2", 200), ("172.30.0.3", 403)])
 def test_tls_proxy_origin_check_requires_trusted_forwarded_scheme(tmp_path, monkeypatch, trusted_proxy, status):
     from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -297,7 +298,7 @@ def test_tls_proxy_origin_check_requires_trusted_forwarded_scheme(tmp_path, monk
     service = ConfigService(tmp_path / "config")
     install_config_api(app, config_service=service)
     proxy_app = ProxyHeadersMiddleware(app, trusted_hosts=trusted_proxy)
-    with TestClient(proxy_app, client=("172.18.0.5", 35000)) as client:
+    with TestClient(proxy_app, client=("172.30.0.2", 35000)) as client:
         config = client.get("/api/v1/configs/standard").json()
         result = client.put("/api/v1/configs/standard", json=config, headers={
             "Host": "demo.example", "Origin": "https://demo.example", "X-Forwarded-Proto": "https",

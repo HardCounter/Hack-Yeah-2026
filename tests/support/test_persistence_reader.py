@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from functools import wraps
 import json
+import os
 from pathlib import Path
 import pytest
 
@@ -181,9 +182,16 @@ async def test_rotated_epoch_rejects_old_cursor(tmp_path: Path):
 
 
 @async_test
-async def test_export_jsonl_with_retention_hold_and_quota(tmp_path: Path):
+async def test_export_jsonl_with_retention_hold_and_quota(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "export.db"
     export_file = tmp_path / "exported.jsonl"
+    real_fsync = os.fsync
+    flushed = []
+    def require_writable(fd):
+        os.write(fd, b"")  # Reject reopening the completed export with a read-only descriptor.
+        flushed.append(fd)
+        return real_fsync(fd)
+    monkeypatch.setattr(os, "fsync", require_writable)
     store = EventStore(db_path)
     await store.initialize()
     reader = AuditReader(store)
@@ -195,6 +203,9 @@ async def test_export_jsonl_with_retention_hold_and_quota(tmp_path: Path):
     count = await reader.export_jsonl(scope, "run-export", export_file)
     assert count == 4
     assert export_file.exists()
+    assert len(flushed) == 1
+    assert export_file.read_bytes().count(b"\n") == 4
+    assert b"\r\n" not in export_file.read_bytes()
 
     lines = export_file.read_text(encoding="utf-8").strip().split("\n")
     assert len(lines) == 4

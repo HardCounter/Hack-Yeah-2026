@@ -44,8 +44,8 @@ The read API is the **read side of Layer 2**. It runs as its own process, opens 
 write path (`PersistenceEngine`, `GovernedPersistence.append`, consumer registration). It cannot
 change evidence or approvals. The separate configuration-management router changes policy for
 **new sessions only**; it never writes evidence SQL or mutates existing Task Contracts. In Compose,
-both API processes use `CONFIG_DIR=/data/config`. The evidence API runs with
-`--disable-config-writes`; Caddy routes configuration management to the web app, which authenticates writes.
+both API processes use `CONFIG_DIR=/data/config`. The evidence CLI always disables configuration writes; Caddy routes configuration management to
+the web app, which authenticates writes.
 The write API in [persistence.md](persistence.md) is
 still not exposed over HTTP.
 
@@ -72,8 +72,8 @@ scripts/run_rest_api.sh --evidence-dir <bank-runs-dir> --cors-origin http://loca
 scripts/run_rest_api.sh --example-mode --cors-origin http://localhost:5173
 # fresh actual synthetic gateway evidence, no OpenCode/model required
 scripts/run_rest_demo.sh --port 8790
-# directly; configuration writes are disabled by default (the flag makes that explicit)
-uv run python -m persistence.http_api --evidence-dir <bank-runs dir> --config-dir <operator-config-dir> --disable-config-writes --port 8790
+# directly; the evidence CLI always disables configuration writes
+uv run python -m persistence.http_api --evidence-dir <bank-runs dir> --config-dir <operator-config-dir> --port 8790
 ```
 
 **One evidence store per session.** The governed runtime writes
@@ -99,7 +99,7 @@ decisions and history by polling this API; the wrapper polls its separate sessio
 |---|---|
 | Base path | `/api/v1`. Evidence routes remain `GET` only (plus `HEAD`). Two management exceptions permit `PUT /configs/{name}` and `PUT /config-selection`. Other writes return `405`. Allowed-origin CORS preflight (`OPTIONS`) carries no data. |
 | Format | `application/json; charset=utf-8`. Exports use `application/x-ndjson`. |
-| Auth | Evidence and config reads are unauthenticated. Web config PUTs require `X-Admin-Token` or `Authorization: Bearer` matching `CONFIG_ADMIN_TOKEN`; missing or wrong tokens return 401. With no server token, writes are disabled and return 503. The evidence CLI disables config writes by default; `--disable-config-writes` makes that explicit. See §7. |
+| Auth | Evidence and config reads are unauthenticated. Web config PUTs require `X-Admin-Token` or `Authorization: Bearer` matching `CONFIG_ADMIN_TOKEN`; missing or wrong tokens return 401. With no server token, writes are disabled and return 503. The evidence CLI always disables config writes. See §7. |
 | Binding | Default `127.0.0.1`. Binding elsewhere requires `--allow-remote`. This port is never reachable from the agent's tool path. |
 | CORS | Allowed only for origins listed in `--cors-origin`. No wildcard. |
 | Timestamps | ISO 8601 UTC with `Z`, for example `2026-10-03T15:42:10.500Z`. Query parameters accept any ISO 8601 with a timezone. |
@@ -1217,7 +1217,7 @@ matching session stores, with per-store rather than globally atomic snapshot con
 - **Configuration authentication:** config PUTs on the web app require `X-Admin-Token` or Bearer
   token matching `CONFIG_ADMIN_TOKEN`. Enter the token in the dashboard's inline administrator
   field; it is kept only in memory. If the server token is missing, configuration writes fail
-  closed. The evidence API is read-only by default, with `--disable-config-writes` explicit in Compose.
+  closed. The evidence CLI always disables configuration writes, including in Compose.
 - **Unauthenticated evidence reads:** standalone CLI use binds loopback by default. Compose exposes
   sanitized evidence GETs publicly through Caddy and on host loopback for local development; these
   reads are intentionally unauthenticated and have no per-principal scoping. The agent receives

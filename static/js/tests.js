@@ -94,7 +94,7 @@
       li.append(b); return li;
     }));
     if (note) list.append(el('li', 'cap muted', note));
-    else if (!outcomes.length) list.append(el('li', 'cap muted', 'No recorded sessions yet.'));
+    else if (!outcomes.length) list.append(el('li', 'cap muted', 'No recorded sessions yet. Run a session to see its verification checks here.'));
     if (outcomeCursor) {
       const li = el('li'), more = el('button', 'btn ghost', 'Load more sessions'); more.type = 'button';
       more.onclick = () => loadOutcomes(true); more.disabled = outcomeLoading; li.append(more); list.append(li);

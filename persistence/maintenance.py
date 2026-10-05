@@ -144,7 +144,9 @@ async def backup_store(store: EventStore, destination: Union[str, Path]) -> None
         finally:
             dest_conn.close()
 
-        with open(tmp_dest, "rb") as f:
+        # Windows fsync requires a writable descriptor; SQLite has already closed
+        # the backup, and r+b preserves its verified bytes without truncation.
+        with open(tmp_dest, "r+b") as f:
             os.fsync(f.fileno())
         os.replace(tmp_dest, dest)
 
@@ -198,6 +200,6 @@ def restore_store(source: Union[str, Path], destination: Union[str, Path]) -> No
     finally:
         tmp_conn.close()
 
-    with open(tmp_dest, "rb") as f:
+    with open(tmp_dest, "r+b") as f:
         os.fsync(f.fileno())
     os.replace(tmp_dest, dest)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+import os
 from pathlib import Path
 import sqlite3
 import pytest
@@ -271,10 +272,18 @@ async def test_logical_payload_capacity_enforced_fail_closed(tmp_path: Path):
 
 
 @async_test
-async def test_backup_and_restore_with_epoch_rotation(tmp_path: Path):
+async def test_backup_and_restore_with_epoch_rotation(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "original.db"
     backup_path = tmp_path / "backup.db"
     restored_path = tmp_path / "restored.db"
+
+    real_fsync = os.fsync
+    flushed = []
+    def require_writable(fd):
+        os.write(fd, b"")  # Portable regression: read-only descriptors cannot be flushed on Windows.
+        flushed.append(fd)
+        return real_fsync(fd)
+    monkeypatch.setattr(os, "fsync", require_writable)
 
     store = EventStore(db_path)
     await store.initialize()
@@ -293,6 +302,7 @@ async def test_backup_and_restore_with_epoch_rotation(tmp_path: Path):
     # Restore to a new location
     restore_store(backup_path, restored_path)
     assert restored_path.exists()
+    assert len(flushed) == 2
 
     # Validate restored store
     restored_store = EventStore(restored_path)

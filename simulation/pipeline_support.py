@@ -147,13 +147,18 @@ def prepare_project(project, repo, appid, contractid, model, endpoint, provider_
 def _atomic_write(path: Path, text: str):
     fd, temp_name = tempfile.mkstemp(prefix=".pipeline-", dir=path.parent)
     try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        file = os.fdopen(fd, "w", encoding="utf-8")
+        fd = -1  # ownership transferred; the context manager closes it on every exit path
+        with file as f:
+            if hasattr(os, "fchmod"):
+                os.fchmod(f.fileno(), 0o600)
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
         os.replace(temp_name, path)
     finally:
+        if fd >= 0:
+            os.close(fd)
         try: os.unlink(temp_name)
         except FileNotFoundError: pass
 

@@ -53,6 +53,11 @@ to the pinned task baseline. Caller-supplied ownership is not accepted. This pre
 `DOC-…` identifier from being mistaken for a foreign case while preserving foreign document IDs
 as evidence of an out-of-scope attempt.
 
+Removing the false document signals lowers the demo's out-of-scope-read trajectory from high
+to medium risk. The foreign application read is still blocked by the gateway; this correction
+changes the heuristic assessment of subsequent recorded steps, not the scope enforcement gate.
+The risk threshold is not an authorization check.
+
 ## Behaviour in the consume plane
 
 - **Subscribes to** `tool_use` and `egress`, and reads the full session trajectory (prompts

@@ -16,7 +16,6 @@ def main() -> None:
                               "pipeline passes its bank-runs directory.")
     parser.add_argument("--example-mode", action="store_true", help="explicit frontend example data, not persisted evidence")
     parser.add_argument("--config-dir", type=Path, help="shared backend configuration directory (default: CONFIG_DIR)")
-    parser.add_argument("--disable-config-writes", action="store_true", help="serve configuration reads only (the default)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8790)
     parser.add_argument("--cors-origin", action="append", default=[], help="allowed dashboard origin; repeatable")

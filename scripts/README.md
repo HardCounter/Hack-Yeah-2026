@@ -3,6 +3,10 @@
 Run from anywhere; each script `cd`s to the repository root. Requirements: `uv`; `node` 22+ for
 adapter tests; `opencode` 2.x for anything that starts OpenCode. Synthetic data only.
 
+Bash wrappers and their shell integration tests target Linux/macOS or a POSIX environment such
+as WSL with Linux Python/uv. Native Windows CI still runs the Python CLI, persistence,
+configuration, dashboard and Node tests; only POSIX shell/process/permission checks are skipped.
+
 ## Run the control layer
 
 | Script | What it does |

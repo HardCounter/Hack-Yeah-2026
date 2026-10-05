@@ -1,8 +1,7 @@
 services:
   app:
     image: hackyeah-app:local
-    # Caddy is the only ingress to the web container. Trust forwarded scheme/host headers
-    # from that private Compose network so HTTPS browser checks see the public URL.
+    # Trust forwarded scheme headers only from Caddy's fixed address on this network.
     command:
       - uvicorn
       - web.main:app
@@ -12,7 +11,7 @@ services:
       - "8000"
       - --proxy-headers
       - --forwarded-allow-ips
-      - "*"
+      - "${COMPOSE_NETWORK_PREFIX:-172.30.0}.2"
     build:
       context: .
       args:
@@ -22,6 +21,9 @@ services:
       CONFIG_DIR: /data/config   # saved custom configs survive a redeploy
     volumes:
       - appdata:/data
+    networks:
+      default:
+        ipv4_address: "${COMPOSE_NETWORK_PREFIX:-172.30.0}.3"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
       interval: 10s
@@ -41,7 +43,7 @@ services:
         mkdir -p /data/pipeline-runs/bank-runs &&
         set --; for origin in $${DEV_CORS_ORIGINS}; do set -- "$$@" --cors-origin "$$origin"; done;
         exec python -m persistence.http_api --host 0.0.0.0 --allow-remote --port 8790
-        --evidence-dir /data/pipeline-runs/bank-runs --disable-config-writes "$$@"
+        --evidence-dir /data/pipeline-runs/bank-runs "$$@"
     environment:
       CONFIG_DIR: /data/config
       DEV_CORS_ORIGINS: "${DEV_CORS_ORIGINS:-http://localhost:5173 http://127.0.0.1:5173}"
@@ -50,6 +52,9 @@ services:
       - "127.0.0.1:${API_PORT:-8790}:8790"
     volumes:
       - appdata:/data
+    networks:
+      default:
+        ipv4_address: "${COMPOSE_NETWORK_PREFIX:-172.30.0}.4"
     depends_on:
       - app
     healthcheck:
@@ -70,6 +75,9 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
+    networks:
+      default:
+        ipv4_address: "${COMPOSE_NETWORK_PREFIX:-172.30.0}.2"
     depends_on:
       - app
       - api
@@ -78,3 +86,9 @@ services:
 volumes:
   appdata:
   caddy_data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: "${COMPOSE_NETWORK_PREFIX:-172.30.0}.0/24"
