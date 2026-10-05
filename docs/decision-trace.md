@@ -80,8 +80,9 @@ seq  trigger                  plugin            decision      reasoning
 attempt. A redelivered event produces the same IDs, and the store keeps the first write
 (`INSERT OR IGNORE`). Retries therefore never duplicate the trace or fail on a different timestamp.
 
-**Compatible.** The table is created when a store is opened. The schema version is unchanged, so
-evidence stores written before the trace existed stay readable and return an empty trace.
+**Compatible.** The table is created when a store is opened. Storage operates under schema `user_version = 3`
+(with the read API also accepting stores written with `user_version = 4` during a short-lived build on 2026-10-04),
+so stores without decision records remain readable and return an empty trace.
 
 ## 3. Privacy
 
@@ -105,7 +106,7 @@ not a licence to write prose.
 |---|---|
 | `GET /api/v1/sessions/{session_id}/decisions` | the session trace, oldest first. Filters: `plugins`, `outcomes`, `decisions`, `trigger_event_id`; keyset pagination; `summary` counts per plugin and outcome |
 | `GET /api/v1/decisions/{decision_id}` | one decision |
-| `GET /api/v1/export/sessions/{session_id}` | NDJSON audit export; includes `plugin_decision` records |
+| `GET /api/v1/export/sessions/{session_id}` | NDJSON audit export; includes `plugin_decision` records (persisted mode) |
 
 Every item is joined with its `trigger` step (`kind`, `name`, `status`, gateway `decision`) and its
 linked `findings`. Field details are in [docs/rest.md](rest.md) §4.21, §4.22 and §5.17.
@@ -151,8 +152,8 @@ rule 6 in [consume_plane/plugins/README.md](../consume_plane/plugins/README.md).
 
 | File | Covers |
 |---|---|
-| `tests/consume_plane/test_decision_model.py` | unit: ID determinism, failure codes, record ↔ privacy projection, JSONL and persistence sinks, several decisions per run, retry trace |
-| `tests/consume_plane/test_decisions.py` | manager: every risk assessment traced and linked to its finding/signal, implicit `OUTPUT_EMITTED`, failures with fixed reasons, timeouts, stable IDs |
+| `tests/support/consume_plane/test_decision_model.py` | unit: ID determinism, failure codes, record ↔ privacy projection, JSONL and persistence sinks, several decisions per run, retry trace |
+| `tests/support/consume_plane/test_decisions.py` | manager: every risk assessment traced and linked to its finding/signal, implicit `OUTPUT_EMITTED`, failures with fixed reasons, timeouts, stable IDs |
 | `tests/test_decision_trace_api.py` | privacy projection, store idempotency, REST filters/pagination/lookup, export, old stores, tampered rows re-projected |
 | `tests/test_decisions_demo.py` | running scenarios end to end through the real gateway, store, consume plane and REST |
 | judge and verifier tests | decision points of `goal-alignment-judge` and `outcome-verifier` |

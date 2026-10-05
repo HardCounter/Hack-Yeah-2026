@@ -48,7 +48,7 @@ flowchart LR
         BUS[(Event log / queue)]
         STORE[(Analytics store<br/>DuckDB / SQLite)]
         EVAL[Evaluator /<br/>Outcome Verifier]
-        DASH[Dashboard / reports<br/>(Streamlit)]
+        DASH[Dashboard / reports<br/>(FastAPI + Web UI)]
     end
 
     API[(Local / Upstream LLM)]
@@ -83,7 +83,7 @@ Runs independently of downstream monitoring. Powered by the deterministic mock d
 | Item | Detail |
 |---|---|
 | Generator | Implemented stdlib-only `random.Random`, seed 2026; generator contains a byte-identical-output self-check. No Faker dependency. |
-| Volumes | Targets: ~150 clients, 230 accounts, 9,000 transactions (90 days history), 15 applications, 60 alerts; actual counts must come from execution. |
+| Volumes | Generated: 150 clients, 231 accounts, ~9,354 transactions (90 days history), 17 applications (APP-0001 to APP-0017), 47 documents, 60 alerts. |
 | Tables | `clients`, `accounts`, `transactions`, `onboarding_applications`, `alerts`, `company_registry`, `sanctions_list`, `pep_list`, `documents`; runtime evidence/linkage additions are still required. |
 | Planted Anomalies | Sanctions hits, PEP flags, prompt injections in OCR/memos, expired passports, structuring cash deposits, rapid movement via high-risk jurisdictions. |
 | Sealed Ground Truth | Written to `data/ground_truth.json` (contains actual labels, expected dispositions, and correct resolutions; unseen by agents). |
@@ -194,7 +194,7 @@ tool responses; event/ground-truth joins alone cannot prove a business outcome.
 | **Analytics store** | DuckDB or SQLite (Postgres / ClickHouse for large scale). Tables: `llm_calls`, `tool_calls`, `lifecycle`, `faults`, `ground_truth` |
 | **Trace builder** | Reconstructs per-case traces from correlation IDs (`X-Run-Id`, `X-Case-Id`, `X-Step-Id`) |
 | **Outcome Verifier / Evaluator** | Queries persisted bank state and trusted baseline independently; checks KYC state invariants, separately identifies trace-assisted process checks, reports success/failure/incomplete; AML deferred. |
-| **Dashboard / reports** | Streamlit UI displaying security posture, active guardrails, blocked threats, and budget consumption |
+| **Dashboard / reports** | FastAPI + Web UI (served behind Caddy) displaying security posture, active guardrails, blocked threats, session trajectories, and budget consumption |
 
 ### 5.2 Metric families
 
@@ -389,7 +389,7 @@ ai-control-layer/
 | Event log | JSONL files, SQLite | Kafka / Redpanda |
 | Analytics store | DuckDB | ClickHouse / Postgres |
 | Document fixture storage | Local filesystem | S3 / MinIO (fixtures only; no raw prompt blobs) |
-| Dashboard | Fast Web UI / Streamlit | Grafana |
+| Dashboard | FastAPI + Web UI | Grafana |
 | Tool servers | FastAPI, or MCP servers | Same |
 
 ---

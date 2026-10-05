@@ -10,8 +10,8 @@
 not intercept agents, enforce policy, authorize approvals, reserve budgets, or
 verify banking outcomes. Only trusted gateway/orchestrator code may invoke this
 API or register in-process callbacks. The write API has no public or model-facing
-endpoint. Dashboards read evidence through a separate read-only HTTP API (planned,
-[rest.md](rest.md)) that opens the store in read-only mode and never imports this
+endpoint. Dashboards read evidence through a separate read-only HTTP API ([rest.md](rest.md))
+that opens the store in read-only mode and never imports this
 write path. Do not expose these methods as agent tools. Identifiers and `AuditContext` must
 come from the trusted orchestrator, not model arguments or correlation headers.
 
@@ -19,7 +19,7 @@ come from the trusted orchestrator, not model arguments or correlation headers.
 
 | API | Meaning of success | Appropriate use |
 |---|---|---|
-| `await engine.emit_action(event)` | Sanitized immutable event and all registered consumer jobs committed together to file-backed SQLite | Required intents, decisions, denies and result evidence |
+| `await engine.emit_action(event)` | Sanitized immutable event and all registered consumer jobs committed together to file-backed SQLite | Decisions, denies and result evidence (dispatch intents must use `GovernedPersistence.intent`) |
 | `engine.emit_action_nowait(event)` | Owned sanitized snapshot accepted into bounded memory | Optional best-effort telemetry only |
 | `await engine.emit_alert(...)` / `emit_audit_action(...)` | Sanitized immutable record committed | Reporting; these do not transact a banking effect |
 
@@ -36,7 +36,9 @@ in memory and deferred until after the effect. Cancellation/timeout after a
 commit starts can leave committed evidence: reconcile by the original event ID;
 never interpret cancellation as proof of rollback or repeat a business effect.
 `emit_action(timeout=...)` bounds lifecycle-lock acquisition, not an in-flight
-SQLite commit. SQLite has a five-second busy timeout.
+SQLite commit. The SQLite writer connection sets a 30-second busy timeout
+(`PRAGMA busy_timeout=30000`); read queries use a 1-second connect timeout with a
+5-second progress deadline handler.
 
 SQLite uses WAL and `synchronous=FULL`. These guarantees depend on the local
 filesystem honoring synchronization. Tests cover process exit after acceptance,
@@ -77,7 +79,9 @@ explicit operator-authorized retention deletion. Retry comparison concerns the
 sanitized record, not omitted raw payloads.
 
 Consume-plane decisions are stored in the `plugin_decisions` table of the same evidence store, under
-the same privacy rules (`persistence.privacy.decision_projection`, applied on write and on read). See
+the same privacy rules (`persistence.privacy.decision_projection`, applied on write and on read). The
+store operates under SQLite `user_version = 3` (`CURRENT_SCHEMA_VERSION = 3`), with the read API also
+accepting version 4 stores written by a short-lived build on 2026-10-04 (which share the same table layout). See
 [decision-trace.md](decision-trace.md).
 
 ## Analytics and live feeds
@@ -103,7 +107,8 @@ Consumers must deduplicate event IDs in their own durable transaction, including
 the crash window after processing and before acknowledgment. They must never
 perform business effects. Registered callbacks are trusted Python code; storage
 does not sandbox arbitrary callback I/O. Cross-consumer processing order is not
-guaranteed, and retries can deliver an older event after a newer one; trajectory
+guaranteed. Within a single consumer and session, pending or retrying events hold
+back subsequent claims in `seq` order until acknowledged or moved to DLQ. Trajectory
 consumers must use run indices and detect gaps.
 
 `subscribe_live_feed()` creates volatile bounded queues. Overflow/filter failure
@@ -122,8 +127,8 @@ worker/store alive so an operator can restore the cause and retry `stop()`.
 `get_stats()` exposes counts, latency, backlog, volatile rejections, live-feed
 drops/filter errors and worker error class. `prune_before(UTC_timestamp)` applies
 an explicit trusted retention cutoff and preserves events with pending jobs.
-There is no automatic scheduler and no admin or retention endpoint. The planned
-read API ([rest.md](rest.md)) adds a read-only per-session NDJSON export within the
+There is no automatic scheduler and no admin or retention endpoint. The
+read API ([rest.md](rest.md)) provides a read-only per-session NDJSON export within the
 same export quotas; principal-scoped run export stays on `AuditReader`. Deployment must
 choose retention limits, authorize pruning/exports, restrict filesystem access,
 and monitor file growth. Pending capacity alone does not bound the database.
@@ -148,6 +153,7 @@ The persistence test suite includes:
 - `tests/support/test_persistence_maintenance.py`: Maintenance reports, pruning, quota enforcement, and backup/restore.
 - `tests/support/test_persistence_reader.py`: Scoped reader, keyset pagination, export quotas, and run reports.
 - `tests/support/test_persistence_integration.py`: Multiprocess crash boundary recovery matrix.
+- `tests/support/test_persistence_v21.py`: Event Envelope v2.1 adapter, wire decoding, seq assignment, and status mappings.
 
 ## Persistence Demo CLI
 

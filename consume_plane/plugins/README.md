@@ -57,9 +57,10 @@ PLUGINS = [RepeatedRejects]            # required for drop-in files
 
 ## 3. Register it
 
-- **Drop-in file:** put it in `plugins/` (the `plugin_dirs` in `consume_plane.yaml`) with a
+- **Drop-in consumer file:** configured via `plugin_dirs` in `consume_plane.yaml` with a
   module-level `PLUGINS` list. Files starting with `_` are skipped. Drop-in plugins are enabled by
-  default. See `plugins/velocity_guard.py`.
+  default. (Note: root `plugins/` is reserved for Layer 1 pre-dispatch plugins; see
+  `tests/support/consume_plane/fixtures/plugins/velocity_observer.py` for a consumer plugin example).
 - **Built-in:** put it in `consume_plane/plugins/` and reference it by import path:
 
 ```yaml

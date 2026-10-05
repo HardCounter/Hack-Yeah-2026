@@ -13,7 +13,7 @@ Enable only against a disposable synthetic bank database:
 
 ```sh
 uv run --locked python -m intercept.service.server --policy config/intercept.demo.yaml --audit /tmp/opencode/intercept-demo.jsonl --trace --bank-db /path/to/disposable/bank.db
-uv run --locked python -m unittest intercept.test_policy intercept.test_server intercept.test_auditors intercept.test_execution -v
+uv run --locked pytest tests/support/test_policy.py tests/support/test_server.py tests/support/test_auditors.py tests/support/test_execution.py -v
 ```
 
 The sample policy must be adjusted by the trusted operator to allow and scope
@@ -23,7 +23,7 @@ settings. Without `--bank-db`, dispatch returns `TOOL_EXECUTION_DISABLED`.
 
 ## Execution boundary
 
-`intercept.execution.ToolExecutor` starts an isolated Python process per call.
+`intercept.tools.execution.ToolExecutor` starts an isolated Python process per call.
 It invokes `intercept.tools.worker`, importing the existing simulation registry
 without changing coworker-owned tools. This avoids colliding with other Python
 modules named `registry`. It is **not** an OS security sandbox.

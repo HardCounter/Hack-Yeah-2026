@@ -9,9 +9,9 @@
 Companion to [consumer-plane.md](consumer-plane.md). It records what is built, the decisions taken
 where the design was silent, and what is deferred.
 
-**Status (2026-10-03):** phase 0 (contract) and the minimal core of phase 1 (runtime) are
-implemented and tested with in-memory and JSONL adapters. Nothing is connected to Layer 1 or
-Layer 2 yet, and no built-in detection plugins exist.
+**Status (2026-10-04):** Phase 0 (contract), Phase 1 (runtime), Layer 2 persistence adapters,
+and core detection/verification plugins (`trajectory-risk`, `outcome-verifier`, `goal-alignment-judge`)
+are implemented and integrated into the three-plane runtime.
 
 ## What exists
 
@@ -22,17 +22,20 @@ Layer 2 yet, and no built-in detection plugins exist.
 | Task Contract, findings, proposals, signals | `contracts/task_contract.py`, `consume_plane/model/outputs.py` | `test_feedback.py`, `test_manager.py` |
 | Ports (protocols) | `consume_plane/ports/` | indirectly |
 | Plugin SDK surface | `consume_plane/sdk.py` | `tests/support/consume_plane/fixtures/plugins/velocity_observer.py` |
-| Memory and JSONL adapters | `consume_plane/adapters/` | all tests |
+| Memory, JSONL, and Persistence adapters | `consume_plane/adapters/` | all tests |
 | Config (`consume_plane.yaml`) | `consume_plane/runtime/config.py` | `test_loader.py` |
 | Loader and registry (drop-in files, `module:Class`, embedded classes) | `runtime/loader.py`, `registry.py` | `test_loader.py` |
-| Plugin context (snapshot, permissions, buffered outputs) | `runtime/context.py` | `test_manager.py` |
+| Plugin context (snapshot, permissions, buffered outputs, decision trace) | `runtime/context.py` | `test_manager.py`, `test_decisions.py` |
 | Completion ledger and per-plugin dead letters (SQLite) | `runtime/ledger.py` | `test_manager.py` |
-| Manager (partitions, timeouts, retries, settle) | `runtime/manager.py` | `test_manager.py` |
-| Feedback controller | `runtime/feedback.py` | `test_feedback.py` |
+| Manager (partitions, timeouts, retries, settle, drain) | `runtime/manager.py` | `test_manager.py` |
+| Feedback controller (tighten-only lattice) | `runtime/feedback.py` | `test_feedback.py` |
 | CLI replay | `consume_plane/__main__.py` | `test_replay_cli.py` |
-| Consumer-only drop-in fixture | `tests/support/consume_plane/fixtures/plugins/velocity_observer.py` | `test_loader.py`, `test_replay_cli.py` |
 | Built-in `trajectory-risk` plugin ([model](trajectory-risk-model.md)) | `consume_plane/plugins/trajectory_risk.py` | `test_trajectory_risk.py` |
-| Test and demo scripts | `scripts/test_consume_plane.sh`, `scripts/run_consume_plane.sh` | run manually |
+| Built-in `outcome-verifier` plugin | `consume_plane/plugins/outcome_verifier.py` | `test_outcome_verifier.py` |
+| Built-in `goal-alignment-judge` plugin | `consume_plane/plugins/goal_alignment_judge.py` | `test_goal_alignment_judge.py` |
+| Persistence adapter (`PersistenceEventSource`, `PersistenceFindingSink`) | `consume_plane/adapters/persistence.py` | `test_persistence_adapter.py` |
+| Decision trace persistence & inspection | `consume_plane/model/outputs.py`, `runtime/manager.py` | `test_decisions.py`, `test_decision_model.py` |
+| Test and demo scripts | `scripts/test_consume_plane.sh`, `scripts/run_consume_plane.sh`, `scripts/inspect_decisions.sh` | run manually |
 
 ```bash
 uv sync
@@ -90,9 +93,9 @@ Dependencies added: `pyyaml` (runtime, MIT) and `pytest` (dev group, MIT).
 ## Deferred (not built)
 
 - Remaining built-in plugins from design §10 (`usage-accountant`, `loop-detector`, `scope-drift`,
-  `repeat-side-effect`, `step-order`, `outcome-verifier`, `trajectory-grader`).
-- Layer 2 adapters for the real Queue 2 and store, `StoreSink`, `SseSink`, and a feedback
-  transport into Layer 1's policy cache. `MemoryFeedbackChannel` only collects signals.
+  `repeat-side-effect`, `step-order`).
+- External transports for `StoreSink`, `SseSink`, and a cross-process feedback
+  transport into Layer 1's policy cache (`InProcessFeedbackChannel` is used).
 - Circuit breaker, `/consumer/health` and `/consumer/metrics` endpoints, and metric cardinality caps.
 - Config hot reload, and the plugin-directory permission warning.
 - Webhook plugins.

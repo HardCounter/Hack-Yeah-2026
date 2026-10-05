@@ -26,8 +26,8 @@
 >   the handshake. Tool request bodies are unchanged.
 > - **New `intercept/service/receiver.py`:** an observe-only diagnostic server for manual OpenCode runs.
 >   It logs every request and ALLOWs it, and checks the request shapes against this gateway.
->   `intercept/service/server.py` itself was not changed and still has no prompt endpoint.
-> - **Current test counts:** `intercept/` 35 Python tests; `adapters/opencode` 9 (`test.mjs`) + 6
+>   `intercept/service/server.py` routes `/v1/prompts/evaluate` to the backend service (`LocalService` / `PromptGateway`).
+> - **Current test counts:** `intercept/` tests reside in `tests/support/test_*.py`; `adapters/opencode` has 9 (`test.mjs`) + 6
 >   (`forward.test.mjs`) Node tests (`scripts/test_opencode_adapter.sh`).
 
 Work now takes place on `main`, per the team's latest instruction; the older plan's
@@ -64,7 +64,7 @@ policy or plugin options, logs, or repository files.
 
 ```sh
 uv run --locked python -m intercept.service.server --policy intercept/example-policy.json --audit /tmp/opencode/intercept-audit.jsonl
-uv run --locked python -m unittest intercept.test_policy intercept.test_server
+uv run --locked pytest tests/support/test_policy.py tests/support/test_server.py
 node --experimental-vm-modules --test adapters/opencode/test.mjs
 ```
 
@@ -77,7 +77,7 @@ to load it. Opt in to the plugin only in an isolated demo config (V2):
 ```
 
 Do not auto-enable in the development agent: unknown sessions/tools are denied.
-The package must be installed by OpenCode's supported plugin loader. Test loading,
+The adapter is loaded directly by OpenCode from its local path without additional package installation. Test loading,
 blocking, call correlation, and all demo tool paths against the pinned runtime.
 
 ## Deliberately incomplete / next slices

@@ -1,11 +1,11 @@
 # OpenCode Adapter: Forwarded Requests
 
-**Status (2026-10-03):** implemented in `adapters/opencode/index.js` and tested with synthetic
+**Status (2026-10-04):** implemented in `adapters/opencode/index.js` and tested with synthetic
 hook events (`adapters/opencode/forward.test.mjs`, run with `scripts/test_opencode_adapter.sh`).
 **Real OpenCode v2.0.22 loads the adapter and its startup handshake reaches Python**
-(`scripts/check_opencode_pipeline.sh`). That the hooks fire during a real conversation is not yet
-verified. The enforcing gateway (`intercept/service/server.py`) has **no `/v1/prompts/evaluate`
-endpoint yet**. Only the observe-only receiver (`intercept/service/receiver.py`) accepts prompts.
+(`scripts/check_opencode_pipeline.sh`). The enforcing service (`intercept/service/local.py` / `server.py`)
+implements the `POST /v1/prompts/evaluate` endpoint via `PromptGateway`. The observe-only receiver
+(`intercept/service/receiver.py`) logs and allows prompts for manual inspection.
 
 ## Changes to the adapter (2026-10-03)
 
@@ -56,8 +56,7 @@ The hook payloads below come from that package's published type definitions
 `INTERCEPT_TOKEN` (32 or more characters) must be set in the environment. Every request carries
 `Authorization: Bearer <token>`.
 
-- `off`: prompts are not forwarded. Tool behaviour is unchanged. This is the default, because
-  Python has no prompt endpoint yet.
+- `off`: prompts are not forwarded. Tool behaviour is unchanged.
 - `observe`: prompts are forwarded, and failures and responses are ignored. It never blocks.
 - `enforce`: each prompt or model request waits for Python. It throws (fail closed) unless the
   reply is `{decision: "ALLOW", session_id, request_id, policy_version: <64 hex>}`. A user prompt
@@ -112,9 +111,8 @@ these keys, because `intercept/policy/runs.py` validates exact key sets. The hoo
 - **The model's final answer** (an assistant message with no tool call) is not a request. It shows up
   only in the next request's message delta, so the last answer of a session is not forwarded.
   Capturing it would need `http.response` (provider-specific streams) or session event subscription.
-- **The Python side** still needs `/v1/prompts/evaluate`, a response contract for prompts, and a
-  mapping from these bodies to the consume plane's envelope v2.1 (`action_type: "llm_call"`, bodies
-  as content refs).
+- **The Python side** evaluates prompts via `LocalService._evaluate_prompt` and `PromptGateway`,
+  mapping interaction metadata into the durable evidence store and consume plane envelope v2.1.
 
 ## Manual validation with a live OpenCode session
 
