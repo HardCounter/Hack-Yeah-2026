@@ -43,7 +43,7 @@ The platform consists of two distinct backend processes exposed to clients throu
 |---|---|---|---|---|---|
 | **1** | **Tests Tab** | `static/js/tests.js` | `web/suite.py`, `tests/control_layer` | **PARTIALLY RESOLVED** | The guardrail test suite execution is now wired to real pytest runs via `POST /api/suite/runs` and `GET /api/suite/runs/latest`. However, bottom outcome replays (`SCEN`) remain client-side canned scripts rather than backend verification checks. |
 | **2** | **501 Not Implemented Fallbacks** | `static/js/metrics.js` (`derive`), `static/js/mock.js` | `persistence/http_api/app.py` | **MEDIUM** | In normal mode, `/metrics/security`, `/metrics/usage`, `/metrics/performance`, and `/detections` return `501`. `metrics.js` falls back to `derive(rows)` and `Mock.auditorRuns` to supply simulated stand-in metrics for runs, p50, and p95 rather than displaying empty dashes. |
-| **3** | **Risk Calculation Duplication & Drift** | `static/js/riskmap.js`, `static/js/app.js` | `consume_plane/plugins/trajectory_risk.py`, `persistence/query.py` | **HIGH** | The frontend re-implements the Bayesian noisy-OR probabilistic risk model in JavaScript instead of consuming expected loss from the backend (which is returned as `null`). If risk weights change on the backend, the frontend displays divergent scores. |
+| **3** | **Risk Model Integration & Step Attribution** | `static/js/riskmap.js`, `static/js/app.js` | `consume_plane/plugins/trajectory_risk.py`, `persistence/query.py` | **MEDIUM** | The UI reads session totals (`failure_probability`, `expected_loss`, `level`) from persisted `trajectory-risk` decision records (`/sessions/{id}/decisions`) when present. However, because `/trajectories/session/{id}` does not decorate individual steps with backend risk factors or impact ($C$), the frontend maintains a client-side `Risk` engine for step rendering and signal attribution, and falls back to it entirely when decision records are absent. |
 | **4** | **N+1 Polling Storm** | `static/js/riskmap.js` | `persistence/http_api/app.py`, `persistence/query.py` | **HIGH** | Every 30 seconds, `riskmap.js` fetches `/sessions?limit=50` and then fires `Promise.all` with **3 HTTP requests per session** (`/sessions/{id}`, `/trajectories/session/{id}`, and `/sessions/{id}/decisions`). For 50 sessions, this sends **151 concurrent requests** into SQLite, risking lock timeouts (`busy_timeout=1000ms`). |
 | **5** | **Error Envelope Inconsistency** | `static/js/app.js`, `static/html/opencode-wrapper/index.html` | `persistence/http_api/app.py`, `web/sessions.py` | **MEDIUM** | `app.js` expects `{ error: { code, message, details } }`, while `web/sessions.py` throws standard FastAPI `HTTPException` returning `{ detail: "..." }`. `app.js` displays `HTTP 503` or undefined errors when hitting session/gateway errors. |
 | **6** | **Health Check Split & False Status** | `static/js/app.js` (header), `static/js/metrics.js` | `web/main.py` (`/healthz`), `persistence/http_api/app.py` (`/api/v1/health`) | **MEDIUM** | The UI header checks `/healthz` on port 8000 and displays "Gateway online" even if `api:8790` (the evidence persistence API) is crashed or unreachable. |
@@ -93,20 +93,18 @@ The platform consists of two distinct backend processes exposed to clients throu
   - To prevent broken tables, `metrics.js` calls `Mock.auditorRuns(auditor, rows)` from `static/js/mock.js`, which supplies deterministic stand-in metrics for `runs`, `p50`, and `p95` (with a simulated tooltip).
 - **Result:** The Controls table renders simulated metrics rather than blank dashes, but true server-side aggregation across persistent stores is deferred.
 
-### 3.3 Risk Model Inconsistency (Frontend Calculation vs. Backend Plugin)
+### 3.3 Risk Model Integration (Frontend Step Rendering vs. Backend Decision Trace)
 
 **Problem:**
-- In `consume_plane/plugins/trajectory_risk.py`, the trajectory risk plugin evaluates agent actions and records findings.
-- The read API (`persistence/query.py`) returns:
-  - `risk_level`: Highest severity among trajectory-risk findings (`low`, `medium`, `high`, `critical`).
-  - `expected_loss`: `null` (not persisted in the findings projection).
-  - `failure_probability`: `null`.
-- In `static/js/riskmap.js` and `static/js/app.js`:
-  - The frontend defines its own `Risk` object with hardcoded `weights`, `tools`, `sideEffect`, `prerequisites`, and `levels`.
-  - When loading sessions (`loadSession`), it downloads every step of the trajectory and runs `Risk.signalsFor(...)` and `Risk.step(...)` inside the browser!
-- **Consequences:**
-  1. Any tuning or updates to backend weights (e.g., weights for `out_of_contract_tool`, `missing_prerequisite`) will cause immediate discrepancies between the backend's gateway interventions and the frontend's visual plot.
-  2. If an action's arguments contain target IDs formatted slightly differently, the regex `/^[A-Z]{3}-\d{4}$/` in `app.js` can fail to recognize out-of-scope targets that the backend flagged.
+- In `consume_plane/plugins/trajectory_risk.py`, the trajectory risk plugin evaluates agent actions and records decisions into `plugin_decisions` (`persisted_decisions`).
+- The UI (`static/js/riskmap.js`) fetches these decisions via `GET /api/v1/sessions/{id}/decisions` and reads the session totals (`failure_probability`, `expected_loss`, `level`) from the last `trajectory-risk` decision record when present (`if (last) Object.assign(s, { P: last.failure_probability, loss: last.expected_loss, level: last.level.toUpperCase() });`).
+- However, the per-step trajectory endpoint (`GET /api/v1/trajectories/session/{id}`) returns raw step events without step-level risk annotations or impact scores ($C$).
+- Consequently, the frontend maintains its own client-side `Risk` engine (`static/js/app.js` and `riskmap.js`) with hardcoded tool impact weights (`Risk.tools`), side-effect weights (`Risk.sideEffect`), and prerequisite checks:
+  - It computes per-step visual dot coordinates and signals via `Risk.signalsFor` and `Risk.step`.
+  - When backend decision records are absent or empty (e.g. historical sessions or unanalyzed runs), it falls back entirely to this client-side recomputation for session loss and probability.
+- **Consequences & Gaps:**
+  1. **Discrepancy on Fallback:** If `GET /sessions/{id}/decisions` is unavailable or empty, the frontend recomputation may diverge from backend plugin logic if weights or rules are adjusted on the server.
+  2. **Step-Level Impact Disconnect:** Per-step impact $C$ and signal attribution displayed in the step timeline are calculated in the browser rather than served directly by the backend trajectory view.
 
 ### 3.4 Concurrency Bottleneck: N+1 Trajectory Polling Storm
 

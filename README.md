@@ -2,7 +2,7 @@
 
 Built by team **HardCounter** at HackYeah 2026 (Goldman Sachs challenge: AI Control Layer).
 
-**Sentinel Interlock (SI)** is a policy-driven runtime control and verification layer for autonomous AI agents. It works like the physical interlock on industrial machinery: **nothing moves until the check passes**. Every tool call, model prompt, API request, or egress attempt an agent makes is intercepted and evaluated outside the model against a centralized, live-manageable policy—then allowed, redacted, held for human review, or blocked. Because enforcement runs outside the model's process space, prompt injections and adversarial inputs cannot disable or bypass it, and every decision is durably logged with an audit trail and immutable evidence.
+**Sentinel Interlock (SI)** is a policy-driven runtime control and verification layer for autonomous AI agents. It works like the physical interlock on industrial machinery: **nothing moves until the check passes**. Tool executions and model interactions routed through the gateway or adapter are intercepted and evaluated outside the model against a centralized, live-manageable policy—then allowed, redacted, or blocked (with interactive human approval workflows planned; currently failing closed with `APPROVAL_NOT_IMPLEMENTED` for safety). Because enforcement runs outside the agent's process space, prompt injections within the model context cannot disable or tamper with gateway logic, and every evaluated decision is durably logged with an append-only audit trail and immutable evidence.
 
 The system sits between agents and external environments (LLMs, MCP servers, banking APIs, internal tools, and other agents). It combines **deterministic pre-dispatch policy enforcement**, **continuous trajectory risk supervision**, and **independent external outcome verification** bound under a shared Task Contract.
 
@@ -26,10 +26,11 @@ OpenCode Agent ──► adapters/opencode ──► Layer 1: Intercept ──�
 ```
 
 ### Layer 1: Pre-Dispatch Interception (`intercept/`, `configuration/`, `plugins/`, `adapters/opencode/`)
-- Intercepts tool calls and model prompts before execution.
+- Intercepts tool calls and model prompts before execution via OpenCode adapter hooks (`tool.execute.*`, `session.*`) and gateway endpoints.
 - Evaluates exact tool allowlists, argument constraints, credential/regex patterns (`pattern_scanner`), classified data sensitivity (`classified_scanner`), and domain restrictions (`domain_blocklist`).
 - Provides pre-dispatch guardrail plugins: `VelocityGuard` (sliding-window rate limits), `BudgetGuard` (token and tool call burn caps), and `PatternMatch`.
 - Implements `PromptGateway` (`intercept/governed/prompts.py`) to evaluate user prompts and model completions against injection signatures and token budgets.
+- Fails closed safely (`APPROVAL_NOT_IMPLEMENTED`) when policy prescribes `REQUIRE_APPROVAL`, pending interactive approval queue implementation.
 - Supports external polyglot webhooks and dynamic configuration presets (`standard`, `strict`, `lenient`).
 
 ### Layer 2: Durable Persistence Engine (`persistence/`)
@@ -43,7 +44,7 @@ OpenCode Agent ──► adapters/opencode ──► Layer 1: Intercept ──�
 - **Trajectory Risk Model** (`consume_plane/plugins/trajectory_risk.py`): Continuous expected loss calculation ($E = \sum P \times C$) using a Bayesian noisy-OR combination of behavioral signals (out-of-scope targets, missing prerequisites, budget burn, rapid bursts).
 - **Independent Outcome Verifier** (`consume_plane/plugins/outcome_verifier.py`): Post-execution verification checking bank database state against ground truth postconditions (`ONB-P1` to `ONB-P6`), verifying action provenance, screening evidence digests, and effect receipts.
 - **Goal Alignment Judge** (`consume_plane/plugins/goal_alignment_judge.py`): Semantic supervision evaluating whether irreversible actions serve the Task Contract's objective.
-- **Tighten-Only Feedback Controller** (`consume_plane/runtime/feedback.py`): Dynamically escalates enforcement (e.g. requiring approvals or blocking tools) via a formal lattice.
+- **Tighten-Only Feedback Controller** (`consume_plane/runtime/feedback.py`): Dynamically escalates enforcement (e.g. blocking tools or requiring approvals) via a formal lattice, with approvals failing closed until interactive queues are added.
 
 ### Web Application & Operator Dashboard (`web/`, `static/`, Caddy)
 - **FastAPI application** (`web/main.py`) served behind a Caddy reverse proxy on ports 80/443.
