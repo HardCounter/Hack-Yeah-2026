@@ -81,7 +81,7 @@ sanitized record, not omitted raw payloads.
 Consume-plane decisions are stored in the `plugin_decisions` table of the same evidence store, under
 the same privacy rules (`persistence.privacy.decision_projection`, applied on write and on read). The
 store operates under SQLite `user_version = 3` (`CURRENT_SCHEMA_VERSION = 3`), with the read API also
-maintaining backward compatibility for legacy version 4 stores. See
+accepting version 4 stores written by a short-lived build on 2026-10-04 (which share the same table layout). See
 [decision-trace.md](decision-trace.md).
 
 ## Analytics and live feeds

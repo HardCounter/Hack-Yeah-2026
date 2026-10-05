@@ -80,8 +80,9 @@ seq  trigger                  plugin            decision      reasoning
 attempt. A redelivered event produces the same IDs, and the store keeps the first write
 (`INSERT OR IGNORE`). Retries therefore never duplicate the trace or fail on a different timestamp.
 
-**Compatible.** The table is created when a store is opened. Storage remains schema `user_version = 3`
-(with the read API also accepting legacy version 4 stores), so older stores stay readable and return an empty trace.
+**Compatible.** The table is created when a store is opened. Storage operates under schema `user_version = 3`
+(with the read API also accepting stores written with `user_version = 4` during a short-lived build on 2026-10-04),
+so stores without decision records remain readable and return an empty trace.
 
 ## 3. Privacy
 

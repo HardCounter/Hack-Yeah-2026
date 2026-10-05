@@ -337,17 +337,23 @@ It is what "the agent actually did" means for postconditions such as ONB-P5.
 
 ```python
 @dataclass(frozen=True, slots=True)
+class Budget:
+    tokens: int | None = None
+    tool_calls: int | None = None
+    cost_usd: float | None = None
+
+@dataclass(frozen=True, slots=True)
 class TaskContract:
     contract_id: str
     session_id: str
     agent_id: str
-    task_type: str
-    target_ids: tuple[str, ...]          # e.g. ("APP-0007",); drives scope/drift checks
-    allowed_tools: tuple[str, ...]
+    role: str
+    objective: str
+    target_ids: frozenset[str]          # e.g. frozenset({"APP-0007"}); drives scope/drift checks
+    allowed_tools: frozenset[str]
+    postconditions: tuple[str, ...]
     budget: Budget                      # tokens, tool_calls, cost_usd
-    read_only: bool
-    strict_mode: bool
-    created_at: datetime
+    policy_version: str
     run_id: str | None = None
     principal_id: str | None = None
     case_id: str | None = None
@@ -356,8 +362,7 @@ class TaskContract:
 ```
 
 The contract is written by the orchestrator, not the agent (`use-cases.md`, "Task contract").
-The consumer plane only reads it. `target_ids` is an addition to the YAML in `use-cases.md`.
-It turns "unrelated resource access" (ONB-15) into a structural check instead of a semantic one.
+The consumer plane only reads it. `target_ids` turns "unrelated resource access" (ONB-15) into a structural check instead of a semantic one.
 
 ### 5.4 Adapters
 
