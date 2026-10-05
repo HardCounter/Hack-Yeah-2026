@@ -1,18 +1,25 @@
 """Cross-process JSON config transactions, separate from evidence databases.
 
 One atomic state file contains editable configs and the selected immutable snapshot.
-flock serializes writers/readers across API workers and gateway processes on Linux.
+OS file locks serialize writers across API workers and gateway processes.
 """
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import stat
 import tempfile
 import time
+
+WINDOWS = os.name == "nt"
+if WINDOWS:
+    import msvcrt
+else:
+    import fcntl
 
 from pydantic import ValidationError
 
@@ -31,6 +38,10 @@ MESSAGES = {
     "unsupported_media_type": "application/json required",
     "invalid_config": "invalid configuration",
     "config_unavailable": "configuration storage unavailable",
+    "config_writes_disabled": "configuration writes are disabled until an admin token is configured",
+    "admin_token_required": "a valid admin token is required to change configuration",
+    "origin_not_allowed": "browser origin is not allowed to change configuration",
+    "rate_limit_exceeded": "configuration write rate limit exceeded; retry in a minute",
 }
 
 
@@ -94,43 +105,136 @@ def validate_policy(value):
         raise ConfigError(422, "invalid_config", fields) from None
 
 
+def _private_open(path, flags):
+    """Open private metadata without following its final symlink/reparse point."""
+    if not WINDOWS:
+        return os.open(path, flags | os.O_NOFOLLOW, 0o600)
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    access = 0x40000000 | (0x80000000 if flags & os.O_RDWR else 0)  # GENERIC_WRITE/READ
+    handle = create(str(path), access, 3, None, 1 if flags & os.O_EXCL else 4,
+                    0x00200000, None)  # shared read/write; CREATE_NEW/OPEN_ALWAYS; OPEN_REPARSE_POINT
+    if handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        # The CRT handle adapter defaults to read/write; its supported flags do
+        # not include O_RDWR/O_WRONLY. Never inherit the config lock in children.
+        fd = msvcrt.open_osfhandle(handle, os.O_BINARY | os.O_NOINHERIT)
+    except BaseException:
+        close = kernel.CloseHandle
+        close.argtypes = [wintypes.HANDLE]
+        close(handle)
+        raise
+    try:
+        if os.fstat(fd).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise OSError(errno.ELOOP, "configuration metadata is a reparse point")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _try_lock(fd):
+    if WINDOWS:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock(fd):
+    if WINDOWS:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+def _replace_file(source, destination):
+    if not WINDOWS:
+        os.replace(source, destination)
+        return
+    # Windows cannot fsync a directory through os.open. A same-volume native
+    # write-through rename follows the temporary file's successful os.fsync.
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    move = kernel.MoveFileExW
+    move.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
+    move.restype = wintypes.BOOL
+    if not move(str(source), str(destination), 0x1 | 0x8):  # REPLACE_EXISTING | WRITE_THROUGH
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _sync_directory(directory):
+    if WINDOWS:
+        return  # _replace_file performs the Windows durability operation
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 class ConfigService:
-    def __init__(self, directory=None, *, presets_dir=None):
+    def __init__(self, directory=None, *, presets_dir=None, read_only=False):
         self.directory = Path(directory or os.environ.get("CONFIG_DIR", ROOT / "var" / "config")).resolve()
         self.presets_dir = Path(presets_dir or ROOT / "config" / "presets")
         self.path = self.directory / "state.json"
         self.initialized_path = self.directory / ".initialized"
+        self.read_only = read_only
 
     def _mark_initialized(self):
         if self.initialized_path.exists():
             return
-        fd = os.open(self.initialized_path, os.O_CREAT | os.O_WRONLY | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        if WINDOWS:
+            fd, temporary = tempfile.mkstemp(prefix=".config-initialized-", dir=self.directory)
+            try:
+                with os.fdopen(fd, "wb") as out:
+                    out.write(b"1\n")
+                    out.flush()
+                    os.fsync(out.fileno())
+                _replace_file(temporary, self.initialized_path)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+            return
+        fd = _private_open(self.initialized_path, os.O_CREAT | os.O_WRONLY | os.O_EXCL)
         with os.fdopen(fd, "wb") as out:
             out.write(b"1\n")
             out.flush()
             os.fsync(out.fileno())
-        fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+        _sync_directory(self.directory)
 
     @contextmanager
     def _transaction(self):
         try:
+            if self.read_only:
+                # Writers replace state.json atomically, so reads need no writable lock file.
+                yield self._load()
+                return
             self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            fd = os.open(self.directory / ".config.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-            with os.fdopen(fd, "a") as lock:
+            fd = _private_open(self.directory / ".config.lock", os.O_CREAT | os.O_RDWR)
+            with os.fdopen(fd, "r+b") as lock:
                 deadline = time.monotonic() + 5
                 while True:
                     try:
-                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        _try_lock(lock.fileno())
                         break
-                    except BlockingIOError:
+                    except OSError as exc:
+                        if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                            raise
                         if time.monotonic() >= deadline:
                             raise ConfigError(503, "config_unavailable")
                         time.sleep(0.01)
-                yield self._load()
+                try:
+                    yield self._load()
+                finally:
+                    _unlock(lock.fileno())
         except (OSError, ValueError, KeyError, TypeError, ValidationError):
             raise ConfigError(503, "config_unavailable") from None
 
@@ -138,6 +242,8 @@ class ConfigService:
         if self.path.is_symlink():
             raise ConfigError(503, "config_unavailable")
         if not self.path.exists():
+            if self.read_only:
+                raise ConfigError(503, "config_unavailable")
             if self.initialized_path.exists():
                 raise ConfigError(503, "config_unavailable")  # deleted state must not reset policy
             configs = {}
@@ -176,8 +282,11 @@ class ConfigService:
                     revision(validate_policy(selected["config"])) != selected["revision"]):
                 raise ValueError("invalid selected snapshot")
             if upgraded:
+                if self.read_only:
+                    raise ConfigError(503, "config_unavailable")  # the management service performs migration
                 self._write(state)
-            self._mark_initialized()
+            if not self.read_only:
+                self._mark_initialized()
             return state
         except ConfigError:
             raise ConfigError(503, "config_unavailable") from None
@@ -207,6 +316,8 @@ class ConfigService:
         return changed
 
     def _write(self, state):
+        if self.read_only:
+            raise ConfigError(405, "method_not_allowed")
         data = canonical(state)
         if len(data) > 1_000_000:
             raise ConfigError(503, "config_unavailable")
@@ -223,27 +334,20 @@ class ConfigService:
                 os.close(backup_fd)
                 Path(backup).unlink()
                 os.link(self.path, backup, follow_symlinks=False)
-            os.replace(temporary, self.path)
+            _replace_file(temporary, self.path)
             replaced = True
-            directory_fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            _sync_directory(self.directory)
         except OSError:
             # A directory-fsync failure after rename must not activate unacknowledged edits.
             if replaced:
                 if backup is not None:
-                    os.replace(backup, self.path)
+                    _replace_file(backup, self.path)
                 else:
                     self.path.unlink(missing_ok=True)
-                directory_fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
                 try:
-                    os.fsync(directory_fd)
+                    _sync_directory(self.directory)
                 except OSError:
                     pass  # report unavailable even when the filesystem cannot sync the rollback
-                finally:
-                    os.close(directory_fd)
             raise
         finally:
             Path(temporary).unlink(missing_ok=True)
@@ -261,6 +365,7 @@ class ConfigService:
             active = state["selection"]
             return [{"name": name, "preset": True, "description": entry["config"]["description"],
                      "revision": entry["revision"], "selected": name == active["name"],
+                     "active_revision": active["revision"] if name == active["name"] else None,
                      "requires_selection": name != active["name"] or entry["revision"] != active["revision"]}
                     for name, entry in sorted(state["configs"].items())]
 
@@ -269,7 +374,16 @@ class ConfigService:
         with self._transaction() as state:
             return state["configs"][name]
 
+    def get_active_config(self, name):
+        self._name(name)
+        snapshot = self.snapshot_for_intercept()
+        if snapshot["name"] != name:
+            raise ConfigError(409, "config_revision_conflict")
+        return snapshot
+
     def update(self, name, value):
+        if self.read_only:
+            raise ConfigError(405, "method_not_allowed")
         self._name(name)
         config = validate_policy(value)
         if config["name"] != name:
@@ -289,6 +403,8 @@ class ConfigService:
                     "requires_selection": name != active["name"] or rev != active["revision"]}
 
     def select(self, name, expected_revision):
+        if self.read_only:
+            raise ConfigError(405, "method_not_allowed")
         self._name(name)
         with self._transaction() as state:
             entry = state["configs"][name]

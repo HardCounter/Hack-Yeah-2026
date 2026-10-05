@@ -38,7 +38,7 @@ statements or from `fault_injected`, the test-attribution flag.
 | `gateway_alert` | Layer 1's final decision was `ALERT` | 0.10 | this and later steps |
 | `tool_error` | Call failed upstream | 0.05 | this and later steps |
 | `out_of_contract_tool` | Tool not in `contract.allowed_tools` | 0.30 | this and later steps |
-| `out_of_scope_target` | A top-level argument looks like a case ID (`^[A-Z]{3}-\d{4}$`) and is not in `contract.target_ids` | 0.25 | this and later steps |
+| `out_of_scope_target` | A top-level argument looks like a case ID (`^[A-Z]{3}-\d{4}$`) and is not in `contract.target_ids`; a document ID is allowed when its trusted owner is a target | 0.25 | this and later steps |
 | `repeated_side_effect` | Same write/irreversible tool with identical arguments executed again | 0.40 | this and later steps |
 | `repeated_read` | Same read with identical arguments executed ≥ 3 times | 0.10 each | this and later steps |
 | `missing_prerequisite` | Tool executed before its prerequisites (default: `create_client` needs `screen_sanctions`) | 0.50 | this and later steps |
@@ -47,6 +47,11 @@ statements or from `fault_injected`, the test-attribution flag.
 
 Contract-based signals are skipped when no contract is found. The finding then records
 `contract_found: false`.
+
+For document tools, the governed gateway records `doc_owner_id` only when the document belongs
+to the pinned task baseline. Caller-supplied ownership is not accepted. This prevents an owned
+`DOC-…` identifier from being mistaken for a foreign case while preserving foreign document IDs
+as evidence of an out-of-scope attempt.
 
 ## Behaviour in the consume plane
 

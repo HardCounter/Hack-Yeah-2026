@@ -152,8 +152,10 @@ class RiskModel:
                 if contract is not None and contract.allowed_tools and tool not in contract.allowed_tools:
                     own.append(sig("out_of_contract_tool", a))
                 if contract is not None and contract.target_ids:
+                    owner = a.payload.args.get("doc_owner_id")
                     if any(isinstance(v, str) and self.id_re.match(v) and v not in contract.target_ids
-                           for v in a.payload.args.values()):
+                           and not (key == "doc_id" and owner in contract.target_ids)
+                           for key, v in a.payload.args.items()):
                         own.append(sig("out_of_scope_target", a))
                 if a.executed:
                     key = (tool, json.dumps(a.payload.args, sort_keys=True, default=str))
@@ -209,6 +211,7 @@ class TrajectoryRisk:
 
         top = sorted(now.steps, key=lambda s: s.risk, reverse=True)[:3]
         counts = Counter(s.name for s in now.signals)
+        step = next((s for s in now.steps if s.event_id == action.event_id), None)
         raised = LEVELS.index(now.level) > LEVELS.index(before.level) and now.level != "low"
         action_taken = {"high": "require approval", "critical": "halt session"}.get(now.level) if raised else None
         ctx.record_decision(
@@ -219,6 +222,12 @@ class TrajectoryRisk:
             + (f"; proposing {action_taken}" if action_taken else ""),
             expected_loss=round(now.expected_loss, 4), failure_probability=round(now.probability, 4),
             level=now.level, previous_level=before.level, signals=dict(counts), contract_found=contract is not None,
+            step_probability=round(step.probability, 6) if step else None,
+            step_consequence=step.consequence if step else None,
+            step_expected_loss=round(step.risk, 6) if step else None,
+            step_signals=[s.name for s in now.signals if s.event_id == action.event_id],
+            max_consequence=max((s.consequence for s in now.steps), default=0),
+            step_count=len(now.steps),
         )
         if not raised:
             return  # report only when the session enters a higher level

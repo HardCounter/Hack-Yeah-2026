@@ -866,8 +866,12 @@ class GovernedGateway:
         out: dict[str, Any] = {}
         if isinstance(args.get("app_id"), str):
             out["app_id"] = args["app_id"]
-        if isinstance(args.get("doc_id"), str) and args["doc_id"] in state.baseline.documents:
+        if isinstance(args.get("doc_id"), str):
             out["doc_id"] = args["doc_id"]
+            if args["doc_id"] in state.baseline.documents:
+                # Trusted lineage from the pinned task baseline, never a caller's
+                # claimed owner. Preserve rejected foreign IDs without this proof.
+                out["doc_owner_id"] = state.baseline.app_id
         if tool == "screen_sanctions":
             dob = args.get("dob")
             dob_val = dob if isinstance(dob, str) and dob else None

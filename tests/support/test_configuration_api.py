@@ -2,23 +2,30 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
-import stat
 import subprocess
 import sys
 
 from fastapi.testclient import TestClient
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import pytest
 
 from configuration.service import ConfigService
-from persistence.http_api import create_app
+from configuration import service as config_storage
+from configuration.api import install_config_api
 
 
 
 @pytest.fixture
-def api(tmp_path):
+def api(tmp_path, monkeypatch):
+    monkeypatch.setenv("CONFIG_ADMIN_TOKEN", "test-admin-token")
+    monkeypatch.setenv("CONFIG_ALLOWED_ORIGINS", "http://localhost:5173")
     service = ConfigService(tmp_path / "configs")
-    app = create_app(frozenset({"http://localhost:5173"}), config_service=service)
-    with TestClient(app) as client:
+    app = FastAPI(openapi_url="/api/v1/openapi.json")
+    install_config_api(app, config_service=service)
+    app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["GET", "PUT"],
+                       allow_headers=["Authorization", "X-Admin-Token", "Content-Type"])
+    with TestClient(app, headers={"X-Admin-Token": "test-admin-token"}) as client:
         yield client, service
 
 
@@ -45,6 +52,25 @@ def test_update_select_restart_and_revision_contract(api):
     restarted = ConfigService(service.directory)
     assert restarted.snapshot_for_intercept()["config"]["budget"]["tokens"] == 12345
     assert restarted.get_config("standard")["revision"] == result["revision"]
+
+
+def test_active_view_keeps_pinned_snapshot_until_selection(api):
+    client, service = api
+    original = client.get("/api/v1/configs/standard").json()
+    active = service.snapshot_for_intercept()
+    edited = {**original, "budget": {**original["budget"], "tokens": original["budget"]["tokens"] + 1}}
+    saved = client.put("/api/v1/configs/standard", json=edited).json()
+    listed = {item["name"]: item for item in client.get("/api/v1/configs").json()}
+    assert listed["standard"]["revision"] == saved["revision"]
+    assert listed["standard"]["active_revision"] == active["revision"]
+    assert listed["strict"]["active_revision"] is None
+    pinned = client.get("/api/v1/configs/standard?view=active")
+    assert pinned.json() == original and pinned.headers["etag"] == f'"{active["revision"]}"'
+    assert client.get("/api/v1/configs/standard?view=saved").json() == edited
+    assert client.get("/api/v1/configs/strict?view=active").status_code == 409
+    assert client.put("/api/v1/config-selection", json={"name": "standard", "revision": saved["revision"]}).status_code == 200
+    pinned = client.get("/api/v1/configs/standard?view=active")
+    assert pinned.json() == edited and pinned.headers["etag"] == f'"{saved["revision"]}"'
 
 
 @pytest.mark.parametrize("name", ["lenient", "standard", "strict"])
@@ -125,7 +151,7 @@ def test_failed_replace_does_not_change_state(api, monkeypatch):
     config["budget"]["tokens"] += 1
     def fail(*_):
         raise OSError("synthetic-private-error")
-    monkeypatch.setattr(os, "replace", fail)
+    monkeypatch.setattr(config_storage, "_replace_file", fail)
     response = client.put("/api/v1/configs/standard", json=config)
     assert response.status_code == 503
     assert "synthetic-private-error" not in response.text
@@ -137,12 +163,9 @@ def test_directory_sync_failure_rolls_back_selection(api, monkeypatch):
     client, service = api
     before = service.path.read_bytes()
     config = service.get_config("strict")
-    real_fsync = os.fsync
-    def fail_directory(fd):
-        if stat.S_ISDIR(os.fstat(fd).st_mode):
-            raise OSError("synthetic sync failure")
-        return real_fsync(fd)
-    monkeypatch.setattr(os, "fsync", fail_directory)
+    def fail_directory(_directory):
+        raise OSError("synthetic sync failure")
+    monkeypatch.setattr(config_storage, "_sync_directory", fail_directory)
     response = client.put("/api/v1/config-selection", json={"name": "strict", "revision": config["revision"]})
     assert response.status_code == 503
     assert service.path.read_bytes() == before
@@ -208,10 +231,78 @@ def test_cors_and_openapi_contract(api):
     schema = client.get("/api/v1/openapi.json").json()
     for path in ("/api/v1/configs/{name}", "/api/v1/config-selection"):
         operation = schema["paths"][path]["put"]
-        assert "security" not in operation  # config writes need no credential
+        assert operation["security"] == [{"AdminToken": []}, {"AdminBearer": []}]
         assert "requestBody" in operation
         assert {"200", "400", "404", "405", "409", "413", "415", "422", "503"} <= set(operation["responses"])
     assert "PolicyConfig" in schema["components"]["schemas"]
+
+
+def test_config_writes_require_server_secret_and_client_credential(api, monkeypatch):
+    client, service = api
+    config = client.get("/api/v1/configs/standard").json()
+    before = service.path.read_bytes()
+    client.headers.pop("X-Admin-Token")
+    assert client.put("/api/v1/configs/standard", json=config).status_code == 401
+    assert client.put("/api/v1/configs/standard", json=config, headers={"X-Admin-Token": "wrong"}).status_code == 401
+    assert client.put("/api/v1/configs/standard", json=config,
+                      headers={"Authorization": "Bearer test-admin-token"}).status_code == 200
+    monkeypatch.delenv("CONFIG_ADMIN_TOKEN")
+    blocked = client.put("/api/v1/configs/standard", json=config)
+    assert blocked.status_code == 503 and blocked.json()["error"]["code"] == "config_writes_disabled"
+    assert service.path.read_bytes() == before
+    assert client.get("/api/v1/configs").status_code == 200
+
+
+@pytest.mark.parametrize("headers", [{"Origin": "https://evil.example"}, {"Origin": "null"},
+                                     {"Sec-Fetch-Site": "cross-site"}, {"Origin": "http://["}])
+def test_cross_origin_config_mutation_is_rejected(api, headers):
+    client, service = api
+    before = service.path.read_bytes()
+    assert client.put("/api/v1/config-selection", json={}, headers=headers).status_code == 403
+    assert service.path.read_bytes() == before
+
+
+def test_allowed_config_browser_origin_and_rate_limit(api, monkeypatch):
+    client, _ = api
+    monkeypatch.setenv("CONFIG_WRITE_RATE_LIMIT", "2")
+    config = client.get("/api/v1/configs/standard").json()
+    for origin in ("http://testserver", "http://localhost:5173"):
+        assert client.put("/api/v1/configs/standard", json=config, headers={"Origin": origin}).status_code == 200
+    limited = client.put("/api/v1/configs/standard", json=config)
+    assert limited.status_code == 429 and limited.headers["Retry-After"] == "60"
+
+
+def test_read_only_config_install_does_not_initialize_or_write(tmp_path, monkeypatch):
+    monkeypatch.setenv("CONFIG_ADMIN_TOKEN", "test-admin-token")
+    service = ConfigService(tmp_path / "config")
+    app = FastAPI()
+    install_config_api(app, config_service=service, allow_writes=False)
+    with TestClient(app) as client:
+        assert not service.directory.exists()
+        assert client.get("/api/v1/configs").status_code == 503
+        assert not service.directory.exists()
+        service.snapshot_for_intercept()
+        before = {path.name: path.read_bytes() for path in service.directory.iterdir()}
+        assert client.get("/api/v1/configs").status_code == 200
+        assert client.put("/api/v1/config-selection", json={}, headers={"X-Admin-Token": "test-admin-token"}).status_code == 405
+        assert {path.name: path.read_bytes() for path in service.directory.iterdir()} == before
+
+
+@pytest.mark.parametrize("trusted_proxy,status", [("172.18.0.5", 200), ("127.0.0.1", 403)])
+def test_tls_proxy_origin_check_requires_trusted_forwarded_scheme(tmp_path, monkeypatch, trusted_proxy, status):
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    monkeypatch.setenv("CONFIG_ADMIN_TOKEN", "test-admin-token")
+    app = FastAPI()
+    service = ConfigService(tmp_path / "config")
+    install_config_api(app, config_service=service)
+    proxy_app = ProxyHeadersMiddleware(app, trusted_hosts=trusted_proxy)
+    with TestClient(proxy_app, client=("172.18.0.5", 35000)) as client:
+        config = client.get("/api/v1/configs/standard").json()
+        result = client.put("/api/v1/configs/standard", json=config, headers={
+            "Host": "demo.example", "Origin": "https://demo.example", "X-Forwarded-Proto": "https",
+            "X-Admin-Token": "test-admin-token"})
+        assert result.status_code == status
 
 
 def test_service_returns_detached_snapshot_and_does_not_overwrite_defaults(tmp_path):

@@ -210,7 +210,7 @@ def test_empty_missing_unimplemented_and_explicit_example_modes(tmp_path):
     assert empty.get("/api/v1/health").status_code == 200
     assert empty.get("/api/v1/sessions").json()["items"] == []
     assert empty.get("/api/v1/system/stats").json()["total_events"] == 0
-    assert empty.get("/api/v1/metrics/security").status_code == 501
+    assert empty.get("/api/v1/metrics/security").json()["actions"]["total"] == 0
     assert empty.get("/api/v1/trajectories/run/run_x").status_code == 501
     assert TestClient(create_app()).get("/api/v1/health").status_code == 503
     sample = TestClient(create_app(example_mode=True))

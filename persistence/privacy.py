@@ -28,7 +28,7 @@ _IDS = {
     "event_id", "application_id", "client_id", "receipt_id", "action_id", "contract_id",
     "run_id", "approval_id", "intervention_id", "policy_version", "feed_version",
     "rule", "reason_code", "model", "model_version", "forbidden_tool",
-    "app_id", "document_id", "doc_id", "resource_id", "target_id",
+    "app_id", "document_id", "doc_id", "doc_owner_id", "resource_id", "target_id",
 }
 _STATES = {"status", "verification_status", "side_effect_class", "decision"}
 

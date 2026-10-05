@@ -250,6 +250,10 @@ def _build(session_id: str, k: int, start: datetime, until: datetime | None, pla
         for s in own:
             survive *= 1 - SIGNAL_WEIGHTS[s]
             signals.append((s, step["event_id"]))
+        consequence = TOOL_CONSEQUENCE.get(name, CONSEQUENCE[step["side_effect"]]) if step["executed"] else None
+        step["risk"] = {"probability": round(1 - survive, 4) if step["executed"] else None,
+                        "consequence": consequence, "expected_loss": round((1 - survive) * consequence, 4) if consequence is not None else None,
+                        "signals": list(own), "source": "example", "decision_id": None}
         if step["executed"]:
             c = TOOL_CONSEQUENCE.get(name, CONSEQUENCE[step["side_effect"]])
             loss, max_c = loss + (1 - survive) * c, max(max_c, c)
@@ -278,6 +282,7 @@ def _build(session_id: str, k: int, start: datetime, until: datetime | None, pla
                 break
     session["risk"] = {"level": level, "expected_loss": round(loss, 4), "failure_probability": round(1 - survive, 4),
                        "max_consequence": max_c or None,
+                       "step_count": sum(step["kind"] == "tool_use" and step["executed"] for step in steps),
                        "finding_id": f"fnd_{session_id}_{level}" if level != "low" else None, "source": "trajectory-risk"}
     if session["state"] == "halted":
         detect(steps[-1], f"ver_{session_id}", "verification.incomplete", "SCREENING_EVIDENCE_MISSING", "high",
@@ -377,6 +382,7 @@ def action(event_id_value: str) -> dict[str, Any]:
         "previous_event_id": event_id(session_id, seq - 1) if seq > 0 else None,
         "next_event_id": event_id(session_id, seq + 1) if seq < len(rows) - 1 else None,
         "detections": [d for d in session["detections"] if d["detection_id"] in refs],
+        "risk": summary.get("risk"), "trace": [],
     }
 
 
@@ -495,6 +501,10 @@ def session_summary(session: dict[str, Any]) -> dict[str, Any]:
             "action_count": len(rows), "blocked_count": sum(s["status"] == "blocked" for s in rows),
             "detection_count": len(session["detections"]), "max_severity": _max_severity(session["detections"]),
             "risk_level": session["risk"]["level"],
+            "risk": {**session["risk"], "source": "example"},
+            "risk_step_count": sum(s["kind"] == "tool_use" for s in rows),
+            "active_interventions": [item for item in session["interventions"] if item["active"]],
+            "verification": verification(session["session_id"]),
             "verification_status": verification(session["session_id"])["verification_status"] if session["state"] != "active" else None,
             "usage": total_usage(rows)}
 

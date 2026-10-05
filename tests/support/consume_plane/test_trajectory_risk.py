@@ -79,6 +79,15 @@ def test_out_of_scope_and_out_of_contract_access():               # ONB-15, BAIT
     assert a.steps[-1].consequence == 10
 
 
+def test_document_scope_requires_trusted_ownership_lineage():
+    own = step(1, "extract_fields", args={"doc_id": "DOC-0001", "doc_owner_id": "APP-0003"})
+    assert "out_of_scope_target" not in [s.name for s in assess([own]).signals]
+    foreign = step(2, "extract_fields", args={"doc_id": "DOC-0002", "doc_owner_id": "APP-0002"})
+    unknown = step(3, "extract_fields", args={"doc_id": "DOC-0003"})
+    assert [s.name for s in assess([foreign]).signals] == ["out_of_scope_target"]
+    assert [s.name for s in assess([unknown]).signals] == ["out_of_scope_target"]
+
+
 def test_blocked_attempts_raise_probability_of_later_steps_but_add_no_loss_themselves():
     a = assess(session(("run_code", {"side_effect": "irreversible", "status": "blocked"}), "read_application"))
     assert [s.tool for s in a.steps] == ["read_application"]      # the blocked call never executed

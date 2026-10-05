@@ -1,6 +1,18 @@
 services:
   app:
     image: hackyeah-app:local
+    # Caddy is the only ingress to the web container. Trust forwarded scheme/host headers
+    # from that private Compose network so HTTPS browser checks see the public URL.
+    command:
+      - uvicorn
+      - web.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
     build:
       context: .
       args:
@@ -18,8 +30,8 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  # Read API for dashboards (docs/rest.md). Read-only by design, no credentials: it gets no .env.
-  # Reachable only inside this network; Caddy publishes it under /api/v1.
+  # Read API for dashboards (docs/rest.md). It has no secrets and cannot write configuration.
+  # Reachable inside the network, via Caddy publicly, and directly on host loopback for local dev.
   api:
     image: hackyeah-app:local
     command:
@@ -27,8 +39,15 @@ services:
       - -c
       - >-
         mkdir -p /data/pipeline-runs/bank-runs &&
+        set --; for origin in $${DEV_CORS_ORIGINS}; do set -- "$$@" --cors-origin "$$origin"; done;
         exec python -m persistence.http_api --host 0.0.0.0 --allow-remote --port 8790
-        --evidence-dir /data/pipeline-runs/bank-runs
+        --evidence-dir /data/pipeline-runs/bank-runs --disable-config-writes "$$@"
+    environment:
+      CONFIG_DIR: /data/config
+      DEV_CORS_ORIGINS: "${DEV_CORS_ORIGINS:-http://localhost:5173 http://127.0.0.1:5173}"
+    # Local-only direct access for frontend development; Caddy remains the public entry point.
+    ports:
+      - "127.0.0.1:${API_PORT:-8790}:8790"
     volumes:
       - appdata:/data
     depends_on:

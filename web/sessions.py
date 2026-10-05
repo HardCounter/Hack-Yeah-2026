@@ -23,6 +23,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
+from web.security import positive_int
 
 REPO = Path(__file__).resolve().parents[1]
 APPLICATION = "APP-0001"  # the gateway needs one assigned case per session
@@ -73,16 +74,36 @@ def _evidence(db, session_id):
     return events, findings
 
 
-def _kill(process):
+async def _kill(process):
     """Stop a process group we started (the OpenCode server spawns children)."""
-    if process is None or process.returncode is not None:
+    if process is None:
         return
-    for sig in (signal.SIGTERM, signal.SIGKILL):
+    for gentle in (True, False):
+        sig = signal.SIGTERM if gentle else getattr(signal, "SIGKILL", signal.SIGTERM)
         try:
-            os.killpg(process.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            return
-        time.sleep(0.2)
+            if hasattr(os, "killpg"):
+                if process.returncode is not None:
+                    try:
+                        os.getpgid(process.pid)
+                    except ProcessLookupError:
+                        pass  # an orphan group can survive its leader
+                    else:
+                        return  # the reaped leader's PID now belongs to another process
+                os.killpg(process.pid, sig)
+            elif process.returncode is None:
+                process.terminate() if gentle else process.kill()
+        except ProcessLookupError:
+            break
+        except PermissionError:
+            if process.returncode is None:
+                process.terminate() if gentle else process.kill()
+        if gentle:
+            # Always kill the group after the grace period, even if its leader has exited.
+            await asyncio.sleep(0.2)
+    try:
+        await asyncio.wait_for(process.wait(), 2)
+    except asyncio.TimeoutError:
+        log.error("child process did not exit after group termination")
 
 
 class OpenCodeBackend:
@@ -127,6 +148,7 @@ class OpenCodeBackend:
         prepare_project(project, REPO, APPLICATION, contract, self.model, endpoint, free=True, prompts="enforce",
                         policy_config=snapshot["config"])
         env = _child_env(folder / "config", token, admin)
+        env.pop("CONFIG_ADMIN_TOKEN", None)  # policy administration belongs to the web service
         # Let the gateway read the operator-owned config directory, not a session workspace.
         env["CONFIG_DIR"] = str(config_service.directory)
         for name in ("HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):  # isolate OpenCode's own storage
@@ -152,10 +174,13 @@ class OpenCodeBackend:
             stdin=asyncio.subprocess.DEVNULL, stdout=state["server_log"], stderr=asyncio.subprocess.STDOUT,
             start_new_session=True)
         state["url"] = f"http://127.0.0.1:{port}"
+        gateway, server = state["gateway"], state["server"]
 
         def wait_ready():
-            deadline = time.monotonic() + 30
+            deadline = time.monotonic() + min(30, positive_int("SESSION_START_TIMEOUT_S", 45))
             while True:
+                if gateway.returncode is not None or server.returncode is not None:
+                    raise RuntimeError("session process exited during startup")
                 try:
                     request(endpoint, "/v1/tools/catalog", {}, token)
                     socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
@@ -174,38 +199,51 @@ class OpenCodeBackend:
         process = await asyncio.create_subprocess_exec(
             self.binary, "run", "--server", state["url"], "--auto", "--session", session.id, "--agent", AGENT,
             "--model", self.model, prompt, cwd=state["project"], env=state["env"],
-            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=state["server_log"])
-        try:
-            out, _ = await asyncio.wait_for(process.communicate(), timeout)
-        except asyncio.TimeoutError:
-            process.kill()
+            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=state["server_log"],
+            start_new_session=True)
+        state["runner"] = process
+
+        async def reply():
+            # Drain stdout while retaining a bounded reply; a noisy agent cannot exhaust RAM.
+            kept = bytearray()
+            while chunk := await process.stdout.read(8192):
+                if len(kept) < 80000:
+                    kept.extend(chunk[:80000 - len(kept)])
             await process.wait()
-            return False, ""
+            return bytes(kept)
+
+        try:
+            out = await asyncio.wait_for(reply(), timeout)
+        finally:
+            await _kill(process)
+            state.pop("runner", None)
         return process.returncode == 0, ANSI.sub("", out.decode("utf-8", errors="replace")).strip()[:20000]
 
     def evidence(self, session):
         return _evidence(session.state["evidence"], session.id)
 
     async def stop(self, session):
-        for name in ("server", "gateway"):
-            await asyncio.to_thread(_kill, session.state.get(name))
+        for name in ("runner", "server", "gateway"):
+            await _kill(session.state.pop(name, None))
         for name in ("server_log", "gateway_log"):
             if session.state.get(name):
-                session.state[name].close()
+                session.state.pop(name).close()
 
 
 class SessionManager:
     def __init__(self, backend=None):
         self.root = Path(os.environ.get("RUNS_DIR", "/data/pipeline-runs")).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
-        self.max_sessions = int(os.environ.get("MAX_SESSIONS", "6"))
-        self.idle_seconds = int(os.environ.get("SESSION_IDLE_S", "900"))
-        self.message_timeout = int(os.environ.get("RUN_TIMEOUT_S", "120"))
-        self.daily_cap = int(os.environ.get("RUNS_DAILY_CAP", "500"))
+        self.max_sessions = positive_int("MAX_SESSIONS", 6)
+        self.idle_seconds = positive_int("SESSION_IDLE_S", 900)
+        self.message_timeout = positive_int("RUN_TIMEOUT_S", 120)
+        self.start_timeout = positive_int("SESSION_START_TIMEOUT_S", 45)
+        self.daily_cap = positive_int("RUNS_DAILY_CAP", 500)
         self.backend = backend or OpenCodeBackend(self.root)
         self.sessions = {}
         self.day, self.sent_today = None, 0
         self.clock = 0
+        self.lifecycle_lock = asyncio.Lock()
 
     def _touch(self, session):
         self.clock += 1
@@ -218,31 +256,51 @@ class SessionManager:
         return session
 
     async def close(self, session_id):
+        async with self.lifecycle_lock:
+            await self._close(session_id)
+
+    async def _close(self, session_id):
         session = self.sessions.pop(session_id, None)
         if session is not None:
             await self.backend.stop(session)
 
+    async def expire(self):
+        async with self.lifecycle_lock:
+            now = time.monotonic()
+            for old in [s for s in self.sessions.values() if not s.busy and now - s.last_used > self.idle_seconds]:
+                await self._close(old.id)
+
     async def create(self):
+        async with self.lifecycle_lock:
+            return await self._create()
+
+    async def _create(self):
         now = time.monotonic()
         for old in [s for s in self.sessions.values() if not s.busy and now - s.last_used > self.idle_seconds]:
-            await self.close(old.id)
+            await self._close(old.id)
         if len(self.sessions) >= self.max_sessions:
             idle = sorted((s for s in self.sessions.values() if not s.busy), key=lambda s: s.order)
             if not idle:
                 raise HTTPException(429, "all session slots are busy; try again in a minute")
-            await self.close(idle[0].id)  # the least recently used session makes room
+            await self._close(idle[0].id)  # the least recently used session makes room
         session_id = "ses_" + secrets.token_hex(16)
         folder = self.root / session_id
         folder.mkdir()
         session = Session(session_id, folder)
+        session.busy = True
         self._touch(session)
         self.sessions[session_id] = session
         try:
-            await self.backend.start(session)
+            await asyncio.wait_for(self.backend.start(session), self.start_timeout)
+        except asyncio.CancelledError:
+            await self._close(session_id)
+            raise
         except Exception:
             log.exception("session start failed")
-            await self.close(session_id)
+            await self._close(session_id)
             raise HTTPException(503, "the session could not be started") from None
+        session.busy = False
+        self._touch(session)
         return session
 
     async def send(self, session_id, prompt):
@@ -257,7 +315,23 @@ class SessionManager:
         self.sent_today += 1
         session.busy = True
         try:
-            ok, reply = await self.backend.send(session, prompt, self.message_timeout)
+            ok, reply = await asyncio.wait_for(self.backend.send(session, prompt, self.message_timeout),
+                                              self.message_timeout + 3)
+            if not ok:
+                await self.close(session_id)
+                raise HTTPException(503, "the agent could not finish; start a new session")
+        except asyncio.TimeoutError:
+            await self.close(session_id)
+            raise HTTPException(504, "the agent timed out; start a new session") from None
+        except asyncio.CancelledError:
+            await self.close(session_id)
+            raise
+        except HTTPException:
+            raise
+        except Exception:
+            log.exception("session message failed")
+            await self.close(session_id)
+            raise HTTPException(503, "the agent could not finish; start a new session") from None
         finally:
             session.busy = False
             self._touch(session)
@@ -272,22 +346,54 @@ class SessionManager:
 
     async def shutdown(self):
         for session_id in list(self.sessions):
-            await self.close(session_id)
+            try:
+                await self.close(session_id)
+            except Exception:
+                log.exception("session shutdown failed")
 
 
 _manager = None
+_reaper = None
 
 
 def manager() -> SessionManager:
     global _manager
     if _manager is None:
-        _manager = SessionManager()
+        try:
+            _manager = SessionManager()
+        except Exception:
+            log.exception("session backend unavailable")
+            raise HTTPException(503, "the session backend is unavailable; check the configured model and executable") from None
     return _manager
 
 
+async def startup():
+    global _reaper
+
+    async def reap():
+        while True:
+            await asyncio.sleep(min(30, max(0.5, positive_int("SESSION_IDLE_S", 900) / 2)))
+            if _manager is not None:
+                try:
+                    await _manager.expire()
+                except Exception:
+                    log.exception("session expiry failed")
+
+    _reaper = asyncio.create_task(reap())
+
+
 async def shutdown():
+    global _reaper, _manager
+    if _reaper is not None:
+        _reaper.cancel()
+        try:
+            await _reaper
+        except asyncio.CancelledError:
+            pass
+        _reaper = None
     if _manager is not None:
         await _manager.shutdown()
+        _manager = None
 
 
 # /api/v1 belongs to the read API (docs/rest.md), served by its own process behind the same host.

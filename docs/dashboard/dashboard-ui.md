@@ -3,11 +3,20 @@
 The dashboard is the judges' entry point. We target **2–3 minutes** of self-guided exploration,
 ideally on their own laptops. This is a design target, not an organizer requirement.
 
-Status: design agreed, not implemented. Open questions are at the end.
+Status: the static dashboard implements configuration management, guardrail suite execution,
+interactive sessions, persisted metrics, session/step risk views and outcome verification cards.
+The layout and interaction ideas below remain design targets where they differ from the shipped UI.
+The implemented API contract is [rest.md](../rest.md).
 
-MVP: KYC only; AML is deferred. Follow [architecture-contract.md](architecture-contract.md)
+MVP: KYC only; AML is deferred. Follow [architecture-contract.md](../architecture-contract.md)
 for trusted sessions, policy pinning, pre-action gates and independent persisted-state checks.
 All numbers and latency figures below are layout examples, not measured results.
+
+The shipped UI uses recorded evidence or explicit unavailable states. It polls one session
+summary page and loads trajectory pages on demand, reads outcome checks from persisted
+verification, checks both web and evidence health, and downloads audit logs from the server.
+Policy edits require an administrator token entered in the configuration panel and kept only
+in memory. A saved draft is distinct from the selected revision used by new sessions.
 
 ---
 
@@ -62,8 +71,9 @@ Must work at 14" or 16" laptop width
   trajectory, outcome). Green pass, red fail. Click/tap shows case ID (e.g. `ONB-09`), expected vs actual.
 - **Positive cases reported separately**: "0 false positives on N legitimate requests". Over-blocking is the
   first thing a security judge looks for.
-- The exact **uv** command to run the suite once implemented. No runnable product-suite
-  command exists yet; do not advertise `uv run pytest` as currently working.
+- The UI runs `tests/control_layer` through the web suite API and reports its actual results.
+  Run the same group locally with `scripts/test.sh controls`; `scripts/test.sh all` also covers
+  backend, adapter and dashboard integration tests without requiring provider credentials.
 
 ### 1. Try to break it (attack console)
 - Textarea + **Send**. Ctrl+Enter submits.

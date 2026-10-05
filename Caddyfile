@@ -1,6 +1,6 @@
 {$SITE_HOST} {
-	# Read API for dashboards (docs/rest.md). The config endpoints stay in the web app: only it has
-	# the shared CONFIG_DIR.
+	# Evidence reads go to the read-only API. Config management stays in the web app so its
+	# authenticated mutation routes are the only exposed configuration write path.
 	@readapi {
 		path /api/v1 /api/v1/*
 		not path /api/v1/configs /api/v1/configs/* /api/v1/config-selection

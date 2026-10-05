@@ -596,16 +596,25 @@ To power the judge-facing audit ledger UI defined in [docs/dashboard/dashboard-u
 | Endpoint | Method | Status | Purpose / Payload |
 |---|---|---|---|
 | `/api/v1/configs` | `GET` | Implemented | **List Configurations**: Returns presets and custom configurations with summary metadata. |
-| `/api/v1/configs/{name}` | `GET`, `PUT` | Implemented | **Read/Update Configuration**: Inspects (`GET`) or updates (`PUT`) a policy preset. Mutation requires `Authorization: Bearer <ADMIN_SECRET>` in production (security gap tracked in `GAP_ANALYSIS_FRONTEND_BACKEND.md`). |
-| `/api/v1/config-selection` | `PUT` | Implemented | **Preset Selector**: Selects active preset for new sessions (`{"name": "standard"}`). Requires `Authorization: Bearer <ADMIN_SECRET>` in production (gap tracked in `GAP_ANALYSIS_FRONTEND_BACKEND.md`). |
+| `/api/v1/configs/{name}` | `GET`, `PUT` | Implemented | **Read/Update Configuration**: Reads the saved draft or selected snapshot (`?view=active`). PUT requires `X-Admin-Token` or Bearer matching `CONFIG_ADMIN_TOKEN`, browser origin checks and a request budget; saving does not activate the draft. |
+| `/api/v1/config-selection` | `PUT` | Implemented | **Preset Selector**: Selects an immutable revision for new sessions (`{"name": "standard", "revision": "sha256:<hash>"}`). Uses the same administrator authentication as config updates; an empty server token disables writes. |
 | `/api/suite/runs` | `POST` | Implemented | **Run Test Suite**: Executes pytest control layer suite in a background subprocess. |
 | `/api/suite/runs/latest` | `GET` | Implemented | **Suite Status**: Returns execution status and case verdicts for the guardrail test suite. |
 | `/opencode-wrapper/api/sessions` | `POST` | Implemented | **Interactive Session**: Starts a new sandboxed OpenCode chat session. |
-| `/opencode-wrapper/api/sessions/{id}/messages` | `POST` | Implemented | **Interactive Chat**: Sends user prompt to agent and streams/returns response events. |
+| `/opencode-wrapper/api/sessions/{id}/messages` | `POST` | Implemented | **Interactive Chat**: Sends a prompt and returns a bounded JSON reply with recorded evidence. Startup failures, message timeouts, idle expiry and shutdown clean up child process groups. |
+| `/api/v1/sessions`, `/api/v1/trajectories/session/{id}` | `GET` | Implemented | **Risk views**: One paginated session summary includes backend risk and verification; individual trajectory pages load on demand and expose recorded step risk/decision traces. Missing historical risk is unavailable. |
+| `/api/v1/sessions/{id}/verification` | `GET` | Implemented | **Outcome checks**: Persisted verifier statuses and check evidence, also used by the dashboard outcome cards. No verifier record is shown as not verified. |
+| `/api/v1/metrics/{security,usage,performance}`, `/api/v1/detections` | `GET` | Implemented | **Dashboard aggregates**: Recorded SQLite evidence across sessions; unknown pricing and missing measurements remain null rather than simulated. |
+| `/api/v1/export/actions` | `GET` | Implemented | **Audit download**: Filtered NDJSON, disk-spooled before streaming with quota checks and a SHA-256 footer. |
 | `/api/v1/inspect` | `POST` | Planned | **Sandbox Attack Console**: Ad-hoc proposal evaluation against active policy. |
 | `/api/v1/events/stream` | `GET` | Planned | **Live SSE Feed**: Real-time Server-Sent Events stream of decisions. |
 | `/api/v1/approvals/{id}/decide` | `POST` | Planned | **Human Approval Decision**: Compliance reviewer decision for paused actions. Requires `Authorization: Bearer <ADMIN_SECRET>`. |
 | `/api/v1/scenario/replay` | `POST` | Planned | **Sandbox Outcome Replay**: Evaluates outcome verification on seeded bank states. |
+
+The evidence service is read-only by default; Caddy routes configuration management to the web
+service. The dashboard checks both `/healthz` and `/api/v1/health` and shows degraded status when
+the evidence service is unavailable. See [REST limits](rest.md#8-remaining-persisted-read-limits)
+for unsupported time-series and cross-scope projections.
 
 ---
 
