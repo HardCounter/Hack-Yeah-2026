@@ -5,45 +5,60 @@
   const x = p => M.l + p * PW;
   const y = c => M.t + (1 - c / 10) * PH;
   const IMPACT_TICKS = [[1, 'read'], [4, 'egress'], [5, 'write'], [8, 'create client'], [10, 'irreversible']];
-  const ACTION = { LOW: '—', MEDIUM: 'Finding raised', HIGH: 'Require approval, 15 min', CRITICAL: 'Halt session, 30 min' };
 
   // Sessions come from the read API (docs/rest.md): every step is a tool call the gateway really decided on.
   const get = path => App.read(path);
-  async function loadSession(summary) {
-    const id = encodeURIComponent(summary.session_id);
-    const [detail, trajectory, trace] = await Promise.all([get(`/sessions/${id}`),
-      get(`/trajectories/session/${id}?view=full&kinds=tool_use&include_detections=false&limit=1000`),
-      get(`/sessions/${id}/decisions?limit=1000`).catch(() => null)]);  // control-plane trace; older APIs lack it
-    const steps = trajectory.segments.flatMap(g => g.steps).map(({ summary: a, event }) => {
-      const d = event?.action_details || {};
-      return { event_id: a.event_id, name: a.name, side_effect: a.side_effect, status: a.status, decision: a.decision, executed: a.executed,
-        args: d.parameters, error: d.error, result: d.result, rule: a.triggered_rules?.[0], reason: a.reason_code, usage: Mock.usage(a) };
-    });
-    const s = Risk.newSession(summary.session_id, `${summary.case_id} · ${summary.agent_id}`);
-    s.decisions = trace?.items || []; s.summary = trace?.summary || [];
-    // The backend trajectory-risk plugin scores each step; its numbers win over the local recomputation
-    const risk = Object.fromEntries(s.decisions.filter(d => d.plugin === 'trajectory-risk' && d.factors?.level).map(d => [d.trigger_event_id, d.factors]));
-    const local = Risk.signalsFor(steps, detail.contract);
-    let seen = {}, last;  // backend signals are session totals per name; a step's own are the increase
-    local.forEach((own, k) => {
-      const st = steps[k], held = st.status === 'pending_approval', f = risk[st.event_id];
-      const signals = f ? Object.entries(f.signals || {}).flatMap(([n, c]) => Array(Math.max(0, c - (seen[n] || 0))).fill(n)) : own;
-      if (f) { seen = f.signals || {}; last = f; }
-      Risk.step(s, { event_id: st.event_id, name: st.name, signals, C: Risk.tools[st.name] ?? Risk.sideEffect[st.side_effect] ?? 1, executed: st.executed,
-        trace: s.decisions.filter(d => d.trigger_event_id === st.event_id),
-        args: st.args, ms: st.executed ? st.usage?.latency_ms : null, tokens: st.usage && { in: st.usage.input_tokens, out: st.usage.output_tokens, sim: st.usage.sim },
-        decision: { verdict: VERDICT[st.decision] || (st.executed ? 'ALLOWED' : 'BLOCKED'), by: st.rule?.auditor, reason: st.rule?.rule_id || st.reason },
-        result: st.error ? { status: 'error', summary: st.error }
-          : st.executed ? { status: 'ok', data: st.result, redacted: st.status === 'redacted' }
-          : { status: held ? 'held' : 'blocked', summary: held ? 'Not executed, waiting for approval' : 'Not executed, stopped at the gateway' } });
-    });
-    if (last) Object.assign(s, { P: last.failure_probability, loss: last.expected_loss, level: last.level.toUpperCase() });
-    const v = s.decisions.findLast(d => d.plugin === 'outcome-verifier' && d.outcome === 'decided');
-    if (v) s.verdict = { decision: v.decision, reasoning: v.reasoning, factors: v.factors || {} };
-    return s;
+  const details = new Map();
+  const level = s => s.level || 'UNAVAILABLE';
+  const figure = (v, places = 0) => v == null ? '—' : Number(v).toFixed(places);
+  function fromSummary(summary) {
+    const r = summary.risk;
+    const verification = summary.verification;
+    return { id: summary.session_id, label: `${summary.case_id || summary.session_id} · ${summary.agent_id || 'unknown agent'}`,
+      P: r?.failure_probability ?? null, loss: r?.expected_loss ?? null, maxC: r?.max_consequence ?? null,
+      level: r?.level?.toUpperCase() || null, steps: summary.risk_step_count ?? summary.action_count,
+      verification_status: summary.verification_status, log: [], decisions: [],
+      activeControls: (summary.active_interventions || []).map(i => code(i.action)).join(', ') || 'None',
+      verdict: verification ? { decision: verification.verification_status, factors: {
+        checks_total: verification.checks.length, checks_passed: verification.checks.filter(c => c.status === 'PASS').length } } : null };
   }
-  // Keeps equal-impact dots apart; stable per session so a refresh does not move them
-  const jitter = id => (Mock.draw(id) - .5) * .5;
+  function detailState(s) {
+    if (!details.has(s.id)) details.set(s.id, { log: [], cursor: null, started: false, hasMore: true, loading: null, error: null });
+    return details.get(s.id);
+  }
+  async function loadPage(s) {
+    const state = detailState(s);
+    if (state.loading) return state.loading;
+    if (state.started && !state.hasMore) return;
+    state.loading = (async () => {
+      try {
+        const query = new URLSearchParams({ view: 'full', kinds: 'tool_use,egress', include_detections: 'false', limit: '100' });
+        if (state.cursor) query.set('cursor', state.cursor);
+        const trajectory = await get(`/trajectories/session/${encodeURIComponent(s.id)}?${query}`);
+        const steps = trajectory.segments.flatMap(g => g.steps).map(({ summary: a, event, risk, trace }) => {
+          const d = event?.action_details || {}, held = a.status === 'pending_approval';
+          return { event_id: a.event_id, name: a.name, C: risk?.consequence ?? null, P: risk?.probability ?? null,
+            risk: risk?.expected_loss ?? null, signals: risk?.signals || [], executed: a.executed,
+            args: d.parameters, trace: trace || [], ms: a.executed ? a.usage?.latency_ms : null,
+            tokens: a.usage?.input_tokens != null || a.usage?.output_tokens != null
+              ? { in: a.usage.input_tokens, out: a.usage.output_tokens } : null,
+            decision: { verdict: VERDICT[a.decision] || (a.executed ? 'ALLOWED' : 'BLOCKED'),
+              by: a.triggered_rules?.[0]?.auditor, reason: a.triggered_rules?.[0]?.rule_id || a.reason_code },
+            result: d.error ? { status: 'error', summary: d.error }
+              : a.executed ? { status: 'ok', data: d.result, redacted: a.status === 'redacted' }
+              : { status: held ? 'held' : 'blocked', summary: held ? 'Not executed, waiting for approval' : 'Not executed, stopped at the gateway' } };
+        });
+        const known = new Set(state.log.map(st => st.event_id));
+        state.log.push(...steps.filter(st => !known.has(st.event_id)));
+        state.cursor = trajectory.next_cursor; state.hasMore = trajectory.has_more;
+        state.started = true; state.error = null;
+      } catch (e) { state.error = e.message; }
+      finally { state.loading = null; }
+    })();
+    return state.loading;
+  }
+  // A stable small visual offset separates sessions with equal impact.
+  const jitter = id => { let hash = 0; for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0; return (hash % 101 / 100 - .5) * .5; };
 
   const svg = $('#riskMap');
   const NS = 'http://www.w3.org/2000/svg';
@@ -75,7 +90,7 @@
   }
 
   const pop = $('#pop');
-  const describe = s => `${s.label}, likelihood ${s.P.toFixed(2)}, impact ${s.maxC}, expected loss ${s.loss.toFixed(2)}, level ${Risk.of(s)}, ${s.steps} steps`;
+  const describe = s => `${s.label}, likelihood ${figure(s.P, 2)}, impact ${s.maxC}, expected loss ${figure(s.loss, 2)}, level ${level(s)}, ${s.steps} steps`;
   const td = (cls, ...kids) => { const c = el('td', cls); c.append(...kids); return c; };
   const verdict = st => st.decision?.verdict || (st.executed ? 'ALLOWED' : 'BLOCKED');
   const RESULT = { ok: 'allow', blocked: 'block', error: 'block', held: 'hold' };
@@ -97,26 +112,26 @@
         ...(t.adjustments || []).map(j => ` · ${j.action} ${j.outcome}`));
       return p;
     }));
-    // Tool time only for an executed step; tokens may be a simulated planner turn (js/mock.js)
-    const foot = [st.ms != null && ms(st.ms), st.tokens && Mock.sim(`${fmtNum(st.tokens.in ?? 0)} in / ${fmtNum(st.tokens.out ?? 0)} out tokens`, st.tokens.sim)].filter(Boolean);
+    // Display only measurements present in persisted evidence.
+    const foot = [st.ms != null && ms(st.ms), st.tokens && `${st.tokens.in == null ? '—' : fmtNum(st.tokens.in)} in / ${st.tokens.out == null ? '—' : fmtNum(st.tokens.out)} out tokens`].filter(Boolean);
     if (foot.length) { const p = el('p', 'step-foot mono'); foot.forEach((f, i) => p.append(...(i ? [' · '] : []), f)); d.append(p); }
 
     return d;
   }
   // Session card: header with level, key figures, then one table row per step
-  function card(s) {
-    const lvl = Risk.of(s), head = el('div', 'pop-head'), f = s.verdict?.factors;
+  function cardContent(s, state, refresh) {
+    const lvl = level(s), head = el('div', 'pop-head'), f = s.verdict?.factors;
     head.append(el('strong', null, s.label), badge(lvl), ...(s.verdict ? [badge(code(s.verdict.decision))] : []));
     const facts = el('dl', 'pop-facts');
-    for (const [k, v] of [['Likelihood P', s.P.toFixed(2)], ['Impact C', s.maxC], ['Expected loss', s.loss.toFixed(2)], ['Action', ACTION[lvl]],
+    for (const [k, v] of [['Likelihood P', figure(s.P, 2)], ['Impact C', figure(s.maxC)], ['Expected loss', figure(s.loss, 2)], ['Active controls', s.activeControls],
       ...(s.verdict ? [['Outcome', `${code(s.verdict.decision)}${f?.checks_total != null ? ` · ${f.checks_passed}/${f.checks_total} checks` : ''}`]] : [])])
       facts.append(el('dt', null, k), el('dd', 'mono', String(v)));
     const t = el('table', 'pop-steps'), hr = el('tr');
     hr.append(...['#', 'Step', 'Impact', 'Status', 'Signals'].map(h => el('th', null, h)));
     t.append(el('thead'), el('tbody')); t.tHead.append(hr);
-    t.tBodies[0].append(...s.log.map((st, i) => {
+    t.tBodies[0].append(...state.log.map((st, i) => {
       const tr = el('tr', 'step'), sig = st.signals || [];
-      tr.append(el('td', 'n mono', i + 1), el('td', 'mono', st.name), el('td', 'n mono', st.C),
+      tr.append(el('td', 'n mono', i + 1), el('td', 'mono', st.name), el('td', 'n mono', figure(st.C)),
         td(null, badge(verdict(st))),
         el('td', sig.length ? 'v-warn' : 'faint', sig.join(', ').replace(/_/g, ' ') || '—'));
       // Click or Enter/Space opens the call details in a full-width row below; several can be open
@@ -130,9 +145,24 @@
       tr.onclick = toggle; tr.onkeydown = k => { if (k.key === 'Enter' || k.key === ' ') { k.preventDefault(); toggle(); } };
       return tr;
     }));
-    const cap = el('p', 'cap muted', `${s.steps} steps (actions taken)`);
+    const cap = el('p', 'cap muted', `${state.log.length} of ${s.steps} recorded tool and egress steps`);
     const d = el('div', `session-card lvl-${lvl}`); d.append(head, facts, cap, t);
+    if (state.error) d.append(el('p', 'muted', `Steps unavailable: ${state.error}`));
+    if (state.hasMore) {
+      const more = el('button', 'btn ghost', state.loading ? 'Loading steps…' : state.started ? 'Load more steps' : 'Load steps');
+      more.disabled = !!state.loading;
+      more.onclick = async () => { const pending = loadPage(s); refresh(); await pending; refresh(); };
+      d.append(more);
+    }
     return d;
+  }
+  function card(s) {
+    const container = el('div'), state = detailState(s);
+    const refresh = () => container.replaceChildren(cardContent(s, state, refresh));
+    refresh();
+    if (!state.started && !state.loading) { const pending = loadPage(s); refresh(); pending.then(refresh); }
+    else if (state.loading) state.loading.then(refresh);
+    return container;
   }
   App.sessionCard = card;
   // Same card for a dot on the map and a row in the session table. It stays open while the
@@ -158,7 +188,7 @@
     target.addEventListener('mouseleave', hide); target.addEventListener('blur', hide);
   }
   function point(s) {
-    const lvl = Risk.of(s);
+    const lvl = level(s);
     const c = node('circle', { cx: x(s.P), cy: y(Math.min(10, s.maxC + jitter(s.id))), r: 5 + Math.min(s.steps, 12) * .5,
       class: `pt lvl-${lvl}`, tabindex: 0, role: 'img', 'aria-label': describe(s) });
     hoverCard(c, s);
@@ -167,16 +197,16 @@
 
   function render(note) {
     svg.querySelectorAll('.pt').forEach(n => n.remove());
-    for (const s of App.sessions) svg.append(point(s));
+    for (const s of App.sessions) if (s.P != null && s.maxC != null) svg.append(point(s));
     if (!App.sessions.length) {
       const c = el('td', 'cap muted', note || 'No agent sessions yet.'); c.colSpan = 6;
       return $('#riskTable').replaceChildren(el('tr').appendChild(c).parentNode);
     }
     $('#riskTable').replaceChildren(...[...App.sessions].sort((a, b) => b.loss - a.loss).slice(0, 8).map(s => {
-      const tr = el('tr'), lvl = Risk.of(s), b = el('td');
+      const tr = el('tr'), lvl = level(s), b = el('td');
       b.append(badge(lvl));
-      tr.append(el('td', 'cap', s.label), el('td', 'n mono cap', s.P.toFixed(2)), el('td', 'n mono cap', s.maxC),
-        el('td', 'n mono cap', s.loss.toFixed(2)), b, el('td', 'cap muted', ACTION[lvl]));
+      tr.append(el('td', 'cap', s.label), el('td', 'n mono cap', figure(s.P, 2)), el('td', 'n mono cap', figure(s.maxC)),
+        el('td', 'n mono cap', figure(s.loss, 2)), b, el('td', 'cap muted', s.activeControls));
       tr.tabIndex = 0; tr.setAttribute('aria-label', describe(s)); hoverCard(tr, s);
       return tr;
     }));
@@ -189,14 +219,19 @@
   $('#riskLegend').append(
     ...Risk.levels.slice().reverse().map(([lvl]) => swatch(lvl, MEANING[lvl])),
     el('p', 'legend-note', 'Size - steps taken'), el('p', 'legend-note', 'Hover a dot for its steps'));
+  let loading = false;
   async function load() {
+    if (loading) return;
+    loading = true;
     let note;
     try {
       const { items } = await get('/sessions?limit=50');
-      App.sessions = await Promise.all(items.map(loadSession));
+      App.sessions = items.map(fromSummary);
+      details.clear();
     } catch (e) {
       App.sessions = []; note = `Sessions unavailable: ${e.message}`;
     }
+    loading = false;
     render(note);
     App.emit('sessions');
   }

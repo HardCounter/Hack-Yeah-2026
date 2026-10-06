@@ -22,11 +22,17 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0  # exact: setup-uv has no floating major tags since v8
         with:
           enable-cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
       - name: Install Python (.python-version) and locked dependencies
         run: uv sync --locked
       - name: Generate dataset (self-checks + determinism)
         run: uv run python data/generate.py
       - name: Test suite
         run: uv run pytest
+      - name: Test frontend and adapter Node suites
+        run: node --experimental-vm-modules --test tests/frontend/dashboard.test.mjs adapters/opencode/test.mjs adapters/opencode/forward.test.mjs
       - name: Report renders
         run: uv run python data/report.py

@@ -3,13 +3,17 @@
 Run from anywhere; each script `cd`s to the repository root. Requirements: `uv`; `node` 22+ for
 adapter tests; `opencode` 2.x for anything that starts OpenCode. Synthetic data only.
 
+Bash wrappers and their shell integration tests target Linux/macOS or a POSIX environment such
+as WSL with Linux Python/uv. Native Windows CI still runs the Python CLI, persistence,
+configuration, dashboard and Node tests; only POSIX shell/process/permission checks are skipped.
+
 ## Run the control layer
 
 | Script | What it does |
 |---|---|
 | `run_opencode_intercepted.sh [--workspace DIR] [opencode flags]` | Terminal 2: starts `opencode --standalone` wired to whichever service terminal 1 started (`var/intercept.env`). Defaults to the run's temporary project; `--workspace` selects another existing project directory while retaining the run-specific adapter/agent config. |
 | `run_live_pipeline.sh [APP-0001] [--model p/m] [--port 8080] [--api-port 8790] [--cors-origin URL] [--bank-db PATH] [--runs-dir DIR] [--no-api]` | **Full pipeline for an interactive OpenCode session.** Starts gateway → evidence store → consumers on a fresh synthetic bank, plus the read-only REST API for dashboards. Traces every step to `var/live-runs/<run>/control-layer.log` and waits. Ctrl+C finishes the session, verifies the outcome, saves artifacts and stops both processes. |
-| `run_rest_api.sh [--port 8790] [--cors-origin URL] [--evidence-dir DIR] [--example-mode]` | Read-only SQLite evidence API ([docs/rest.md](../docs/rest.md)). Deferred queries return 501; explicit `--example-mode` serves frontend fixtures. Binds loopback. Docs UI at `/api/v1/docs`. |
+| `run_rest_api.sh [--port 8790] [--cors-origin URL] [--evidence-dir DIR] [--example-mode]` | SQLite evidence API ([docs/rest.md](../docs/rest.md)); deferred trajectory scopes and selected timeseries metrics return 501. Explicit `--example-mode` serves frontend fixtures. Binds loopback. Docs UI at `/api/v1/docs`. |
 | `run_rest_demo.sh [--port 8790] [--runs-dir var/rest-demos]` | Generates two actual governed synthetic sessions and independent verification, then serves their real SQLite evidence. No OpenCode/model/provider needed; prints IDs and curl commands. |
 | `run_demo.sh [APP-ID] [--fault F]` | Whole control layer offline with a scripted agent (no model, no network); prints the trace and the verdict. |
 | `run_pipeline.sh APP-0001 --model p/m [options]` | Non-interactive: OpenCode works one application through the governed tools, then verification; artifacts in `var/pipeline-runs/`. Accepts `--bank-db`, `--runs-dir`, `--policy`, `--timeout`, `--prompt`, `--free`. |
@@ -63,16 +67,28 @@ curl http://127.0.0.1:8790/api/v1/system/stats   # evidence_stores: real count
 
 If the API process dies, the control layer keeps enforcing; the pipeline prints a warning and
 only the dashboard view is lost. Health, session list/detail/verification, action drill-down,
-session trajectory and audit export now read actual SQLite state. Deferred metrics/detections
-return 501 unless explicitly started with `--example-mode`.
+session trajectory, detections, aggregate overviews and audit exports read actual SQLite state.
+Run/case/agent trajectories and three timeseries metrics remain deferred and return 501 in normal
+mode; example data is available only with explicit `--example-mode`.
 
 ## Test
 
 | Script | What it does |
 |---|---|
-| `test.sh [all\|python\|data\|adapter] [pytest args]` | All tests (`all`, default), all Python tests (`python`), dataset postconditions (`data`), or Node adapter tests (`adapter`). |
+| `test.sh [target] [args]` | `all` runs every Python test, the Node adapter suite and frontend tests; `python`, `controls`, `support`, `intercept`, `persistence`, `consume`, `e2e`, `data`, and `decisions` select Python groups; `adapter` runs the OpenCode adapter Node suite; `frontend` runs `node --test tests/frontend/*.test.mjs`. Use `--help` for details. |
 | `test_consume_plane.sh [pytest args]` | Consume-plane tests only (`tests/support/consume_plane`). |
 | `test_opencode_adapter.sh [--quiet]` | OpenCode adapter Node tests; prints every JSON request the plugin sends. |
 | `check_opencode_pipeline.sh` | Starts real OpenCode and passes when the adapter's handshake reaches Python (no prompt sent). |
+
+The reproducible HTTP dashboard integration check is part of the Python suite:
+
+```sh
+uv run --locked --offline pytest -q tests/support/test_dashboard_integration.py
+```
+
+It starts both HTTP applications with governed synthetic SQLite evidence and runs the shipped
+dashboard JavaScript using Node. It checks lazy loading, metrics, verification, authenticated
+save/activation and audit export integrity. All state and the administrator token are disposable;
+it does not load provider credentials or call a model.
 
 Tracing in any script or command: `CONTROL_LOG=terminal|file|null`, `CONTROL_LOG_FILE=path`.

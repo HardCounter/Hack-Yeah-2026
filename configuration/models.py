@@ -213,6 +213,7 @@ class ConfigSummary(Model):
     preset: bool
     description: str
     revision: Revision
+    active_revision: Revision | None = None
     selected: bool
     requires_selection: bool
 

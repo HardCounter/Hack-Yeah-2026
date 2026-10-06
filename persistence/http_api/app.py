@@ -18,7 +18,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, FastAPI, Path as FastApiPath, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from persistence.http_api import examples as ex
@@ -302,13 +302,18 @@ async def get_action(event_id: Id, request: Request):
 
 
 @router.get("/detections")
-async def list_detections(session_id: OptId = None, run_id: OptId = None, case_id: OptId = None,
+async def list_detections(request: Request, session_id: OptId = None, run_id: OptId = None, case_id: OptId = None,
                           agent_id: OptId = None, trigger_event_id: OptId = None, sources: Csv = None,
                           names: Csv = None, min_severity: Severity | None = None,
                           since: Since = None, until: Until = None, order: Literal["asc", "desc"] = "desc",
                           limit: Limit = 100, cursor: Cursor = None):
     source_list = csv("sources", sources, Source)
     lo, hi = window(since, until)
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.detections, limit=limit, cursor=cursor,
+                                       session_id=session_id, run_id=run_id, case_id=case_id, agent_id=agent_id,
+                                       trigger_event_id=trigger_event_id, sources=source_list, names=names,
+                                       min_severity=min_severity, since=query_time(since), until=query_time(until), order=order)
     items = keep(ex.detections(session_id), "source", source_list)
     for key, value in (("run_id", run_id), ("case_id", case_id), ("agent_id", agent_id)):
         items = keep(items, key, value)
@@ -322,36 +327,49 @@ async def list_detections(session_id: OptId = None, run_id: OptId = None, case_i
 
 
 @router.get("/detections/{detection_id}")
-async def get_detection(detection_id: Id):
+async def get_detection(detection_id: Id, request: Request):
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.detection, detection_id)
     return ex.detection(detection_id)
 
 
 @router.get("/catalog/detections")
-async def get_catalog():
+async def get_catalog(request: Request):
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.detection_catalog)
     return ex.catalog()
 
 
 @router.get("/metrics/usage")
-async def usage_metrics(group_by: GroupBy = "agent", agent_id: OptId = None, case_id: OptId = None,
+async def usage_metrics(request: Request, group_by: GroupBy = "agent", agent_id: OptId = None, case_id: OptId = None,
                         since: Since = None, until: Until = None, limit: Limit = 100):
-    lo, hi = window(since, until, timedelta(hours=24))
+    lo, hi = window(since, until, precise=True)
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.usage_report, group_by=group_by,
+                                       since=lo, until=hi, limit=limit, agent_id=agent_id, case_id=case_id)
     report = ex.usage_report(group_by, lo, hi, agent_id, case_id)
     report["buckets"] = report["buckets"][:limit]
     return report
 
 
 @router.get("/metrics/security")
-async def security_metrics(agent_id: OptId = None, session_id: OptId = None,
+async def security_metrics(request: Request, agent_id: OptId = None, session_id: OptId = None,
                            since: Since = None, until: Until = None,
                            top: Annotated[int, Query(ge=1, le=100)] = 10):
-    lo, hi = window(since, until, timedelta(hours=24))
+    lo, hi = window(since, until, precise=True)
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.security_overview,
+                                       since=lo, until=hi, top=top, agent_id=agent_id, session_id=session_id)
     return ex.security_overview(lo, hi, top, session_id, agent_id)
 
 
 @router.get("/metrics/performance")
-async def performance_metrics(agent_id: OptId = None, session_id: OptId = None,
+async def performance_metrics(request: Request, agent_id: OptId = None, session_id: OptId = None,
                               since: Since = None, until: Until = None):
-    lo, hi = window(since, until, timedelta(hours=24))
+    lo, hi = window(since, until, precise=True)
+    if not request.app.state.example_mode:
+        return await asyncio.to_thread(request.app.state.read_queries.performance_overview,
+                                       since=lo, until=hi, agent_id=agent_id, session_id=session_id)
     return ex.performance_overview(lo, hi, session_id, agent_id)
 
 
@@ -430,13 +448,38 @@ async def export_session(session_id: Id, request: Request):
                     headers={"Content-Disposition": f'attachment; filename="audit-{session_id}.ndjson"'})
 
 
+@router.get("/export/actions")
+async def export_actions(request: Request, kinds: Csv = None, decisions: Csv = None,
+                         since: Since = None, until: Until = None, session_id: OptId = None, agent_id: OptId = None):
+    kind_list, decision_list = csv("kinds", kinds, Kind), csv("decisions", decisions, Decision)
+    window(since, until)
+    if request.app.state.example_mode:
+        rows = keep(keep(ex.all_steps(), "kind", kind_list), "decision", decision_list)
+        rows = [row for row in rows if (session_id is None or row["session_id"] == session_id)
+                and (agent_id is None or row["agent_id"] == agent_id)
+                and (since is None or row["ts"] >= query_time(since)) and (until is None or row["ts"] < query_time(until))]
+        payload = "".join(json.dumps({"record_type": "action", **ex.action(row["event_id"])["event"]}) + "\n" for row in rows)
+        return Response(payload, media_type="application/x-ndjson",
+                        headers={"Content-Disposition": 'attachment; filename="audit-actions.ndjson"'})
+    output = await asyncio.to_thread(request.app.state.read_queries.export_actions, kinds=kind_list, decisions=decision_list,
+                                     since=query_time(since), until=query_time(until), session_id=session_id, agent_id=agent_id)
+    def chunks():
+        try:
+            while chunk := output.read(64 * 1024):
+                yield chunk
+        finally:
+            output.close()
+    return StreamingResponse(chunks(), media_type="application/x-ndjson",
+                             headers={"Content-Disposition": 'attachment; filename="audit-actions.ndjson"'})
+
+
 # --- app --------------------------------------------------------------------------------------
 
 EVIDENCE_GLOB = "*.evidence.db"  # GovernedRuntime writes <runs-dir>/<session_id>.evidence.db
 
 
 def create_app(cors_origins: frozenset[str] = frozenset(), docs: bool = True,
-               evidence_dir: Path | None = None, *, config_service=None, example_mode=False) -> FastAPI:
+               evidence_dir: Path | None = None, *, config_service=None, example_mode=False, config_writes=False) -> FastAPI:
     """Build dashboard reads and authenticated config management (evidence remains read-only).
 
     ``evidence_dir`` holds per-session evidence stores, opened read-only per query.
@@ -450,18 +493,14 @@ def create_app(cors_origins: frozenset[str] = frozenset(), docs: bool = True,
     app.state.read_queries = ReadQueries(evidence_dir)
     app.include_router(router)
     from configuration.api import install_config_api, management_put
-    install_config_api(app, config_service=config_service)
+    install_config_api(app, config_service=config_service, allow_writes=config_writes)
 
     @app.middleware("http")
     async def read_only(request: Request, call_next):
         if request.method not in ("GET", "HEAD") and not (
-                request.method == "PUT" and management_put(request.url.path)):
+                config_writes and request.method == "PUT" and management_put(request.url.path)):
             return error_response(405, "method_not_allowed")
         path = request.url.path
-        deferred = {"/api/v1/detections", "/api/v1/catalog/detections",
-                     "/api/v1/metrics/usage", "/api/v1/metrics/security", "/api/v1/metrics/performance"}
-        if not example_mode and (path in deferred or path.startswith("/api/v1/detections/")):
-            return error_response(501, "not_implemented")
         response = await call_next(request)
         response.headers.setdefault("Cache-Control", "no-store")
         if path.startswith("/api/v1/") and not path.startswith("/api/v1/config"):
@@ -470,8 +509,10 @@ def create_app(cors_origins: frozenset[str] = frozenset(), docs: bool = True,
 
     # Registered after read_only so it runs outside it and answers CORS preflight (OPTIONS).
     if cors_origins:
-        app.add_middleware(CORSMiddleware, allow_origins=sorted(cors_origins), allow_methods=["GET", "PUT"],
-                           allow_headers=["Authorization", "Content-Type"], expose_headers=["ETag"])
+        app.add_middleware(CORSMiddleware, allow_origins=sorted(cors_origins),
+                           allow_methods=["GET", "HEAD", "PUT"] if config_writes else ["GET", "HEAD"],
+                           allow_headers=["Authorization", "X-Admin-Token", "Content-Type"],
+                           expose_headers=["ETag", "X-Data-Source"])
 
     @app.exception_handler(ApiError)
     async def api_error(_: Request, exc: ApiError):

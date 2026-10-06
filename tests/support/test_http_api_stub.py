@@ -130,7 +130,8 @@ def test_cors_preflight_and_headers_for_allowed_origin_only():
 
 def test_openapi_lists_every_documented_route():
     paths = set(client.get("/api/v1/openapi.json").json()["paths"])
-    assert len([p for p in paths if p.startswith("/api/v1/")]) == 23
+    assert len([p for p in paths if p.startswith("/api/v1/")]) == 24
+    assert "/api/v1/export/actions" in paths
     assert {"/api/v1/configs", "/api/v1/configs/{name}", "/api/v1/config-selection"} <= paths
     assert {"/api/v1/sessions/{session_id}/decisions", "/api/v1/decisions/{decision_id}"} <= paths
 

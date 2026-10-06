@@ -102,6 +102,7 @@
 const $ = id => document.getElementById(id);
 const SUGGESTION = "What tools do you have? Read application APP-0001 and summarize it in two sentences.";
 const API = "/opencode-wrapper/api/sessions";
+const errorMessage = (body, fallback) => body.error?.message || (typeof body.detail === "string" ? body.detail : fallback);
 let session = null, shownEvents = 0, shownFindings = 0, poller = null, working = null;
 
 // All server and user values are written with textContent, never as HTML.
@@ -153,10 +154,11 @@ async function startSession() {
   const note = message("system", "system", "starting a new session: OpenCode server and control gateway…");
   try {
     const response = await fetch(API, { method: "POST" });
-    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "start failed");
+    if (!response.ok) throw new Error(errorMessage(await response.json().catch(() => ({})), "start failed"));
     session = (await response.json()).session_id;
   } catch (problem) {
     note.lastChild.textContent = "The session could not be started. Press + new session to try again.";
+    $("error").textContent = problem.message;
     setState("down");
     $("new-session").disabled = false;
     return;
@@ -205,7 +207,7 @@ async function send() {
     return;
   }
   working.remove(); working = null;
-  const detail = response ? (await response.json().catch(() => ({}))).detail : null;
+  const detail = response ? errorMessage(await response.json().catch(() => ({})), "The message could not be sent.") : null;
   if (response && response.status === 404) {
     $("prompt").value = prompt;
     await startSession();
@@ -213,6 +215,12 @@ async function send() {
     return;
   }
   $("error").textContent = typeof detail === "string" ? detail : "The message could not be sent.";
+  if (response && (response.status === 503 || response.status === 504)) {
+    session = null;
+    setState("down");
+    $("new-session").disabled = false;
+    return;
+  }
   setState("ready");
   setReady(true);
 }

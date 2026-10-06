@@ -1,4 +1,4 @@
-/* Tests: the guardrail suite, run on the server (web/suite.py), plus recorded agent outcome replays (sample data). */
+/* Tests: the guardrail suite, run on the server (web/suite.py), plus persisted independent outcome verification. */
 (() => {
   // Area codes come from @pytest.mark.area in tests/control_layer; a code missing here is listed under its own name.
   const AREAS = [
@@ -79,55 +79,74 @@
   }
   $('#runSuite').onclick = () => refresh(true);
 
-  /* Agent outcome replays */
-  const ok = 'PASS';
-  const SCEN = [
-    { title: 'Approved client, wrong name saved', sub: 'Agent claims success; saved record differs', verdict: 'FAILED POSTCONDITIONS',
-      reason: 'The agent reported success, but the saved legal name does not match the approval. Detected after the write, not prevented.',
-      steps: [['Session opened for application APP-0007', 'task contract pinned', ok], ['Agent reads APP-0007', 'in scope', ok],
-        ['Agent proposes create_client with approved terms', 'pre-action gate ONB-07', ok], ['Writer saves client record (corrupted-writer fixture CW-01)', 'write acknowledged', ok],
-        ['Agent reports "Client onboarded successfully"', 'self-report, not trusted', 'NOTED'], ['Verifier reads saved state', 'ONB-P2 legal identity', 'FAIL']],
-      evidence: [['Legal name', 'Nowak Handel Sp. z o.o.', 'Nowak Handel S.A.', 'FAIL'], ['Tax ID', '***-***-12-34', '***-***-12-34', ok], ['Status', 'ACTIVE', 'ACTIVE', ok]] },
-    { title: 'Two agents onboard the same client', sub: 'Concurrent writes, one approval', verdict: 'VERIFIED SUCCESS',
-      reason: 'Both agents reported success. The duplicate write was rejected and exactly one record exists.',
-      steps: [['Agents A and B open sessions for APP-0011', 'task contracts pinned', ok], ['Both propose create_client within 40 ms', 'atomic reservation', ok],
-        ['Agent B write rejected as duplicate', 'idempotency key used', ok], ['Verifier counts saved records', 'ONB-P1 one client per approval', ok]],
-      evidence: [['Records for APP-0011', '1', '1', ok]] },
-    { title: 'Agent opens someone else’s file', sub: 'Out-of-scope read, evidence missing', verdict: 'VERIFICATION INCOMPLETE',
-      reason: 'The read was blocked, but the access-log snapshot was unavailable, so the check reports incomplete instead of claiming success.',
-      steps: [['Session opened for APP-0015', 'task contract pinned', ok], ['Agent requests APP-0009', 'out of scope', 'BLOCK'],
-        ['Verifier reads access log', 'ONB-P4 no out-of-scope reads', 'INCOMPLETE']],
-      evidence: [['Reads of APP-0009', '0', 'unavailable', 'INCOMPLETE']] },
-  ];
-  const result = r => r === ok || r === 'NOTED' ? el('span', 'faint', r.toLowerCase()) : badge(r);
-  let replaying = false;
-  async function replay(i) {
-    if (replaying) return; replaying = true;
-    const s = SCEN[i];
-    $$('#scenarios button').forEach((b, j) => b.setAttribute('aria-pressed', j === i));
-    $('#scenOut').hidden = false; $('#sVerdict').hidden = true;
-    const ev = $('#evidence'), tl = $('#timeline'); ev.textContent = ''; tl.textContent = '';
-    for (const [act, check, r] of s.steps) {
-      await sleep(160);
-      const li = el('li', 'reveal'); li.append(el('span', null, act), result(r), el('span', 'check', check)); tl.append(li);
+  /* Persisted outcome checks. A session without verification is never marked successful. */
+  let outcomes = [], selectedSession = null, selection = 0, outcomeLoading = false, outcomeCursor = null;
+  const CHECK = { PASS: 'Verified', FAIL: 'Failed', INCOMPLETE: 'Evidence incomplete' };
+  function renderOutcomes(note) {
+    const list = $('#scenarios');
+    list.replaceChildren(...outcomes.map(s => {
+      const li = el('li'), b = el('button'); b.type = 'button';
+      const t = el('span', null, `${s.case_id || 'No case'} · ${s.agent_id || 'Unknown agent'}`);
+      t.append(el('span', 'sub', s.session_id));
+      b.append(t, badge(s.verification_status ? code(s.verification_status) : 'NOT VERIFIED'));
+      b.setAttribute('aria-pressed', s.session_id === selectedSession);
+      b.onclick = () => openOutcome(s.session_id);
+      li.append(b); return li;
+    }));
+    if (note) list.append(el('li', 'cap muted', note));
+    else if (!outcomes.length) list.append(el('li', 'cap muted', 'No recorded sessions yet. Run a session to see its verification checks here.'));
+    if (outcomeCursor) {
+      const li = el('li'), more = el('button', 'btn ghost', 'Load more sessions'); more.type = 'button';
+      more.onclick = () => loadOutcomes(true); more.disabled = outcomeLoading; li.append(more); list.append(li);
     }
-    for (const [f, a, p, r] of s.evidence) {
-      const tr = el('tr', 'reveal' + (r === 'FAIL' ? ' bad' : ''));
-      const c = el('td'); c.append(result(r));
-      tr.append(el('td', null, f), el('td', 'mono cap', a), el('td', 'mono cap', p), c); ev.append(tr);
-    }
-    const v = $('#sVerdict'); v.className = 'verdict in ' + TONE[s.verdict]; v.hidden = false;
-    $('#sWord').textContent = s.verdict; $('#sReason').textContent = s.reason;
-    replaying = false;
   }
-  SCEN.forEach((s, i) => {
-    const li = el('li'), b = el('button'); b.type = 'button';
-    const t = el('span', null, s.title); t.append(el('span', 'sub', s.sub));
-    b.append(t, badge(s.verdict)); b.setAttribute('aria-pressed', 'false');
-    b.onclick = () => replay(i);
-    li.append(b); $('#scenarios').append(li);
-  });
+  async function openOutcome(id) {
+    selectedSession = id; const version = ++selection;
+    renderOutcomes(); $('#scenOut').hidden = false;
+    const verdict = $('#sVerdict'); verdict.hidden = false; verdict.className = 'verdict';
+    $('#sWord').textContent = 'Loading verification…'; $('#sReason').textContent = id;
+    $('#evidence').replaceChildren(); $('#timeline').replaceChildren();
+    try {
+      const v = await App.read(`/sessions/${encodeURIComponent(id)}/verification`);
+      if (version !== selection) return;
+      const checks = v.checks || [], word = v.verification_status ? code(v.verification_status) : 'NOT VERIFIED';
+      verdict.className = 'verdict in ' + (TONE[word] || 'neutral');
+      $('#sWord').textContent = word;
+      const passed = checks.filter(c => c.status === 'PASS').length;
+      $('#sReason').textContent = v.verification_status
+        ? `${passed} of ${checks.length} independent checks passed${v.verified_at ? ' · ' + fmtTime(new Date(v.verified_at)) : ''}.`
+        : 'No independent verification has been recorded for this session.';
+      $('#evidence').replaceChildren(...checks.map(c => {
+        const tr = el('tr', c.status === 'FAIL' ? 'bad' : '');
+        const status = el('td'); status.append(badge(c.status));
+        tr.append(el('td', 'mono cap', c.id), el('td', 'cap', c.evidence_source || '—'), el('td', 'cap', c.detail || '—'), status);
+        return tr;
+      }));
+      $('#timeline').replaceChildren(...checks.map(c => {
+        const li = el('li'); li.append(el('span', 'mono', c.id), badge(c.status), el('span', 'check', CHECK[c.status] || c.status)); return li;
+      }));
+    } catch (e) {
+      if (version !== selection) return;
+      $('#sWord').textContent = 'Verification unavailable'; $('#sReason').textContent = e.message;
+      verdict.className = 'verdict block';
+    }
+  }
+  async function loadOutcomes(more = false) {
+    if (outcomeLoading) return;
+    outcomeLoading = true;
+    let note;
+    if (!more) renderOutcomes('Loading recorded sessions…');
+    try {
+      const query = more && outcomeCursor ? '&cursor=' + encodeURIComponent(outcomeCursor) : '';
+      const page = await App.read('/sessions?limit=50' + query);
+      outcomes = more ? [...outcomes, ...page.items.filter(s => !outcomes.some(old => old.session_id === s.session_id))] : page.items;
+      outcomeCursor = page.next_cursor;
+      renderOutcomes();
+      if (!selectedSession && outcomes.length) await openOutcome(outcomes[0].session_id);
+    } catch (e) { note = `Recorded outcomes unavailable: ${e.message}`; }
+    finally { outcomeLoading = false; renderOutcomes(note); }
+  }
 
-  render();
-  App.on('tab', t => { if (t !== 'tests') return; refresh(); if ($('#scenOut').hidden) replay(0); });
+  render(); renderOutcomes();
+  App.on('tab', t => { if (t === 'tests') { refresh(); loadOutcomes(); } });
 })();

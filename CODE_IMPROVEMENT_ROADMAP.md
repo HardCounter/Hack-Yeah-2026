@@ -4,7 +4,7 @@
 **Date:** 2026-10-05  
 **Context:** Comprehensive gap analysis and alignment review between architectural specifications, design documents, and the active codebase.
 
-This document catalogs all capabilities, features, safety mechanisms, and architectural enhancements specified across the project's documentation (`docs/`) that are **not yet implemented in the codebase**. Items are organized by system plane and prioritized to guide future engineering sprints.
+This document catalogs all capabilities, features, safety mechanisms, and architectural enhancements specified across the project's documentation (`docs/`) including remaining proposals and integration items completed in the codebase. Entries marked **Completed** describe shipped behavior; unmarked proposals remain future work. Items are organized by system plane and prioritized to guide future engineering sprints.
 
 ---
 
@@ -12,17 +12,17 @@ This document catalogs all capabilities, features, safety mechanisms, and archit
 
 | Priority | Plane | Feature / Enhancement | Target Documentation | Primary Benefit |
 |---|---|---|---|---|
-| **P0** | **Consume** | Fix `trajectory-risk` document ID false positive (`DOC-xxxx`) | `docs/decision-trace.md:162`, `tests/test_decisions_demo.py` | Eliminates false high-risk escalations on clean onboarding runs |
-| **P0** | **Scripts** | Fix broken target paths and missing cases in `scripts/test.sh` | `scripts/test.sh:27-47` | Restores developer test target execution (`intercept`, `persistence`, `controls`) |
-| **P0** | **Web / API** | Batch session trajectory fetching to resolve N+1 polling storm | `GAP_ANALYSIS_FRONTEND_BACKEND.md:123` | Prevents SQLite lock timeouts during concurrent dashboard views |
+| **P0** | **Consume** | **Completed:** Fix `trajectory-risk` document ID false positive (`DOC-xxxx`) | `docs/decision-trace.md:162`, `tests/test_decisions_demo.py` | Eliminates false high-risk escalations on clean onboarding runs |
+| **P0** | **Scripts** | **Completed:** Fix broken target paths and missing cases in `scripts/test.sh` | `scripts/test.sh:27-47` | Restores developer test target execution (`intercept`, `persistence`, `controls`) |
+| **P0** | **Web / API** | **Completed:** Batch session trajectory fetching to resolve N+1 polling storm | `docs/rest.md` | Prevents SQLite lock timeouts during concurrent dashboard views |
 | **P1** | **Intercept** | Interactive Human-in-the-Loop review queue & approval API | `docs/application-documentation.md:601`, `docs/architecture-contract.md:97` | Enables human supervisor approval instead of immediate fail-close blocks |
-| **P1** | **Persistence** | Decorate trajectory steps with server-side risk factors & impact ($C$) | `docs/rest.md:5.1`, `GAP_ANALYSIS_FRONTEND_BACKEND.md:§3.3` | Eliminates client-side step impact fallback in frontend JavaScript; ensures contract parity |
+| **P1** | **Persistence** | **Completed:** Decorate trajectory steps with server-side risk factors & impact ($C$) | `docs/rest.md` §5.1, §5.5 | Eliminates client-side step impact fallback in frontend JavaScript; ensures contract parity |
 | **P1** | **Consume** | Implement dedicated `usage-accountant` and `loop-detector` plugins | `docs/consumer-plane.md:724-725` | Dedicated supervision of token/cost burn and tool recursion |
-| **P1** | **Web / API** | Standardize error response envelope across `web/sessions.py` | `docs/rest.md:2.2`, `GAP_ANALYSIS_FRONTEND_BACKEND.md:147` | Prevents undefined error messages in operator dashboard |
+| **P1** | **Web / API** | **Completed:** Standardize error response envelope across `web/sessions.py` | `docs/rest.md` §2.2 | Prevents undefined error messages in operator dashboard |
 | **P1** | **Simulation** | Expand `opencode_runner.py` range to include `APP-0016` & `APP-0017` | `simulation/opencode_runner.py:223`, `docs/mock-data-spec.md:37` | Enables evaluation of secret key exfiltration and semantic injection defenses |
 | **P2** | **Persistence** | Automated background maintenance scheduler & comprehensive pruning | `docs/persistence.md:120`, `persistence/settings.py:28` | Bounds disk usage for long-lived installations across all governance tables |
 | **P2** | **Intercept** | Live model financial spend tracking (`budget.cost_usd`) | `docs/rest.md:1031`, `intercept/governed/prompts.py:284` | Allows non-zero USD dollar limits without failing closed |
-| **P2** | **Web** | Authenticate configuration mutation endpoints (`/configs`, `/config-selection`) | `GAP_ANALYSIS_FRONTEND_BACKEND.md:50`, `docs/application-documentation.md:600` | Hardens runtime against unauthorized policy tampering |
+| **P2** | **Web** | **Completed:** Authenticate configuration mutation endpoints (`/configs`, `/config-selection`) | `docs/rest.md`, `docs/application-documentation.md:600` | Hardens runtime against unauthorized policy tampering |
 | **P2** | **Consume** | Outbox sink ledger (`consumer_outbox`) for asynchronous sink delivery | `docs/consumer-plane.md:712` | Decouples plugin execution from downstream sink availability |
 | **P2** | **LLM** | Native Anthropic and Gemini provider clients in `llm/factory.py` | `docs/system-architecture.md:42`, `docs/probabilistic-evaluation.md:340` | Enables direct deployment against Claude and Gemini without OpenAI shims |
 | **P3** | **Consume** | CUSUM process conformance change detector (Markov model) | `docs/probabilistic-evaluation.md:§2` | Statistical sequence anomaly detection on agent execution traces |
@@ -105,16 +105,12 @@ This document catalogs all capabilities, features, safety mechanisms, and archit
   - Extend retention pruning to `plugin_decisions`, `consumer_findings`, `verification_results`, `task_contracts`, `policy_signals`, and `agent_content`.
 
 ### 3.3 Server-Side Persisted Aggregated Metrics
-- **Documented Reference:** `docs/rest.md` §4.11, §4.12, §4.20; `GAP_ANALYSIS_FRONTEND_BACKEND.md` §3.2.
-- **Current State:** `/api/v1/metrics/usage`, `/api/v1/metrics/security`, and `/api/v1/metrics/performance` return 501 `not_implemented` in normal production mode.
-- **Target Implementation:**
-  - Implement SQLite aggregation queries in `persistence/query_usage.py` computing p50/p95 latency, total tool calls, block rates, and token burn across all recorded session stores.
+- **Completed:** `/api/v1/metrics/usage`, `/metrics/security` and `/metrics/performance` scan persisted evidence across sessions in normal mode. Recorded control durations feed latency percentiles; absent measurements and pricing remain unavailable.
+- **Implementation:** `persistence/query_dashboard.py`; contracts and remaining limits are in `docs/rest.md` §4.11, §4.12, §4.20 and §8.
 
 ### 3.4 Persisted Cross-Session Detections & Catalog
-- **Documented Reference:** `docs/rest.md` §4.7, §4.8, §4.9.
-- **Current State:** `/api/v1/detections` and `/api/v1/catalog/detections` return 501 `not_implemented`.
-- **Target Implementation:**
-  - Implement cross-session detection indexing and catalog lookups backed by `config/detection-catalog.yaml`.
+- **Completed:** Detection lists, lookup and the catalog query persisted gateway, finding, alert and verification evidence, with filters and pagination.
+- **Remaining:** The catalog includes observed names; curated descriptions and OWASP mappings remain future work. See `docs/rest.md` §4.7–4.9 and §8.
 
 ### 3.5 Automated Content Store Dereferencing
 - **Documented Reference:** `docs/consumer-plane-event-envelope.md` lines 98–100.
@@ -127,10 +123,8 @@ This document catalogs all capabilities, features, safety mechanisms, and archit
 ## 4. Layer 3: Consume Plane, Supervision & Verification
 
 ### 4.1 Trajectory Risk Scope Filter (Resolving Known False Positive)
-- **Documented Reference:** `docs/decision-trace.md` lines 162–166; `tests/test_decisions_demo.py`.
-- **Current State:** Pinned by strict `xfail` test `test_clean_run_has_no_out_of_scope_signal`. The regex `/^[A-Z]{3}-\d{4}$/` flags the application's legitimate documents (`DOC-0001` to `DOC-0047`) as out-of-scope targets because they match the ID format but are not in `contract.target_ids`.
-- **Target Implementation:**
-  - Distinguish application entity target IDs (`APP-xxxx`, `CLI-xxxx`) from associated document references (`DOC-xxxx`), preventing document reads from inflating the session's risk score. Remove the `xfail` marker.
+- **Completed:** The gateway attaches trusted document ownership from the pinned task baseline. The risk model accepts owned documents and preserves out-of-scope signals for foreign document attempts; caller-supplied ownership cannot bypass the check.
+- **Verification:** `test_clean_run_has_no_out_of_scope_signal` now passes without `xfail`; gateway tests cover forged ownership. See `docs/trajectory-risk-model.md`.
 
 ### 4.2 Built-In Detection Plugins (from `docs/consumer-plane.md` §10)
 - [ ] **`usage-accountant`:** Dedicated monitor tracking burn rate against `contract.budget`, proposing `REQUIRE_APPROVAL_FOR` at 80% and `HALT_SESSION` at 100%.
@@ -171,35 +165,23 @@ This document catalogs all capabilities, features, safety mechanisms, and archit
 ## 5. Web Dashboard & Operator UI
 
 ### 5.1 Batch Session Trajectory Loading (Mitigate N+1 Polling Storm)
-- **Documented Reference:** `GAP_ANALYSIS_FRONTEND_BACKEND.md` §2 item 4, §3.4.
-- **Current State:** `static/js/riskmap.js` fires 3 HTTP requests per session every 30 seconds (151 requests for 50 sessions), risking thread exhaustion and SQLite busy timeouts.
-- **Target Implementation:**
-  - Add backend endpoint `GET /api/v1/sessions/summary?limit=25` returning session records with pre-aggregated step counts, worst-step risk levels, and decision summaries in a single query.
-  - Update `static/js/riskmap.js` to consume summaries, loading full trajectories only upon user drill-down.
+- **Completed:** `GET /api/v1/sessions?limit=50` includes backend risk, verification and intervention summaries. Risk-map polling performs one summary request; trajectory and decision pages load only on drill-down with explicit pagination.
+- **Implementation:** `persistence/query.py`, `static/js/riskmap.js`; frontend tests cover 50 sessions without trajectory request fanout.
 
 ### 5.2 Server-Side Risk Score Projection
-- **Documented Reference:** `GAP_ANALYSIS_FRONTEND_BACKEND.md` §3.3; `docs/rest.md` §5.1.
-- **Current State:** Backend returns `expected_loss: null` and `failure_probability: null`; frontend JavaScript re-implements the Bayesian noisy-OR algorithm in the browser.
-- **Target Implementation:**
-  - Extract `expected_loss` and risk probabilities from stored `consumer_findings` where `plugin == 'trajectory-risk'` in `persistence/query.py`.
-  - Update `riskmap.js` to render backend values directly.
+- **Completed:** Session and step risk are projected from persisted `trajectory-risk` plugin decisions, including probability, consequence, expected loss and signals. The browser renders these values directly; historical evidence without recorded factors remains unavailable.
+- **Reference:** `docs/rest.md` §5.1 and §5.5.
 
 ### 5.3 Live Sandbox Outcome Replays in Tests Tab
-- **Documented Reference:** `GAP_ANALYSIS_FRONTEND_BACKEND.md` §3.1; `docs/application-documentation.md` line 603.
-- **Current State:** Guardrail test suite runs real pytest cases, but the bottom 3 outcome replay cards (`Approved client, wrong name saved`, etc.) are canned JavaScript timers.
-- **Target Implementation:**
-  - Implement `POST /api/v1/scenario/replay` running seeded bank state validations against `contracts/verification.py` and updating the cards with real status badges (`VERIFIED_SUCCESS`, `FAILED_POSTCONDITIONS`).
+- **Completed integration:** Outcome cards load recorded sessions and `/api/v1/sessions/{id}/verification`, displaying actual verifier checks and verdicts. Empty evidence is not verified; canned timer scenarios were removed.
+- **Remaining feature proposal:** A separate on-demand scenario replay endpoint is still planned. The existing suite API executes real control-layer tests.
 
 ### 5.4 Unified Multi-Service Health Badge
-- **Documented Reference:** `GAP_ANALYSIS_FRONTEND_BACKEND.md` §2 item 6.
-- **Current State:** Header checks `/healthz` on port 8000 and displays "Gateway online" even if `api:8790` is crashed.
-- **Target Implementation:**
-  - Update `static/js/app.js` to query both `/healthz` and `/api/v1/health`, displaying a "Degraded" status if the read store is offline.
+- **Completed:** The header checks both `/healthz` and `/api/v1/health`, with bounded timeouts and HTTP-status checks, and displays degraded status when evidence reads are unavailable.
 
 ### 5.5 Authentication & CSRF on Configuration Endpoints
-- **Documented Reference:** `GAP_ANALYSIS_FRONTEND_BACKEND.md` §2 item 7; `docs/rest.md` §7.
-- **Target Implementation:**
-  - Protect `PUT /api/v1/configs/{name}` and `PUT /api/v1/config-selection` with Bearer token authentication (`ADMIN_SECRET` / `INTERCEPT_ADMIN_TOKEN`) or same-origin CSRF tokens.
+- **Completed:** Config PUTs require `CONFIG_ADMIN_TOKEN` through `X-Admin-Token` or Bearer, validate browser origin/fetch metadata, and enforce a request budget. Empty server secrets disable writes. The evidence API is read-only by default.
+- **Dashboard:** The administrator token is entered inline and kept in memory; saved drafts and selected immutable snapshots are shown separately. See `docs/rest.md` §4.18–4.19 and §7.
 
 ### 5.6 Full Form Controls in Config Tab UI
 - **Documented Reference:** `static/html/index.html` lines 62–117; `configuration/models.py`.
@@ -207,19 +189,16 @@ This document catalogs all capabilities, features, safety mechanisms, and archit
   - Add UI form inputs in the Config tab for `velocity_guard` (`window_s`, `max_calls`), `pattern_match` regexes, `domain_blocklist` domains, and `admin_tools`.
 
 ### 5.7 Active Process Reaper for OpenCode Wrapper
-- **Documented Reference:** `GAP_ANALYSIS_FRONTEND_BACKEND.md` §2 item 8, §3 item 9.
-- **Target Implementation:**
-  - Add an asynchronous background reaper in `web/sessions.py` using `os.killpg` on process groups to terminate abandoned or timed-out OpenCode processes.
+- **Completed:** A background task expires idle sessions, and process groups are terminated/reaped on startup failure, cancellation, timeout and shutdown. Session creation is serialized against capacity checks; replies are bounded.
+- **Reference:** `web/sessions.py`, `tests/support/test_web_sessions.py`, `docs/dashboard/deployment.md`.
 
 ---
 
 ## 6. Test Harness & Scripts
 
 ### 6.1 `scripts/test.sh` Target Implementation & Path Updates
-- **Documented Reference:** `scripts/test.sh` lines 6–47; `scripts/README.md`.
-- **Target Implementation:**
-  - Add missing `controls)` and `support)` switch cases in `scripts/test.sh`.
-  - Update outdated target paths (`tests/test_*.py` -> `tests/support/test_*.py`, `tests/consume_plane` -> `tests/support/consume_plane`).
+- **Completed:** `controls` and `support` targets exist, moved test paths are corrected, and `all` runs Python, adapter and frontend suites. CI installs Node and runs the dashboard/adapter tests.
+- **Reference:** `scripts/README.md`. The Python suite also launches an isolated live dashboard integration smoke with governed SQLite evidence, without provider calls.
 
 ### 6.2 Corrupted-Writer Verification Scenario Runner (`CW-01` to `CW-06`)
 - **Documented Reference:** `docs/use-cases.md` lines 255–266.

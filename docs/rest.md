@@ -1,21 +1,26 @@
 # Dashboard REST API and configuration management
 
-**Status (2026-10-04): core persisted evidence reads and governance panels implemented.** Health,
-storage stats, session list/detail/usage, session verification, action list/drill-down, intervention
-history, session trajectories, count/token timeseries and audit export use real read-only SQLite
-queries in `persistence/query.py` and `persistence/query_usage.py`. Tests include
+**Status (2026-10-05): persisted dashboard reads and configuration management implemented.** Health,
+storage stats, sessions, verification, actions, interventions, session trajectories, detections,
+catalog names, aggregate overviews, decision traces and exports use real read-only SQLite queries
+in `persistence/query.py`, `persistence/query_usage.py` and `persistence/query_dashboard.py`. Tests include
 `tests/test_http_api_persisted.py`, `tests/test_http_api_governance.py`,
 `tests/test_http_api_lists.py` and `tests/test_query_usage.py`.
-Remaining evidence endpoints return **501 `not_implemented`**, not fabricated data, in normal mode.
+Persisted detection lists/details/catalog and usage, security and performance overviews now read
+real evidence. The timeseries metrics `detections`, `cost_usd` and
+`interception_overhead_ms_p95` still return **501 `not_implemented`**, not fabricated data.
 Frontend examples require explicit `--example-mode` / `create_app(example_mode=True)` and carry
 `X-Data-Source: example`; successful normal reads carry `X-Data-Source: persisted`.
 Example-contract tests remain in `tests/support/test_http_api_stub.py`.
+The optional `tests/frontend/live-dashboard-smoke.mjs` runs against a local synthetic server and
+real SQLite evidence, exercising dashboard rendering, lazy trajectory loading, verification,
+authenticated save-without-activate, selection, and streamed export (two persisted sessions and
+nine audit rows in the current fixture).
 **Configuration management is implemented, not a stub:** the shared `configuration/` router
 provides updates and backend selection, backed by durable JSON state. Tests:
 `tests/support/test_configuration_api.py`, `tests/support/test_configuration_intercept.py`, `tests/support/test_web.py`.
-This document is the contract the implementation and the dashboard build against. Where the persistence layer cannot yet supply a
-field, [section 8](#8-required-persistence-changes) lists the change. Until that change lands, the
-field is returned as `null`.
+This document is the contract the implementation and the dashboard build against. Unsupported
+cross-scope trajectory queries still return 501; see the current persisted-read scope below.
 
 ## 1. Purpose and placement
 
@@ -38,7 +43,9 @@ The read API is the **read side of Layer 2**. It runs as its own process, opens 
 **read-only** (`file:<path>?mode=ro`, so WAL readers do not block the writer), and never imports the
 write path (`PersistenceEngine`, `GovernedPersistence.append`, consumer registration). It cannot
 change evidence or approvals. The separate configuration-management router changes policy for
-**new sessions only**; it never writes evidence SQL or mutates existing Task Contracts.
+**new sessions only**; it never writes evidence SQL or mutates existing Task Contracts. In Compose,
+both API processes use `CONFIG_DIR=/data/config`. The evidence CLI always disables configuration writes; Caddy routes configuration management to
+the web app, which authenticates writes.
 The write API in [persistence.md](persistence.md) is
 still not exposed over HTTP.
 
@@ -65,16 +72,16 @@ scripts/run_rest_api.sh --evidence-dir <bank-runs-dir> --cors-origin http://loca
 scripts/run_rest_api.sh --example-mode --cors-origin http://localhost:5173
 # fresh actual synthetic gateway evidence, no OpenCode/model required
 scripts/run_rest_demo.sh --port 8790
-# directly
+# directly; the evidence CLI always disables configuration writes
 uv run python -m persistence.http_api --evidence-dir <bank-runs dir> --config-dir <operator-config-dir> --port 8790
 ```
 
 **One evidence store per session.** The governed runtime writes
 `<runs-dir>/<session_id>.evidence.db` when a session binds, so the API takes the directory
 (`--evidence-dir`), not one database file. Each read opens the matching store read-only.
-The implemented `/sessions` and `/system/stats` scan matching stores in the directory.
-Cross-session detections and aggregate usage/security/performance metrics remain deferred;
-bounded cross-session action/intervention lists and count/token timeseries are implemented.
+The implemented `/sessions`, `/system/stats`, detections and aggregate overviews scan matching
+stores in the directory. Cross-session aggregates are implemented; cost remains unavailable, and
+three optional timeseries metrics still return 501 (§8).
 The live pipeline passes its `bank-runs/` directory. See
 [scripts/README.md](../scripts/README.md) for the process layout and the env files.
 
@@ -84,7 +91,7 @@ The OpenAPI schema is served at `/api/v1/openapi.json`, with an interactive UI a
 The gateway endpoints in [application-documentation.md §5.4](application-documentation.md#54-gateway-dashboard-api-contract-for-judge-ui)
 (`/api/v1/inspect`, `/api/v1/events/stream`, `/api/v1/policy`, ...) belong to Layer 1 and are not
 part of this API. Both use the `/api/v1` prefix and do not share a path. The dashboard reads live
-decisions from the gateway's SSE stream and history from this API.
+decisions and history by polling this API; the wrapper polls its separate session-event endpoint.
 
 ## 2. Conventions
 
@@ -92,7 +99,7 @@ decisions from the gateway's SSE stream and history from this API.
 |---|---|
 | Base path | `/api/v1`. Evidence routes remain `GET` only (plus `HEAD`). Two management exceptions permit `PUT /configs/{name}` and `PUT /config-selection`. Other writes return `405`. Allowed-origin CORS preflight (`OPTIONS`) carries no data. |
 | Format | `application/json; charset=utf-8`. Exports use `application/x-ndjson`. |
-| Auth | Evidence/config reads remain unauthenticated. The two config PUTs are unauthenticated too: whoever can reach the server can change and select configs. Default bind is loopback; `--allow-remote` is not authorization. See §7. |
+| Auth | Evidence and config reads are unauthenticated. Web config PUTs require `X-Admin-Token` or `Authorization: Bearer` matching `CONFIG_ADMIN_TOKEN`; missing or wrong tokens return 401. With no server token, writes are disabled and return 503. The evidence CLI always disables config writes. See §7. |
 | Binding | Default `127.0.0.1`. Binding elsewhere requires `--allow-remote`. This port is never reachable from the agent's tool path. |
 | CORS | Allowed only for origins listed in `--cors-origin`. No wildcard. |
 | Timestamps | ISO 8601 UTC with `Z`, for example `2026-10-03T15:42:10.500Z`. Query parameters accept any ISO 8601 with a timezone. |
@@ -147,15 +154,24 @@ Configuration-specific errors (same envelope; fixed messages, no submitted value
 | 409 | `config_revision_conflict` | `configuration revision changed` | Requested selection revision differs from saved revision |
 | 413 | `config_too_large` | `configuration request exceeds size limit` | Request body exceeds 64,000 bytes |
 | 415 | `unsupported_media_type` | `application/json required` | Missing/non-JSON Content-Type |
+| 401 | `admin_token_required` | `a valid admin token is required to change configuration` | Missing or incorrect admin token |
+| 403 | `origin_not_allowed` | `browser origin is not allowed to change configuration` | Browser origin is not in `CONFIG_ALLOWED_ORIGINS` |
+| 429 | `rate_limit_exceeded` | `configuration write rate limit exceeded; retry in a minute` | Write limit reached; response includes `Retry-After: 60` |
 | 422 | `invalid_config` | `invalid configuration` | Invalid model, unknown fields, invalid constraints, path/body name mismatch |
-| 503 | `config_unavailable` | `configuration storage unavailable` | Missing/corrupt defaults, corrupt persisted state, lock timeout (5 s), or storage failure |
+| 503 | `config_unavailable`, `config_writes_disabled` | Configuration storage unavailable or writes disabled | Missing/corrupt state, lock timeout, storage failure, or no server admin token |
 
 Management errors have `details: {}` or `details: {"fields": ["budget.tokens"]}`.
 Only bounded, sanitized model paths are returned. Authentication precedes body processing.
-The current frontend's browser-local “Make active” action does not call the selection endpoint;
-frontend integration must use these authenticated PUTs (preferably through its trusted proxy).
+The dashboard prompts the operator for the admin token and holds it in memory for authenticated
+configuration PUTs. It does not persist the token in browser storage. Selection changes use the
+authenticated endpoint and apply to new sessions only.
 
 `message` is a fixed string per code. Exception text is never returned.
+
+Compose exposes the evidence API on host loopback port 8790 by default for local frontend
+development. `API_PORT` changes that host port, and `DEV_CORS_ORIGINS` is a space-separated list
+passed as repeatable `--cors-origin` values. Caddy remains the public API entry point; the evidence
+API's host binding is `127.0.0.1` only.
 
 ## 3. Endpoint summary
 
@@ -179,26 +195,24 @@ frontend integration must use these authenticated PUTs (preferably through its t
 | 16 | `GET /api/v1/system/stats` | `StoreStats` |
 | 17 | `GET /api/v1/export/sessions/{session_id}` | NDJSON audit export |
 | 18 | `GET /api/v1/configs` | `ConfigSummary[]` (real backend state) |
-| 19 | `GET /api/v1/configs/{name}` | `PolicyConfig`; quoted revision in `ETag` |
+| 19 | `GET /api/v1/configs/{name}` | Saved `PolicyConfig`, or selected snapshot with `?view=active`; revision in `ETag` |
 | 20 | `PUT /api/v1/configs/{name}` | `ConfigUpdateResult` |
 | 21 | `PUT /api/v1/config-selection` | `ConfigSelectionResult` |
 | 22 | `GET /api/v1/metrics/performance` | `PerformanceOverview` |
 | 23 | `GET /api/v1/sessions/{session_id}/decisions` | `Page<PluginDecision>` plus `summary` |
 | 24 | `GET /api/v1/decisions/{decision_id}` | `PluginDecision` |
+| 25 | `GET /api/v1/export/actions` | Streaming NDJSON actions export with filters and integrity footer |
 
 Priority for the hackathon build: **P0** is 1, 2, 4, 6, 7, 10 and 12. **P1** is the rest. Endpoint 17
 covers the "exportable audit logs" deliverable, so build it as soon as P0 works.
 
 ### Current persisted-read scope
 
-Implemented: endpoints 1, 2, 3, 5, 6, 10, 14, 15, 16, 17 and **session scope only** of endpoint 4.
-Endpoint 13 supports `actions`, `blocked`, `redacted`, `input_tokens` and `output_tokens`;
-its other metrics return 501. Configuration endpoints 18–21 remain real backend operations.
-Endpoints 7–9, 11–12 and 22 return 501 in normal mode; run/case/agent trajectories also return 501. Future descriptions below
-Implemented: endpoints 1, 2, 3, 6, 15, 16, 17, 23, 24 and **session scope only** of endpoint 4.
-Configuration endpoints 18–21 remain real backend operations. Endpoints 5, 7–14 and 22 return
-501 in normal mode; run/case/agent trajectories also return 501. Future descriptions below
-remain target contracts, not claims of implemented aggregation. See §11 for current limits and demo.
+Implemented: endpoints 1–25, except that endpoint 4 currently supports **session scope only**.
+Endpoint 13 supports `actions`, `blocked`, `redacted`, `input_tokens` and `output_tokens`; the
+`detections`, `cost_usd` and `interception_overhead_ms_p95` series remain 501. Usage, security and
+performance overview endpoints are persisted queries. Aggregate cost remains unavailable and is
+returned as `null` with `cost_source: "unavailable"`. See §11 for current limits and demo.
 
 ## 4. Endpoints
 
@@ -316,9 +330,8 @@ Returns one `DetectionEvent` (§5.6), or `404`.
 
 ### 4.9 `GET /catalog/detections`
 
-The static, versioned catalog that turns `name` and `reason` codes into readable text and OWASP
-mappings. It is loaded from `config/detection-catalog.yaml` (planned) and hot-reloaded on change
-the same way as the policy file. Response: `{ "catalog_version": "c3", "entries": [DetectionCatalogEntry] }`.
+Returns observed persisted detection names with `catalog_version: "persisted-v1"`. It does not yet
+provide curated titles, descriptions, reason text or OWASP mappings.
 
 ### 4.10 `GET /sessions/{session_id}/usage`
 
@@ -332,11 +345,11 @@ Aggregated usage for cost and budget panels.
 |---|---|---|---|
 | `group_by` | `agent`, `session`, `case`, `model`, `tool`, `day` | `agent` | One `UsageBucket` per group |
 | `agent_id`, `case_id` | string | – | Filter |
-| `since`, `until` | timestamp | last 24 h | Window |
+| `since`, `until` | timestamp | unbounded | Optional window |
 | `limit` | int | 100 | Maximum number of buckets, ordered by `cost_usd`, then `total_tokens` |
 
-Response: `UsageReport`. With `group_by=day`, each bucket also carries the daily budget once one
-is configured. See §8, item 7.
+Response: `UsageReport`. Cost is currently `null` (`cost_source: "unavailable"`) and daily budget
+fields are not currently reported.
 
 ### 4.12 `GET /metrics/security`
 
@@ -344,7 +357,7 @@ The posture headline: what was inspected, what was stopped, and what was found.
 
 | Query | Default | Meaning |
 |---|---|---|
-| `since`, `until` | last 24 h | Window |
+| `since`, `until` | unbounded | Optional window |
 | `agent_id`, `session_id` | – | Filter |
 | `top` | 10 | Length of the `top_detections` and `top_blocked_tools` lists |
 
@@ -362,9 +375,9 @@ Response: `SecurityOverview` (§5.10).
 At most 1,000 points are returned. A wider window returns `400 bad_request`. Buckets with no data
 are returned with `value: 0`, or with `null` for the percentile metric, so the chart has no gaps.
 
-**Persisted support:** only `actions`, `blocked`, `redacted`, `input_tokens` and `output_tokens`
-are implemented. `detections`, `cost_usd` and `interception_overhead_ms_p95` return 501 in normal
-mode. Buckets are UTC, anchored at `since`, and include a final partial bucket; the 1,000-point
+**Persisted support:** `actions`, `blocked`, `redacted`, `input_tokens` and `output_tokens` are
+implemented. `detections`, `cost_usd` and `interception_overhead_ms_p95` return 501 in normal mode.
+Buckets are UTC, anchored at `since`, and include a final partial bucket; the 1,000-point
 limit uses ceiling division. Action counts exclude durable intents and session/approval/control
 bookkeeping. Block/redact counts use the final gateway decision, including output-blocked calls
 that consumed resources. Token charts use resolved dispatched model usage, share the session-usage
@@ -425,10 +438,20 @@ Lines are written in this order:
 6. `plugin_decision`: each `PluginDecision` of the session, oldest first
 7. `export_footer`: `{"record_type": "export_footer", "rows": N, "sha256": "<hex of all prior lines>", "exported_at": "..."}`
 
-`Content-Disposition: attachment; filename="audit-<session_id>.ndjson"`. The current export buffers
-one bounded read snapshot; it does not stream pages. It enforces the store's persisted `PersistenceSettings.max_export_rows` and
-`max_export_bytes` and fails with `413` before it sends anything. Run-scoped exports with
+`Content-Disposition: attachment; filename="audit-<session_id>.ndjson"`. This single-session
+export builds one bounded snapshot in memory and checks the store's persisted
+`PersistenceSettings.max_export_rows` and `max_export_bytes` before returning it. Quota overflow
+returns `413` before any response data is sent. The cross-store `/export/actions` endpoint below
+uses a disk-spooled file and streams after all relevant quotas have passed. Run-scoped exports with
 principal checks and retention holds remain on `AuditReader.export_jsonl`.
+
+### 4.23 `GET /export/actions`
+
+Streams action event records as NDJSON with an `export_footer` containing row count and SHA-256 of
+all preceding lines. Optional filters are comma-separated `kinds` and `decisions`, time bounds
+`since`/`until`, and exact `session_id` or `agent_id`. The export is spooled and all global and
+per-store row/byte quotas are checked before streaming. Each store is read as its own snapshot; the
+result is not a globally atomic snapshot across stores.
 
 ### 4.18 Configuration reads and `PUT /configs/{name}`
 
@@ -437,14 +460,22 @@ return `404`; invalid names return `400`. The three built-in defaults are all ed
 the backend; untracked draft files in `config/presets/` are not exposed.
 
 `GET /configs` returns `ConfigSummary[]`; `GET /configs/{name}` returns the complete saved
-`PolicyConfig`. It carries two model allowlists, both required and non-empty: `allowed_models`
+`PolicyConfig` by default. `?view=active` returns the currently selected immutable snapshot for that
+name, with its revision in the `ETag`; it returns `409 config_revision_conflict` if the name is not
+selected. This lets the UI keep the saved draft separate from the effective policy. The config
+carries two model allowlists, both required and non-empty: `allowed_models`
 (models agents may call) and `intercept.semantic_guard.allowed_models` (judge models the
-semantic guard may use; stored and validated, not enforced yet). Its `ETag` is the quoted `sha256:<64 lowercase hex digits>` revision. Reads
-return `404`/`503` for missing configs/unavailable storage.
+semantic guard may use; stored and validated, not enforced yet). The `ETag` is the quoted
+`sha256:<64 lowercase hex digits>` revision for the selected view. Reads return `404`/`503` for
+missing configs or unavailable storage.
+
+| Query | Values | Default | Meaning |
+|---|---|---|---|
+| `view` | `saved`, `active` | `saved` | Latest saved content, or the selected immutable snapshot (only for the selected config name) |
 
 `PUT /configs/{name}` takes a complete `PolicyConfig` (§5.15), **not a partial patch**.
-Its body `name` must equal the path name. The endpoint only replaces existing configs and
-needs no credential. Successful response: **200**, JSON `ConfigUpdateResult`:
+Its body `name` must equal the path name. The endpoint only replaces existing configs and requires
+the administrator token. Successful response: **200**, JSON `ConfigUpdateResult`:
 
 ```json
 {
@@ -457,8 +488,11 @@ needs no credential. Successful response: **200**, JSON `ConfigUpdateResult`:
 }
 ```
 
-Saving does **not** activate the new revision. Repeating identical normalized content preserves
-its revision and `updated_at`. Errors: **400, 404, 405, 413, 415, 422, 503** (§2.2).
+Saving does **not** activate the new revision. `ConfigSummary.revision` and the default
+`view=saved` show the latest saved draft; `ConfigSummary.active_revision` and `view=active` show
+the selected immutable snapshot new sessions will use. Repeating identical normalized content
+preserves its revision and `updated_at`. Errors: **400, 401, 403, 404, 405, 409, 413, 415, 422,
+429, 503** (§2.2).
 
 ### 4.19 `PUT /config-selection`
 
@@ -484,7 +518,7 @@ Successful response: **200**, JSON `ConfigSelectionResult`:
 Selecting the same name/revision is idempotent and preserves `selected_at`. Existing sessions
 keep their pinned config, spent budgets, approval state and Task Contract. The next trusted
 session binding loads the selected snapshot; no server restart is required. Errors:
-**400, 404, 405, 409, 413, 415, 422, 503** (§2.2). No empty success responses or `204`.
+**400, 401, 403, 405, 409, 413, 415, 422, 429, 503** (§2.2). No empty success responses or `204`.
 
 ### 4.20 `GET /metrics/performance`
 
@@ -493,32 +527,38 @@ hybrid defence's two paths.
 
 | Query | Default | Meaning |
 |---|---|---|
-| `since`, `until` | last 24 h | Window |
+| `since`, `until` | unbounded | Optional window |
 | `agent_id`, `session_id` | – | Filter |
 
 ```json
 {
   "since": "...", "until": "...",
   "actions_evaluated": 404,
+  "backend_actions_evaluated": 321,
   "interception_overhead_ms": {"p50": 1.1, "p95": 228.0, "p99": 252.0},
   "by_method": {
-    "deterministic": {"runs": 404, "skipped": 0, "p50": 0.9, "p95": 2.4, "p99": 6.1},
-    "semantic": {"runs": 148, "skipped": 24, "p50": 152.0, "p95": 234.0, "p99": 255.0}
+    "deterministic": {"runs": 404, "skipped": null, "p50": 0.9, "p95": 2.4, "p99": 6.1},
+    "semantic": {"runs": 148, "skipped": null, "p50": 152.0, "p95": 234.0, "p99": 255.0},
+    "unknown": {"runs": 4, "skipped": null, "p50": 1.3, "p95": 2.1, "p99": 2.3}
   },
   "backend_latency_ms": {"p50": 41.0, "p95": 640.0, "p99": 910.0},
-  "overhead_share": 0.22
+  "overhead_share": 0.22,
+  "backend_latency_complete": true
 }
 ```
 
-- `actions_evaluated` counts gateway-evaluated actions, as in `SecurityOverview` rates.
+- `actions_evaluated` counts gateway-evaluated actions, as in `SecurityOverview` rates;
+  `backend_actions_evaluated` counts those with an executed backend action.
 - `interception_overhead_ms` is the whole gateway time per action, semantic check included.
   `SecurityOverview.interception_overhead_ms` stays as it is.
-- `by_method` sums `auditor_decisions[].latency_ms` per action by the auditor's `Method`.
-  `runs` is the number of actions the path ran on. `semantic.skipped` counts actions where the
-  semantic check would have run but a deterministic control had already denied.
+- `by_method` sums gateway `auditor_decisions[].latency_ms` per action. Known gateway auditors map
+  to `deterministic` or `semantic`; unrecognized auditors map to `unknown`. It does not include
+  consume-plane plugin timings. `skipped` is `null` because skip counts are not persisted. The
+  separate `by_auditor` list includes both gateway and control-plane timings when recorded.
 - `backend_latency_ms` is `Usage.latency_ms`: the model or tool call itself.
-- `overhead_share` is total interception overhead divided by total overhead plus backend latency,
-  `0..1`, or `null` when the window has no executed action.
+- `backend_latency_complete` is false if any executed backend action lacks a recorded latency.
+  `overhead_share` is total interception overhead divided by total overhead plus backend latency,
+  `0..1`, or `null` when required overhead/latency samples are missing or absent.
 
 ### 4.21 `GET /sessions/{session_id}/decisions`
 
@@ -697,7 +737,8 @@ The other fields are read-time annotations.
     "usage": { "...": "Usage" }
   },
   "risk": { "level": "critical", "expected_loss": 22.77, "failure_probability": 0.95,
-            "finding_id": "fnd_3b1c...", "source": "trajectory-risk" },
+            "max_consequence": 24.0, "step_count": 8, "source": "trajectory-risk",
+            "decision_id": "dec_3b1c..." },
   "verification_status": "FAILED_POSTCONDITIONS",
   "next_cursor": null,
   "has_more": false
@@ -709,10 +750,10 @@ The other fields are read-time annotations.
 - `gaps` lists missing `seq` numbers, which can come from pruning or a filter. When `kinds` or
   `statuses` filters are active, `gaps` is empty. A client can use it to show that evidence is
   incomplete.
-- `risk` comes from the most severe `risk.trajectory_*` finding of the trajectory-risk plugin.
-  `level` is always available. `expected_loss` and `failure_probability` stay `null` until the
-  finding projection persists them (§8, item 2). If no risk finding exists, `risk` is `null`. The
-  dashboard must label the score as heuristic. See [trajectory-risk-model.md](trajectory-risk-model.md).
+- `risk` comes from the latest persisted `trajectory-risk` plugin decision. Full trajectory steps
+  and summary steps include per-step risk when those decision factors were recorded. Older evidence
+  without the factors returns null for those values. If no risk decision exists, `risk` is `null`.
+  The dashboard must label the score as heuristic. See [trajectory-risk-model.md](trajectory-risk-model.md).
 - `verification_status` is set for the `session` and `run` scopes only, and is `null` otherwise.
 
 ### 5.6 `DetectionEvent`
@@ -1085,17 +1126,19 @@ patterns requires explicitly saving/selecting them, not reseeding defaults or mu
 
 ### 5.16 Configuration results
 
-`ConfigSummary`: `{name: string, preset: true, description: string, revision: string, selected: boolean,
-requires_selection: boolean}`. `selected` marks the config named by the active selection.
-`requires_selection` is `false` only for that config at the active revision, so a selected config
-that was saved again shows `selected: true, requires_selection: true` until it is selected again.
-The dashboard reads the active config from these two fields; there is no `GET /config-selection`.
+`ConfigSummary`: `{name: string, preset: true, description: string, revision: string,
+active_revision: string | null, selected: boolean, requires_selection: boolean}`. `revision` is the
+saved content hash. `selected` marks the config name in the active selection, and `active_revision`
+is the hash of the immutable selected snapshot for that name (`null` for other config names).
+`requires_selection` is false only when the saved revision is the selected revision. After saving
+an edit to the selected config, `revision` differs from `active_revision`, so the draft is not
+mistaken for the effective policy. There is no `GET /config-selection`.
 
 `ConfigUpdateResult`:
 - `name`, `revision`: saved config identity and SHA-256 of canonical validated JSON.
 - `updated_at`: UTC timestamp of the last content change.
 - `selected`: whether this config's **name** is selected, even if its saved revision differs.
-- `active_revision`: the currently selected revision globally, regardless of the saved config name.
+- `active_revision`: the currently selected revision globally, even when this config name is not selected.
 - `requires_selection`: `true` unless this name/revision is already selected.
 
 `ConfigSelectionRequest`: `{name: string, revision: string}`; both fields required, extras rejected.
@@ -1122,8 +1165,16 @@ are templates, not overwritten by PUT. Old loose custom files are not imported o
 This single JSON transaction file avoids partial commits between config content and selection.
 An initialization marker distinguishes first startup from deleted state; the lock and marker
 files contain no policy payloads.
-Linux `flock` serializes access across API workers/gateway processes; unique temporary files,
-file fsync, atomic replacement and directory fsync provide durable commits on a local filesystem.
+Native file locks serialize access across API workers/gateway processes: `flock` on POSIX and a
+nonblocking [`msvcrt` byte-range lock](https://docs.python.org/3/library/msvcrt.html) on Windows,
+with a five-second acquisition deadline. Temporary state files are flushed before replacement.
+POSIX commits use atomic replacement and directory fsync; lock/marker metadata and directory
+sync reject symlinks. Windows opens lock metadata with `CreateFileW OPEN_REPARSE_POINT` and rejects
+reparse points. State and initialization-marker commits use same-volume
+[`MoveFileExW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)
+with `REPLACE_EXISTING | WRITE_THROUGH`. Windows has no POSIX directory-fsync path; configuration
+storage requires a local filesystem supporting hard links, such as NTFS. Durability remains
+subject to the filesystem and device guarantees.
 Missing/corrupt existing state fails closed; it is not silently reset to defaults. Selection
 contains its own immutable snapshot, so editing the selected config does not activate edits.
 New Task Contracts pin the selected revision's hash; existing contracts remain unchanged.
@@ -1152,72 +1203,59 @@ alerts are queried through their own `session_id` and `ts` indexes.
 | `alert` | Stored uppercase severity, lowercased (`INFO` → `info`) |
 | `verification` | `FAILED_POSTCONDITIONS` → `critical`. `VERIFICATION_INCOMPLETE` → `high`. |
 
-### 6.3 Store methods used
+### 6.3 Query implementation
 
-| Endpoint | Existing method | New read query needed |
-|---|---|---|
-| trajectory `session` | `EventStore.get_events_by_session_seq` | Paged variant with `from_seq` and `to_seq` |
-| trajectory `run` | `EventStore.get_run_events` | Paged variant |
-| trajectory `case` and `agent` | `get_events_by_case`, `query_events(agent_id=...)` | Keyset pagination on `(ts, rowid)` instead of `OFFSET` |
-| actions | `query_events` | Filters for `decisions`, `name`, `side_effects`, `since`, `until` and `action_id` (`json_extract`) |
-| action | `get_event`, plus `to_consumer_v21` | Related records by `context.action_id`, and neighbours by `seq` |
-| detections | `list_consumer_findings`, `get_recent_alerts` | Cross-session queries with time and severity filters, and a k-way merge of the four sources by `ts` |
-| verification | `get_verification` | – |
-| sessions | – | `list_sessions`: `session_sequences` left join `task_contracts`, plus `session` phase events |
-| interventions | – | `list_policy_signals` with filters |
-| stats | `get_stats`, `pending_deliveries` | – |
-
-Implemented core queries live in `persistence/query.py` (`ReadQueries`). It is read-only, takes its
-own read-only connection, and every result goes through the existing `sanitize_*` functions, as
-the current readers do.
+Evidence reads use the read-only `ReadQueries` implementation in `persistence/query.py`,
+`persistence/query_usage.py` and `persistence/query_dashboard.py`. Session-scope trajectories are
+paginated; run, case and agent trajectory scopes remain deferred. Dashboard aggregates scan
+matching session stores, with per-store rather than globally atomic snapshot consistency.
 
 ## 7. Security notes
 
 - **Evidence remains read-only:** evidence connections use `mode=ro` and evidence routes have no
   write SQL. Configuration writes use a separate backend store, not the evidence write path.
-- **No management authentication:** the two config PUTs accept any caller that can reach the
-  server (team decision for the demo). Anyone with the dashboard URL can edit and activate configs.
-- **Unauthenticated reads:** the read side trusts its network position. It binds loopback by default, so on
-  a shared machine any local process can read the sanitized evidence, and that includes an agent
-  that can run shell commands. In the governed pipeline the agent only gets gateway-backed tools,
-  so it has no direct way to call this port. The API runs in a separate process that does not get
-  the gateway tokens (`INTERCEPT_TOKEN` and `INTERCEPT_ADMIN_TOKEN`).
+- **Configuration authentication:** config PUTs on the web app require `X-Admin-Token` or Bearer
+  token matching `CONFIG_ADMIN_TOKEN`. Enter the token in the dashboard's inline administrator
+  field; it is kept only in memory. If the server token is missing, configuration writes fail
+  closed. The evidence CLI always disables configuration writes, including in Compose.
+- **Unauthenticated evidence reads:** standalone CLI use binds loopback by default. Compose exposes
+  sanitized evidence GETs publicly through Caddy and on host loopback for local development; these
+  reads are intentionally unauthenticated and have no per-principal scoping. The agent receives
+  gateway-backed tools, not a route to the API. The API process does not get gateway tokens
+  (`INTERCEPT_TOKEN` and `INTERCEPT_ADMIN_TOKEN`).
 - **No content dereference:** `ContentRef` metadata is returned, but `agent_content` bodies are
   not served. A body viewer would need its own authorization and redaction review. It is out of
   scope.
 - **Bounded work:** `limit` is at most 1,000, time series have at most 1,000 points, exports
   follow the store quotas, and each query is bounded by the SQLite busy timeout. Expensive
   aggregates such as `/metrics/*` may be cached for 1 s.
-- **Public demo:** never bind this API to a public interface. If judges reach the dashboard over
-  the network, keep the API on loopback and let the dashboard backend proxy the reads it needs.
+- **Public demo:** Compose publishes evidence GET routes through Caddy as part of the dashboard.
+  The API's direct host binding stays on loopback; do not publish its port on a public interface.
 
-## 8. Required persistence changes
+## 8. Remaining persisted-read limits
 
-These are gaps between what the contract above needs and what Layer 2 stores today:
+- Run, case and agent trajectory scopes still return `501 not_implemented`; session trajectories are
+  paginated. Risk factors are available only where a `trajectory-risk` plugin decision recorded
+  them; older evidence can have null per-step risk.
+- Timeseries metrics `detections`, `cost_usd` and `interception_overhead_ms_p95` return
+  `501 not_implemented`. Usage, security and performance overview endpoints are implemented.
+- Aggregate cost is `null` with `cost_source: "unavailable"`; a daily budget is not currently
+  reported. These fields are not estimated or fabricated.
+- The persisted detection catalog reports observed names, but curated descriptions, reason text and
+  OWASP mappings are not available yet.
 
-| # | Gap | Change | Effect if not done |
-|---|---|---|---|
-| 1 | `_finding_projection` drops `created_at`, so findings have no timestamp | Add `created_at` (validated timestamp) to the allowlist in `EventStore._finding_projection` | Use the `ts` of `trigger_event_id` as the detection `ts` |
-| 2 | Finding `details` are dropped, so trajectory risk has only a level | Allowlist numeric `details.expected_loss`, `details.failure_probability`, `details.signals` (`{code: int}`) and token `details.reason_code` | `Trajectory.risk.expected_loss`, `failure_probability` and finding `reason` are `null` |
-| 3 | `verification_results` has no timestamp | Store `verified_at` in the projection | Use the `ts` of the session `ended` event |
-| 4 | No cross-session finding or alert queries, and `get_recent_alerts` has no filters | Add `ReadQueries.detections(...)`, plus an index `consumer_findings(session_id)` and an extracted `created_at` column with an index | – (needed for §4.7) |
-| 5 | No session listing | Add `ReadQueries.list_sessions(...)` | – (needed for §4.2) |
-| 6 | `actual_usage.actual_cost` is never written, so cost is always 0 | Layer 1 computes cost from a per-model price table in the policy file and writes `actual_cost` and `usage_source` | `cost_usd` is `0` and `source` is `estimated` |
-| 7 | No daily budget exists in the policy, though the brief asks for per-session and per-day budgets | Add `budget_daily` to the policy file and enforce it in Layer 1. The API only reports it. | `UsageBucket.budget` is `null` |
-| 8 | No detection catalog | Add `config/detection-catalog.yaml` with titles, reason texts, OWASP tags and control families, covering every auditor rule, consume-plane rule ID and verification check | `reason_text` is `null`, `owasp` is empty, families count as `"other"` |
-
-None of these changes alters Event Envelope v2.1 or the decision semantics.
+These gaps do not alter Event Envelope v2.1 or the decision semantics.
 
 ## 9. Out of scope for v1
 
 - Evidence writes, approvals, live-session policy mutation, retention pruning and consumer admin stay on their existing
   trusted paths. See [application-documentation.md §5.4](application-documentation.md#54-gateway-dashboard-api-contract-for-judge-ui)
   and [persistence.md](persistence.md).
-- Push delivery. Dashboards poll this API, and live gateway decisions come from the gateway's
-  `/api/v1/events/stream` SSE. A future `/api/v1/stream` could push detections, but it would be
-  volatile and never a substitute for the durable lists.
-- Per-principal read scoping. Reads rely on the loopback bind; config PUTs are unauthenticated. `AuditReader`
-  and `ReadScope` remain the API for principal-scoped run export.
+- Push delivery is planned. Dashboards currently poll JSON endpoints. A future SSE stream could
+  push detections, but it would be volatile and never a substitute for the durable lists.
+- Per-principal read scoping. Standalone CLI reads rely on loopback; deployed sanitized GETs are
+  intentionally public through Caddy. Configuration writes use the shared operator token.
+  `AuditReader` and `ReadScope` remain the API for principal-scoped run export.
 - Content bodies (§7), and the consume plane's in-process metric gauges. Those are exposed by the
   consume-plane runtime (`/consumer/metrics`, [consumer-plane.md §9.2](consumer-plane.md#92-metrics))
   and are not persisted.
@@ -1229,14 +1267,15 @@ None of these changes alters Event Envelope v2.1 or the decision semantics.
   session-binding integration into interception. Config state is separate from evidence SQLite.
 
 - **New:** `docs/rest.md` (this file).
-- **New code:** the `persistence/http_api/` stub (FastAPI and uvicorn) and `tests/support/test_http_api_stub.py`.
+- **API package:** `persistence/http_api/` (FastAPI and uvicorn), including explicit example-mode
+  fixtures covered by `tests/support/test_http_api_stub.py`.
 - **Startup:** `simulation/live_pipeline.py` (`scripts/run_live_pipeline.sh`) starts the API next to
   the gateway. The new `scripts/run_rest_api.sh` runs it on its own. Both are documented in
   [scripts/README.md](../scripts/README.md).
   `pyproject.toml` adds `fastapi` and `uvicorn` to the dependencies and `httpx2` to the dev dependencies.
 - [persistence.md](persistence.md): the statements "no public endpoint" and "no public
-  export/admin endpoint" now say that the write and admin APIs stay internal, and that a
-  read-only HTTP API is planned in this file.
+  export/admin endpoint" distinguish the internal write/admin APIs from the read API exposed
+  through Caddy.
 - [application-documentation.md §5.4](application-documentation.md#54-gateway-dashboard-api-contract-for-judge-ui):
   a note that §5.4 covers the gateway (Layer 1) endpoints, and that history, trajectories,
   detections and usage come from this read API.
@@ -1280,20 +1319,21 @@ are skipped where their pinned identity establishes that they cannot match.
 - Detection descriptions/OWASP catalog lookups remain deferred. Readable descriptions and OWASP
   values stay null/empty. Session detail/trajectories derive gateway and finding references;
   export does not yet merge every legacy alert source.
-- Session risk comes from persisted trajectory-finding severity. Expected loss/probability stay
-  null because the current finding projection does not store them. Session state includes applied
+- Session risk and per-step risk come from persisted `trajectory-risk` plugin decisions when
+  available. New decisions store probability, consequence, expected loss and signal attribution;
+  older evidence without those factors returns `null` risk for that step. Session state includes applied
   halt/end events; detail/export includes persisted interventions.
 - Verification is read from the independently persisted verifier result, not agent text. Known
   sessions without a result return 200 with null status/timestamp and no checks. A missing
   verification timestamp falls back to a recorded session-end time or null; the fallback is not
   claimed to be the exact verifier timestamp.
 - Session-summary usage includes executed/failed mediated model events, excludes intents and is
-  labeled estimated. It does not cover unmediated OpenCode provider calls. Dedicated session usage
-  and count/token timeseries are implemented with dispatch-aware accounting; aggregate usage,
-  security and performance metrics remain deferred.
+  labeled estimated. It does not cover unmediated OpenCode provider calls. Dedicated session usage,
+  count/token timeseries, and aggregate usage, security and performance overviews are implemented.
+  Aggregate cost remains unavailable (`null`); performance percentiles are `null` when no samples exist.
 - Export includes session detail, action/intent records, gateway/finding detections, interventions
-  and stored verification. The NDJSON footer hashes all preceding bytes. The persisted store
-  quotas are checked before sending any data; overflow returns 413.
+  and stored verification. `/export/actions` separately streams filtered action events. Both NDJSON
+  formats have a SHA-256 footer. Persisted store quotas are checked before sending data; overflow returns 413.
 
 ### Judge-runnable demo
 

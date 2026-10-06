@@ -178,12 +178,12 @@ Detailed walkthrough and live-trace instructions: [scripts/README.md](scripts/RE
 The full production stack runs under Docker Compose behind Caddy on ports 80/443:
 
 ```sh
-# Local Docker deployment
+# Local Docker deployment; set CONFIG_ADMIN_TOKEN in .env to enable policy edits
 cp .env.example .env
 docker compose up -d --build
 
 # Open the dashboard
-open http://localhost  # Health check: http://localhost/healthz
+open http://localhost  # Dashboard; health check: http://localhost/healthz
 
 # Tear down
 docker compose down

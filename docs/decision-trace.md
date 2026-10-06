@@ -158,13 +158,14 @@ rule 6 in [consume_plane/plugins/README.md](../consume_plane/plugins/README.md).
 | `tests/test_decisions_demo.py` | running scenarios end to end through the real gateway, store, consume plane and REST |
 | judge and verifier tests | decision points of `goal-alignment-judge` and `outcome-verifier` |
 
+The document-scope false positive is fixed: the gateway records trusted ownership from the
+pinned baseline, and risk assessment distinguishes owned documents from foreign attempts.
+`test_clean_run_has_no_out_of_scope_signal` passes without an expected-failure marker;
+gateway regressions also reject forged ownership. New decisions record step probability,
+consequence, expected loss and signals for dashboard projection.
+
 ## 8. Known limits
 
-- **Known false positive in `trajectory-risk`.** The trace revealed that `trajectory-risk` counts the
-  target application's own document IDs (`DOC-0001`) as out-of-scope targets: they match `id_pattern`
-  but are not in the contract's `target_ids`. This inflates clean-run risk. It is pinned by a strict
-  `xfail` test (`test_clean_run_has_no_out_of_scope_signal`); remove the marker once the scope check
-  is fixed.
 - **The judge has one review slot per session.** With a slow local model, an early background review
   can occupy that slot while later, more important events are traced as `REVIEW_SKIPPED` (`BUSY`), and
   the review can then be `REVIEW_DROPPED` at session end. You can see this with

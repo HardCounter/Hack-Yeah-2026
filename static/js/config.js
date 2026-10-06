@@ -2,6 +2,20 @@
    make it active with PUT /config-selection. */
 (() => {
   const form = $('#cfgForm'), f = form.elements;
+  const tokenSection = el('fieldset', 'section');
+  const tokenLabel = el('label', 'field'), tokenInput = el('input');
+  tokenInput.type = 'password'; tokenInput.id = 'cfgAdminToken'; tokenInput.autocomplete = 'off';
+  tokenInput.placeholder = 'Enter admin token to save or activate';
+  tokenLabel.append(el('span', '', 'Admin token'), tokenInput);
+  const tokenHelp = el('p', 'cap muted', 'Kept in memory for this page only. Required to save or activate configuration.');
+  tokenSection.append(tokenLabel, tokenHelp);
+  form.querySelector('.panel-head').after(tokenSection);
+  tokenInput.addEventListener('input', e => {
+    e.stopPropagation();
+    App.setAdminToken(tokenInput.value);
+    showState();
+  });
+  tokenInput.addEventListener('change', e => e.stopPropagation());
   const THRESHOLDS = ['block_threshold', 'approve_threshold', 'alert_threshold'];  // highest first
   const AUDITORS = {
     signature: { id: 'signature-scanner', type: 'pattern_scanner', config: { patterns: [], action: 'BLOCK' } },
@@ -36,9 +50,9 @@
     const s = $('#cfgState'), active = isActive(editing) && !dirty, stale = item(editing).selected && !active && !dirty;
     s.textContent = dirty ? 'Unsaved changes' : active ? 'Active' : stale ? 'Saved, older revision active' : 'Saved';
     s.className = 'badge ' + (dirty || stale ? 'warn' : active ? 'allow' : 'neutral');
-    $('#cfgActivate').disabled = active;
+    $('#cfgActivate').disabled = active || !App.adminToken();
     $('#cfgActivate').textContent = dirty ? 'Save and make active' : 'Make active';
-    $('#cfgSave').disabled = !dirty;
+    $('#cfgSave').disabled = !dirty || !App.adminToken();
   }
   const markDirty = () => { dirty = true; showState(); };
 
@@ -155,6 +169,7 @@
   }
 
   function explain(err) {
+    if (err.status === 401) return 'Enter a valid admin token, then try again.';
     if (err.status === 409) return 'The config changed on the server. Reload it and try again.';
     return err.message;
   }

@@ -1024,12 +1024,16 @@ class TestPersistenceBenchmark:
                 f"({mean_latency_ms:.4f}ms/call)"
             )
 
-            # Wait for background worker to flush all 500 events
-            await engine.worker.flush(timeout=10.0)
+            # Durable outbox delivery performs additional FULL-synchronous SQLite
+            # transactions. Its completion has no hardware SLA in this integrity
+            # benchmark; deadline/recovery behavior has separate lifecycle tests.
+            await engine.worker.flush(timeout=None)
 
             # Verify in SQLite database
             stats = await engine.get_stats()
             assert stats["total_events"] == total_events_count
+            assert stats["pending_deliveries"] == 0
+            assert not engine.worker._active_consumers
 
             # Query all events and verify 0 corruption / 0 dropped events
             persisted_events = await engine.store.query_events(limit=600)

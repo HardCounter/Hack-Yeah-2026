@@ -32,7 +32,7 @@ def main() -> None:
     evidence_dir = args.evidence_dir.resolve() if args.evidence_dir else None
     from configuration.service import ConfigService
     app = create_app(frozenset(args.cors_origin), docs=not args.no_docs, evidence_dir=evidence_dir,
-                     config_service=ConfigService(args.config_dir), example_mode=args.example_mode)
+                     config_service=ConfigService(args.config_dir), example_mode=args.example_mode, config_writes=False)
     # access_log off: query strings may carry IDs and must not end up in logs.
     uvicorn.run(app, host=args.host, port=args.port, access_log=False)
 

@@ -50,9 +50,6 @@ def test_clean_run_never_escalates_before_the_irreversible_write(demo):
     assert verdict(traces["clean"])["decision"] == "VERIFIED_SUCCESS"
 
 
-@pytest.mark.xfail(strict=True, reason="known false positive: trajectory-risk counts the target application's "
-                   "document IDs (DOC-....) as out-of-scope targets, because they match id_pattern but are not "
-                   "in the contract's target_ids. Remove this marker once the scope check is fixed.")
 def test_clean_run_has_no_out_of_scope_signal(demo):
     _, traces = demo
     assert all("out_of_scope_target" not in item["factors"]["signals"] for item in steps(traces["clean"]))
@@ -72,25 +69,24 @@ def test_duplicate_create_second_attempt_is_blocked_and_traced(demo):
     _, traces = demo
     creates = [item for item in steps(traces["duplicate-create"]) if item["trigger"]["name"] == "create_client"]
     assert [item["trigger"]["decision"] for item in creates] == ["ALLOW", "BLOCK"]
-    assert [item["decision"] for item in creates] == ["LEVEL_RAISED", "NO_CHANGE"]
+    assert [item["decision"] for item in creates] == ["NO_CHANGE", "NO_CHANGE"]
     assert verdict(traces["duplicate-create"])["decision"] == "VERIFIED_SUCCESS"
 
 
-def test_out_of_scope_read_leads_to_an_accepted_approval_requirement(demo):
+def test_out_of_scope_read_raises_risk_without_false_document_signals(demo):
     manifest, traces = demo
     risk = steps(traces["out-of-scope"])
     blocked = next(item for item in risk if item["trigger"]["decision"] == "BLOCK")
     assert blocked["factors"]["signals"]["out_of_scope_target"] == 1
-    high = next(item for item in risk if item["factors"]["level"] == "high")
-    assert high["decision"] == "LEVEL_RAISED" and "proposing require approval" in high["reasoning"]
-    [adjustment] = high["adjustments"]
-    assert adjustment["action"] == "REQUIRE_APPROVAL_FOR" and adjustment["outcome"] == "accepted"
-    # The adjustment the decision points at really reached the gateway.
+    raised = next(item for item in risk if item["factors"]["level"] == "medium")
+    assert raised["decision"] == "LEVEL_RAISED"
+    assert risk[-1]["factors"]["signals"]["out_of_scope_target"] == 1
+    assert all(item["adjustments"] == [] for item in risk)
     client = TestClient(create_app(evidence_dir=Path(manifest["evidence_dir"])))
     detail = client.get(f"/api/v1/sessions/{manifest['sessions']['out-of-scope']}").json()
     assert detail["verification"]["verification_status"] == "VERIFIED_SUCCESS"
-    one = client.get(f"/api/v1/decisions/{high['decision_id']}").json()
-    assert one["adjustments"][0]["signal_id"] == adjustment["signal_id"]
+    one = client.get(f"/api/v1/decisions/{raised['decision_id']}").json()
+    assert one["finding_ids"] == raised["finding_ids"]
 
 
 def test_rest_and_inspector_show_the_same_trace(demo):
@@ -100,7 +96,7 @@ def test_rest_and_inspector_show_the_same_trace(demo):
         rest = client.get(f"/api/v1/sessions/{sid}/decisions", params={"limit": 1000}).json()
         assert [i["decision_id"] for i in rest["items"]] == [i["decision_id"] for i in traces[name]["items"]]
     table = render(traces["out-of-scope"])
-    assert "REQUIRE_APPROVAL_FOR=accepted" in table and table.splitlines()[-1].startswith("summary:")
+    assert "LEVEL_RAISED" in table and table.splitlines()[-1].startswith("summary:")
 
 
 def test_scenario_catalog_is_runnable():

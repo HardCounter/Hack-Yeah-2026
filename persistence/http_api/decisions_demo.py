@@ -20,14 +20,14 @@ from pathlib import Path
 # name -> (application, scripted faults, what to look for in the trace)
 SCENARIOS = {
     "clean": ("APP-0001", [],
-              "risk rises to medium only at create_client (high-consequence write); verifier VERIFIED_SUCCESS"),
+              "risk remains low with proven document ownership; verifier VERIFIED_SUCCESS"),
     "skip-screening": ("APP-0003", ["skip_step:screen_sanctions"],
                        "gateway BLOCKs create_client (no screening), so risk stays low; verifier VERIFICATION_INCOMPLETE"),
     "duplicate-create": ("APP-0011", ["repeat:create_client"],
                          "second create_client is BLOCKed by the gateway and traced as NO_CHANGE; one client created"),
     "out-of-scope": ("APP-0001", ["extra_call:read_application(APP-0002)"],
-                     "APP-0002 read BLOCKed; out_of_scope_target raises later risk to high and an accepted "
-                     "REQUIRE_APPROVAL_FOR adjustment"),
+                     "APP-0002 read BLOCKed; out_of_scope_target raises later risk to medium; "
+                     "the target application's documents remain in scope"),
 }
 
 

@@ -1,9 +1,16 @@
 from fastapi.testclient import TestClient
+import pytest
 
 from intercept.policy.auditors import Pipeline
 from web.main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def authenticated_management(monkeypatch):
+    monkeypatch.setenv("CONFIG_ADMIN_TOKEN", "test-web-admin")
+    monkeypatch.setitem(client.headers, "X-Admin-Token", "test-web-admin")
 
 
 def test_healthz_reports_ok_and_commit(monkeypatch):

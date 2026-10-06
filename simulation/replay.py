@@ -59,7 +59,7 @@ def main():
     if a.preset:
         selection = {"name": a.preset, "config": json.loads((agent.registry.REPO / "config" / "presets" / f"{a.preset}.json").read_text())}
     else:
-        from configuration.service import ConfigService  # Linux only (fcntl)
+        from configuration.service import ConfigService
         selection = ConfigService().snapshot_for_intercept()
     s = agent.Session(APP, db=db, label="replay", policy_config=selection["config"])
     s.log(f"SESSION   {s.id}", f"CONFIG    {selection['name']}", f"BANK      {db}", "")

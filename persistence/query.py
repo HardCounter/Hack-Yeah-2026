@@ -20,6 +20,7 @@ from persistence.adapters.consumer_v21 import to_consumer_v21
 from persistence.models import ActionEventEnvelope, ActionStatus, ActionType
 from persistence.privacy import sanitize_event, token, timestamp, number, evidence
 from persistence.query_usage import UsageQueriesMixin
+from persistence.query_dashboard import DashboardQueriesMixin
 from persistence.privacy import decision_projection, sanitize_event, token, timestamp, number
 from persistence.schema import CURRENT_SCHEMA_VERSION
 from persistence.settings import PersistenceSettings
@@ -49,6 +50,28 @@ def now():
 
 def normalized_ts(value):
     return timestamp(value) if value else None
+
+
+def risk_factors_valid(factors, *, step=False):
+    """Risk factors are typed model measurements, never arbitrary code strings."""
+    fields = ("step_probability", "step_consequence", "step_expected_loss") if step else (
+        "failure_probability", "expected_loss", "max_consequence", "step_count")
+    try:
+        for key in fields:
+            value = factors.get(key)
+            if value is None:
+                continue
+            number(value)
+            if key in ("step_probability", "failure_probability") and value > 1:
+                return False
+            if key == "step_count" and type(value) is not int:
+                return False
+        signals = factors.get("step_signals", [])
+        if step and (not isinstance(signals, list) or any(not isinstance(value, str) for value in signals)):
+            return False
+        return True
+    except (ValueError, TypeError):
+        return False
 
 
 def usage(events):
@@ -91,7 +114,7 @@ def cursor_page(items, limit, cursor, *, scope, filters, key):
     return {"items": result, "next_cursor": next_cursor, "has_more": more}
 
 
-class ReadQueries(UsageQueriesMixin):
+class ReadQueries(UsageQueriesMixin, DashboardQueriesMixin):
     def __init__(self, evidence_dir):
         self.directory = Path(evidence_dir).resolve() if evidence_dir is not None else None
 
@@ -298,6 +321,7 @@ class ReadQueries(UsageQueriesMixin):
                   "_rowids": rowids,
                   "verification": verification, "run": {"lifecycle": run["lifecycle"],
                   "sealed_at": normalized_ts(run["sealed_at"]), "expired_at": normalized_ts(run["expired_at"])} if run else None}
+        bundle["decisions"] = self._decision_rows(conn, "session_id=?", (session_id,))
         interventions = []
         signal_rowids = {}
         for row in self._rows(conn, "SELECT signal_id,signal_json,applied,rowid FROM policy_signals WHERE session_id=? ORDER BY rowid", (session_id,)):
@@ -385,9 +409,10 @@ class ReadQueries(UsageQueriesMixin):
                 "executed": event.status in (ActionStatus.EXECUTED, ActionStatus.REDACTED),
                 "decision": decision, "triggered_rules": rules, "reason_code": ctx.reason_code,
                 "policy_version": meta.policy_version, "usage": {
-                    "input_tokens": measured.get("input_tokens", 0), "output_tokens": measured.get("output_tokens", 0),
-                    "total_tokens": measured.get("input_tokens", 0) + measured.get("output_tokens", 0),
-                    "cost_usd": measured.get("actual_cost", 0), "latency_ms": measured.get("latency_ms", meta.total_latency_ms),
+                    "input_tokens": measured.get("input_tokens"), "output_tokens": measured.get("output_tokens"),
+                    "total_tokens": measured["input_tokens"] + measured["output_tokens"]
+                    if "input_tokens" in measured and "output_tokens" in measured else None,
+                    "cost_usd": None, "latency_ms": measured.get("latency_ms"),
                     "source": "estimated"}, "interception_overhead_ms": meta.total_latency_ms if decision else None,
                 "detections": detections, "max_severity": detections[0]["severity"] if detections else None,
                 "fault_injected": meta.fault_injected}
@@ -407,7 +432,8 @@ class ReadQueries(UsageQueriesMixin):
                               "agent_id": event.agent_id, "case_id": event.case_id, "trigger_event_id": event.event_id,
                               "evidence_event_ids": [event.event_id], "policy_version": summary["policy_version"], "owasp": [], "details": {}})
         for item in bundle["findings"]:
-            trigger = events.get(item.get("trigger_event_id"))
+            trigger = events.get(item.get("trigger_event_id")) or next(
+                (events[ident] for ident in reversed(item["evidence_event_ids"]) if ident in events), None)
             found.append({"detection_id": item["finding_id"], "name": item.get("rule_id", "finding"),
                           "ts": trigger.ts if trigger else None, "reason": None, "reason_text": None,
                           "severity": item["severity"], "source": "finding", "detector": item.get("plugin"),
@@ -416,6 +442,26 @@ class ReadQueries(UsageQueriesMixin):
                           "run_id": item.get("run_id"), "agent_id": item.get("agent_id"), "case_id": item.get("case_id"),
                           "trigger_event_id": item.get("trigger_event_id"), "evidence_event_ids": item["evidence_event_ids"],
                           "policy_version": item.get("policy_version"), "owasp": [], "details": {}})
+        for item in bundle["alerts"]:
+            linked = item["evidence"].get("event_id")
+            event = events.get(linked)
+            found.append({"detection_id": item["alert_id"], "name": item["rule"], "ts": item["ts"],
+                          "reason": None, "reason_text": None, "severity": item["severity"], "source": "alert",
+                          "detector": "alert", "detector_version": None, "method": None, "confidence": None,
+                          "action_taken": item["action_taken"], "session_id": bundle["session_id"],
+                          "run_id": (bundle["contract"] or {}).get("run_id"), "agent_id": item["agent_id"],
+                          "case_id": item["case_id"], "trigger_event_id": event.event_id if event else None,
+                          "evidence_event_ids": [event.event_id] if event else [], "policy_version": None, "owasp": [], "details": {}})
+        verification = bundle["verification"]
+        if verification and verification["verification_status"] != "VERIFIED_SUCCESS":
+            contract = bundle["contract"] or {}
+            found.append({"detection_id": f"verification_{bundle['session_id']}",
+                          "name": "verification." + verification["verification_status"].lower(), "ts": verification["verified_at"],
+                          "reason": verification["verification_status"], "reason_text": None, "severity": "medium", "source": "verification",
+                          "detector": "outcome-verifier", "detector_version": None, "method": "deterministic", "confidence": None,
+                          "action_taken": "NONE", "session_id": bundle["session_id"], "run_id": contract.get("run_id"),
+                          "agent_id": contract.get("agent_id"), "case_id": contract.get("case_id"), "trigger_event_id": None,
+                          "evidence_event_ids": [], "policy_version": contract.get("policy_version"), "owasp": [], "details": {}})
         bundle["_detections"] = found
         bundle["_detection_refs"] = {}
         for item in found:
@@ -449,7 +495,32 @@ class ReadQueries(UsageQueriesMixin):
                                               "intervention_id", "effect_receipt_id", "semantic_model", "semantic_model_version", "reserved_usage")},
             "related": related, "previous_event_id": peers[index - 1].event_id if index is not None and index > 0 else None,
             "next_event_id": peers[index + 1].event_id if index is not None and index + 1 < len(peers) else None,
-            "detections": detections}
+            "detections": detections, "risk": self._step_risk(bundle, event.event_id),
+            "trace": [self._with_context(item, bundle) for item in bundle["decisions"]
+                      if item["trigger_event_id"] == event.event_id]}
+
+    def _step_risk(self, bundle, event_id):
+        decision = next((d for d in reversed(bundle["decisions"]) if d["plugin"] == "trajectory-risk"
+                         and d["outcome"] == "decided" and d["trigger_event_id"] == event_id), None)
+        if decision is None:
+            return None
+        factors = decision["factors"]
+        if not risk_factors_valid(factors, step=True):
+            return None
+        return {"probability": factors.get("step_probability"), "consequence": factors.get("step_consequence"),
+                "expected_loss": factors.get("step_expected_loss"), "signals": factors.get("step_signals", []),
+                "source": "trajectory-risk", "decision_id": decision["decision_id"]}
+
+    def _risk(self, bundle):
+        decision = next((d for d in reversed(bundle["decisions"]) if d["plugin"] == "trajectory-risk"
+                         and d["outcome"] == "decided" and d["factors"].get("level") in SEVERITIES), None)
+        if decision is None:
+            return None
+        factors = decision["factors"]
+        if not risk_factors_valid(factors):
+            return None
+        return {key: factors.get(key) for key in ("failure_probability", "expected_loss", "level", "max_consequence", "step_count")} | {
+            "source": "trajectory-risk", "decision_id": decision["decision_id"]}
 
     def _session(self, bundle):
         events = [event for event in bundle["events"] if not is_intent(event)]
@@ -470,8 +541,10 @@ class ReadQueries(UsageQueriesMixin):
                 "end_reason": ended[-1].action_details.wire_details.get("end_reason") if ended else None,
                 "action_count": len(events), "blocked_count": sum(self._summary(event)["decision"] == "BLOCK" for event in events),
                 "detection_count": len(detections), "max_severity": max((item["severity"] for item in detections), key=SEVERITIES.index, default=None),
-                "risk_level": max((item["severity"] for item in bundle["findings"] if item.get("plugin") == "trajectory-risk"),
-                                  key=SEVERITIES.index, default=None),
+                "risk_level": (self._risk(bundle) or {}).get("level"), "risk": self._risk(bundle),
+                "risk_step_count": sum(e.action_type in (ActionType.TOOL_CALL, ActionType.MCP_TOOL, ActionType.EGRESS_HTTP) for e in events),
+                "active_interventions": [item for item in bundle["interventions"] if item["active"]],
+                "verification": verification,
                 "verification_status": verification["verification_status"] if verification else None, "usage": usage(events)}
 
     def session_detail(self, session_id):
@@ -656,6 +729,9 @@ class ReadQueries(UsageQueriesMixin):
                                 key=lambda row: (row["seq"], row["event_id"]))
             by_id = {event.event_id: event for event in events}
             steps = [self._action(by_id[row["event_id"]], bundle) if view == "full" else dict(row) for row in paged["items"]]
+            if view == "summary":
+                for step in steps:
+                    step["risk"] = self._step_risk(bundle, step["event_id"])
             if not include_detections:
                 for step in steps:
                     (step["summary"] if view == "full" else step)["detections"] = []
@@ -670,9 +746,7 @@ class ReadQueries(UsageQueriesMixin):
                       **{status: sum(row["status"] == status for row in selected) for status in ("blocked", "redacted", "pending_approval", "failed")},
                       "detections": session["detection_count"], "max_severity": session["max_severity"], "usage": session["usage"]}
             return {"scope": "session", "id": session_id, "ordering": "seq", "segments": [segment], "totals": totals,
-                    "risk": {"level": session["risk_level"], "expected_loss": None, "failure_probability": None,
-                             "finding_id": next((item["finding_id"] for item in bundle["findings"] if item.get("plugin") == "trajectory-risk"), None),
-                             "source": "trajectory-risk"} if session["risk_level"] else None,
+                    "risk": session["risk"],
                     "verification_status": session["verification_status"], "next_cursor": paged["next_cursor"], "has_more": paged["has_more"]}
 
     # --- control-plane decision trace ---------------------------------------------------------
@@ -681,9 +755,14 @@ class ReadQueries(UsageQueriesMixin):
         # Stores written before the decision trace existed have no table: that is "no decisions".
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='plugin_decisions'").fetchone():
             return []
-        rows = self._rows(conn, f"SELECT payload_json FROM plugin_decisions WHERE {where} ORDER BY ts, rowid", args)
+        rows = self._rows(conn, f"SELECT decision_id,session_id,plugin,outcome,decision,trigger_event_id,payload_json "
+                               f"FROM plugin_decisions WHERE {where} ORDER BY ts, rowid", args)
         # Re-project on read: a manually edited database cannot leak prose or raw values.
-        return [decision_projection(json.loads(row[0])) for row in rows]
+        projected = [decision_projection(json.loads(row["payload_json"])) for row in rows]
+        for row, item in zip(rows, projected):
+            if any(row[key] != item[key] for key in ("decision_id", "session_id", "plugin", "outcome", "decision", "trigger_event_id")):
+                raise ValueError("decision identity mismatch")
+        return projected
 
     def _with_context(self, item, bundle):
         """Attach the trigger step and linked findings so one response explains the decision."""

@@ -6,11 +6,18 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
+posix_shell = pytest.mark.skipif(
+    os.name == "nt",
+    reason="shell script integration tests require a POSIX shell; Windows CI does not assume WSL or Git Bash",
+)
 
+
+@posix_shell
 def test_all_scripts_have_valid_bash_syntax_and_are_executable():
     scripts = sorted((ROOT / "scripts").glob("*.sh"))
     assert scripts
@@ -20,6 +27,7 @@ def test_all_scripts_have_valid_bash_syntax_and_are_executable():
         assert os.access(script, os.X_OK), f"{script.name} is not executable"
 
 
+@posix_shell
 def test_setup_help_does_not_require_uv_or_npm(tmp_path):
     env = {**os.environ, "PATH": str(tmp_path)}
     bash = shutil.which("bash")
@@ -38,6 +46,7 @@ def test_runner_help_does_not_require_an_opencode_binary():
     assert "usage:" in result.stdout.lower()
 
 
+@posix_shell
 def test_run_wrapper_clears_virtualenv_and_forwards_arguments(tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -82,6 +91,7 @@ def test_live_pipeline_help_and_busy_port_check():
     assert result.returncode == 2 and "in use" in result.stderr
 
 
+@posix_shell
 def test_intercepted_launcher_uses_selected_workspace_and_keeps_run_config(tmp_path):
     fake_root = tmp_path / "repo"
     scripts = fake_root / "scripts"
@@ -135,6 +145,7 @@ def test_intercepted_launcher_uses_selected_workspace_and_keeps_run_config(tmp_p
     assert workspace.is_dir()
 
 
+@posix_shell
 def test_intercepted_launcher_rejects_missing_workspace(tmp_path):
     fake_root = tmp_path / "repo"
     scripts = fake_root / "scripts"
@@ -190,6 +201,7 @@ def test_live_pipeline_refuses_a_busy_rest_api_port(tmp_path):
     assert result.returncode == 2 and "REST API port" in result.stderr
 
 
+@posix_shell
 def test_rest_api_wrapper_forwards_arguments(tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

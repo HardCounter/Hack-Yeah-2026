@@ -193,6 +193,25 @@ def test_unhashable_and_invalid_tool_arguments_fail_closed_without_crashing(sess
     assert result == {"error": "SCREEN_SUBJECT_OUT_OF_SCOPE"}
 
 
+def test_document_scope_evidence_is_bound_to_pinned_owner_and_cannot_be_forged(session):
+    from contracts.wire import decode_event
+    from consume_plane.plugins.trajectory_risk import RiskModel
+    s = session
+    documents = s.execute("read_documents", {"app_id": s.app_id})["documents"]
+    own = documents[0]["doc_id"]
+    s.execute("extract_fields", {"doc_id": own})
+    with sqlite3.connect(s.ctx.db) as conn:
+        foreign = conn.execute("SELECT doc_id FROM documents WHERE application_id != ? LIMIT 1", (s.app_id,)).fetchone()[0]
+    s.execute("extract_fields", {"doc_id": foreign, "doc_owner_id": s.app_id})
+    events = [e for e in s.runtime.events() if e["action_details"].get("name") == "extract_fields"]
+    owned = next(e for e in events if e["action_details"]["parameters"].get("doc_id") == own)
+    rejected = next(e for e in events if e["action_details"]["parameters"].get("doc_id") == foreign)
+    assert owned["action_details"]["parameters"]["doc_owner_id"] == s.app_id
+    assert "doc_owner_id" not in rejected["action_details"]["parameters"]
+    model = RiskModel()
+    assert "out_of_scope_target" not in [signal.name for signal in model.assess([decode_event(owned)], s.runtime.contract).signals]
+    assert "out_of_scope_target" in [signal.name for signal in model.assess([decode_event(rejected)], s.runtime.contract).signals]
+
 def test_approved_identity_changed_detects_all_identity_fields(session):
     gateway = session.runtime.gateway
     original = {"fields": {"name": "Alice", "dob": "1990-01-01", "national_id": "12345"}}
