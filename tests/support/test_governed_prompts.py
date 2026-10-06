@@ -51,6 +51,32 @@ async def _runtime(tmp_path, *, tokens=2000, auditors=None, max_output_tokens=12
 TOOLS = [{"type": "function", "function": {"name": "read_application", "parameters": {"type": "object"}}}]
 
 
+@pytest.mark.parametrize("part", [
+    {"type": "text", "text": "safe prefix", "truncated": True, "length": 17000},
+    {"type": "tool-result", "result": {"type": "omitted", "length": 17000}},
+])
+@async_test
+async def test_incomplete_adapter_content_is_blocked_before_dispatch(tmp_path, part):
+    store, persistence, gateway = await _runtime(tmp_path)
+    calls = []
+
+    async def backend(*args):
+        calls.append(args)
+        return {"content": "ok"}
+
+    try:
+        decision, response = await gateway.execute(
+            "llama3.2", [{"role": "user", "content": [part]}], TOOLS, backend,
+        )
+        assert decision.decision == "BLOCK"
+        assert decision.reason_code == "PROMPT_CONTENT_INCOMPLETE"
+        assert response == {"error": "PROMPT_CONTENT_INCOMPLETE"}
+        assert not calls
+        assert (await persistence.wire_session("sess_prompt_1"))[0]["status"] == "blocked"
+    finally:
+        await store.close()
+
+
 @async_test
 async def test_allowed_prompt_call_produces_decision_and_decodeable_v21_event(tmp_path):
     store, persistence, gateway = await _runtime(tmp_path)

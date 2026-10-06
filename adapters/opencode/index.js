@@ -36,7 +36,7 @@ function normalizePart(part) {
       }
     }
     case "reasoning": return null
-    default: return { type: String(part?.type ?? "unknown") }
+    default: return { type: "omitted", original_type: String(part?.type ?? "unknown") }
   }
 }
 
@@ -281,14 +281,14 @@ async function install(ctx, endpoint, token) {
     // Model requests. OpenCode V2 runs one hook per request kind (SessionRequestKind):
     //   context    -> "primary": every step of the agent loop
     //   compaction -> history summarisation, generate -> session.generate(), title -> session title
-    // Per (session, kind) only messages not yet forwarded are sent, plus the system prompt when it
-    // changes; a shrunken history resends everything with history_reset: true.
+    // Enforcement scans and meters the full current request on every call, including edited history
+    // and unchanged system instructions. Diagnostic observation may forward append-only deltas.
     const forwardModelRequest = async (kind, event) => {
       const messages = Array.isArray(event.messages) ? event.messages : []
       const key = `${event.sessionID}|${kind}`
       const state = forwarded.get(key) ?? { count: 0, system: null, seq: 0 }
       const historyReset = messages.length < state.count
-      const start = historyReset ? 0 : state.count
+      const start = promptMode === "enforce" || historyReset ? 0 : state.count
       const system = (event.system ?? []).map((part) => (typeof part === "string" ? part : part?.text ?? "")).join("\n")
       const seq = state.seq + 1
       await submitPrompt({
@@ -302,7 +302,7 @@ async function install(ctx, endpoint, token) {
         request_seq: seq,
         message_count: messages.length,
         history_reset: historyReset,
-        ...(system !== state.system ? { system: clip(system) } : {}),
+        ...(promptMode === "enforce" || system !== state.system ? { system: clip(system) } : {}),
         messages: messages.slice(start).map(normalizeMessage),
         tools: Object.keys(event.tools ?? {}).sort(),
       })

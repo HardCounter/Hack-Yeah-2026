@@ -1,12 +1,17 @@
 .git
 .venv
 var/
+runs/
 infra/
 data/bank.db*
 data/runs/
 data/ground_truth.json
 data/documents/
+data/report.html
 node_modules
 .env
+.env.*
+!.env.example
 __pycache__
 .pytest_cache
+.ruff_cache

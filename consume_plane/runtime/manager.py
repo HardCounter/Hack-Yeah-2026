@@ -95,8 +95,8 @@ class ConsumerManager:
             d = await q.get()
             try:
                 await self._process(d)
-            except Exception:
-                log.exception("unexpected error processing %s", d.action.event_id)
+            except Exception as exc:
+                log.error("unexpected error processing %s: %s", d.action.event_id, type(exc).__name__)
                 await self.source.nack(d.delivery_id, reason="consumer_internal_error",
                                        retry_after_s=self.retry_backoff_s)
             finally:
@@ -124,7 +124,7 @@ class ConsumerManager:
                 try:
                     await self._commit(p, a, buffer, attempt=d.attempt, duration_ms=duration_ms)
                 except Exception as e:
-                    error = f"{type(e).__name__}: commit: {e}"
+                    error = type(e).__name__
             if error is None:
                 self.ledger.mark_done(a.event_id, p.name, p.version, duration_ms)
                 self.metrics.inc("consumer_plugin_runs_total", plugin=p.name, outcome="done")
@@ -168,9 +168,9 @@ class ConsumerManager:
         try:
             await asyncio.wait_for(p.instance.handle(a, ctx), timeout)
         except TimeoutError:
-            error = f"timeout after {timeout}s"
+            error = "TIMEOUT"
         except Exception as e:
-            error = f"{type(e).__name__}: {e}"
+            error = type(e).__name__
         return ctx.buffer, error, (time.perf_counter() - start) * 1000
 
     def _finalize(self, p_name: str, p_version: str, method: str, a: AgentAction,
@@ -261,8 +261,8 @@ class ConsumerManager:
         )
         try:
             await self._write_decisions([record])
-        except Exception:
-            log.exception("could not record failure of %s on %s", p.name, a.event_id)
+        except Exception as exc:
+            log.error("could not record failure of %s on %s: %s", p.name, a.event_id, type(exc).__name__)
 
     async def _report_plugin_failure(self, p: LoadedPlugin, a: AgentAction, attempts: int, error: str) -> None:
         error_type = error.split(":", 1)[0]
@@ -275,5 +275,5 @@ class ConsumerManager:
         )
         try:
             await self._write_findings([self._finalize(SELF_NAME, __version__, "deterministic", a, draft, 0)])
-        except Exception:
-            log.exception("could not report failure of %s on %s", p.name, a.event_id)
+        except Exception as exc:
+            log.error("could not report failure of %s on %s: %s", p.name, a.event_id, type(exc).__name__)

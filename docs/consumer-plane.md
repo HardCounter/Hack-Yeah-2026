@@ -450,7 +450,7 @@ A small table keyed by `(event_id, plugin_name, plugin_version)`:
 |---|---|
 | `state` | `done` / `failed` / `dead` |
 | `attempts` | Plugin-level attempts so far |
-| `last_error` | Exception type and message (no payload content) |
+| `last_error` | Exception type or fixed failure code; raw exception messages are omitted |
 | `duration_ms` | Last run duration |
 
 Storage is SQLite (`consumer_ledger.db`) in phase 1, so restart safety does not depend on Layer 2.

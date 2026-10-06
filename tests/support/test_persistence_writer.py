@@ -1,6 +1,7 @@
 """Tests for trusted run writer and durable dispatch evidence."""
 
 import asyncio
+from dataclasses import replace
 from functools import wraps
 import pytest
 
@@ -144,6 +145,19 @@ async def test_contiguous_action_indexing_and_replay(tmp_path):
     with pytest.raises(ConflictingRecordError):
         await writer.append("run-1", "event-1", "action-1", conflicting_details, metadata1, ActionStatus.EXECUTED)
 
+    # The same event ID must bind every durable field, not merely the action/tool name.
+    variants = [
+        ("run-1", ActionDetails(name="read_application", parameters={"application_id": "APP-0002"}), metadata1, ActionStatus.EXECUTED, None),
+        ("run-1", details1, metadata1, ActionStatus.BLOCKED, None),
+        ("run-1", details1, InterceptionMetadata(AuditorVerdict.BLOCKED), ActionStatus.EXECUTED, None),
+        ("run-1", details1, metadata1, ActionStatus.EXECUTED, "CHANGED_REASON"),
+    ]
+    await writer.bind_run(_sample_binding("run-2"))
+    variants.append(("run-2", details1, metadata1, ActionStatus.EXECUTED, None))
+    for run_id, details, metadata, status, reason in variants:
+        with pytest.raises(ConflictingRecordError):
+            await writer.append(run_id, "event-1", "action-1", details, metadata, status, reason)
+
     await store.close()
 
 
@@ -174,3 +188,24 @@ async def test_append_effect_records_executed_receipt(tmp_path):
     assert recovered.payload.result is None
 
     await store.close()
+
+
+@pytest.mark.parametrize("changed", [{"source": "other"}, {"case_id": "APP-9999"},
+                                   {"action_type": ActionType.MCP_TOOL}])
+@async_test
+async def test_retry_reconstructs_scope_instead_of_trusting_stored_projection(tmp_path, changed):
+    store = EventStore(tmp_path / "contaminated.db")
+    await store.initialize()
+    writer = BoundAuditWriter(store)
+    await writer.bind_run(_sample_binding())
+    details = ActionDetails(name="read_application")
+    metadata = InterceptionMetadata(AuditorVerdict.ALLOWED)
+    try:
+        event = await writer.append("run-1", "first", "action-1", details, metadata, ActionStatus.EXECUTED)
+        # A legacy writer has a different durable projection under the desired ID.
+        await store.insert_event(replace(event, event_id="collision", **changed,
+                                        context=replace(event.context, action_index=1)))
+        with pytest.raises(ConflictingRecordError):
+            await writer.append("run-1", "collision", "action-1", details, metadata, ActionStatus.EXECUTED)
+    finally:
+        await store.close()

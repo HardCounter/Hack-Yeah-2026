@@ -220,8 +220,8 @@ def main(argv=None):
                         help='free-agent demo: generic prompt, every tool offered, agent output kept in reply.txt')
     parser.add_argument('--provider-config', type=Path, help='non-secret providers-only JSON; use env substitutions for keys')
     args = parser.parse_args(argv)
-    if not re.fullmatch(r'APP-\d{4}', args.application) or not 1 <= int(args.application[4:]) <= 15:
-        parser.error('application must be APP-0001 through APP-0015')
+    if not re.fullmatch(r'APP-\d{4}', args.application) or not 1 <= int(args.application[4:]) <= 17:
+        parser.error('application must be APP-0001 through APP-0017')
     if not args.model or not re.fullmatch(r'[A-Za-z0-9_.-]+/[^\s]+', args.model):
         parser.error('select --model provider/model or set OPENCODE_MODEL')
     if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', args.agent):

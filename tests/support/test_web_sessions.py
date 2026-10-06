@@ -1,5 +1,6 @@
 """Session API tests. A fake backend replaces OpenCode and the gateway, so no API key is needed."""
 import asyncio
+import os
 import signal
 import sys
 import time
@@ -50,6 +51,33 @@ def new_session(client):
     response = client.post("/opencode-wrapper/api/sessions")
     assert response.status_code == 201
     return response.json()["session_id"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX filesystem permission bits")
+def test_sessions_and_process_logs_are_private_under_permissive_umask(client):
+    from simulation.opencode_runner import _log
+    original = os.umask(0)
+    try:
+        sid = new_session(client)
+        folder = sessions._manager.sessions[sid].folder
+        assert folder.stat().st_mode & 0o777 == 0o700
+        assert folder.parent.stat().st_mode & 0o777 == 0o700
+        for name in ("gateway.log", "opencode.log"):
+            with _log(folder, name) as stream:
+                stream.write("synthetic private diagnostic")
+            assert (folder / name).stat().st_mode & 0o777 == 0o600
+    finally:
+        os.umask(original)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX filesystem permission bits")
+def test_existing_session_root_is_made_private(tmp_path, monkeypatch):
+    root = tmp_path / "existing"
+    root.mkdir(mode=0o755)
+    root.chmod(0o755)
+    monkeypatch.setenv("RUNS_DIR", str(root))
+    sessions.SessionManager(FakeBackend())
+    assert root.stat().st_mode & 0o777 == 0o700
 
 
 def test_session_keeps_state_across_messages_and_returns_evidence(client):

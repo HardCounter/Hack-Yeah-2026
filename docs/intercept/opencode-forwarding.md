@@ -1,6 +1,6 @@
 # OpenCode Adapter: Forwarded Requests
 
-**Status (2026-10-04):** implemented in `adapters/opencode/index.js` and tested with synthetic
+**Status (2026-10-06):** implemented in `adapters/opencode/index.js` and tested with synthetic
 hook events (`adapters/opencode/forward.test.mjs`, run with `scripts/test_opencode_adapter.sh`).
 **Real OpenCode v2.0.22 loads the adapter and its startup handshake reaches Python**
 (`scripts/check_opencode_pipeline.sh`). The enforcing service (`intercept/service/local.py` / `server.py`)
@@ -19,7 +19,7 @@ implements the `POST /v1/prompts/evaluate` endpoint via `PromptGateway`. The obs
 | **Startup handshake** `POST /v1/adapter/hello`: `{adapter, status: "ready", hooks[], prompts, directory}` with the token, or `{status: "error", reason}` without it. Also logged to stderr as `[hardcounter.intercept] …`; disable with `options.announce: false` | A plugin whose setup throws (for example, missing token) previously failed silently, so the Python side saw nothing |
 | **Reasoning parts are never forwarded**, and tool results are labelled `trust: "untrusted"` | AGENTS.md: no private chain-of-thought; retrieved content is data, not authority |
 
-Tests: `adapters/opencode/forward.test.mjs` (6 tests) covers the request shapes, hook
+Tests: `adapters/opencode/forward.test.mjs` (7 tests) covers the request shapes, hook
 registration, the auxiliary request kinds, fail-closed behaviour, and the handshake on success and
 on failure. The original `adapters/opencode/test.mjs` (9 tests) is unchanged except that its fetch
 stub answers the handshake, so call counts stay as before.
@@ -86,15 +86,17 @@ The hook payloads below come from that package's published type definitions
  "tools": ["bash", "read"]}
 ```
 
-- **Only new messages are sent** for each request, tracked separately per `kind`. `request_seq` and `message_count` let the
-  receiver rebuild the full history. If the history shrinks (compaction), everything is resent
-  with `history_reset: true`.
-- **`system`** (`{text, truncated}`) is sent on the first request and again whenever it changes.
+- **Enforcement sends the full normalized history on every request**, including edits that do not
+  change message count. Observe mode sends new-message deltas per `kind`; shrinking history resets
+  that observation stream. `request_seq`, `message_count` and `history_reset` remain diagnostic metadata.
+- **`system`** (`{text, truncated}`) is sent on every enforcement request. Observe mode sends it on
+  the first request and whenever it changes. Python includes system text in admission and metering.
 - **Reasoning parts are never forwarded**, in line with the AGENTS.md rule against relying on
-  private chain-of-thought. Only their count is reported. Media parts are reduced to `{type}`.
+  private chain-of-thought. Only their count is reported. Unsupported media becomes an explicit
+  omitted-content marker and therefore fails closed in enforcement mode.
 - **Text parts and the system prompt are capped at 16,000 characters** (`truncated: true`,
   `length`). A tool result larger than that becomes `{type: "omitted", length}`. Python decides
-  whether truncated input is acceptable. Its request body limit is 64 KiB.
+  denies truncated or omitted content before dispatch. Its request body limit is 64 KiB.
 - **Tool results carry `trust: "untrusted"`.** They are data, not instructions.
 
 ### Tool requests (unchanged)
@@ -109,7 +111,7 @@ these keys, because `intercept/policy/runs.py` validates exact key sets. The hoo
   request in the real runtime.** The harness proves only the adapter's own behaviour. Verify
   against a live `opencode v2.0.22` before claiming prompt enforcement.
 - **The model's final answer** (an assistant message with no tool call) is not a request. It shows up
-  only in the next request's message delta, so the last answer of a session is not forwarded.
+  only in the next request's history, so the last answer of a session is not forwarded.
   Capturing it would need `http.response` (provider-specific streams) or session event subscription.
 - **The Python side** evaluates prompts via `LocalService._evaluate_prompt` and `PromptGateway`,
   mapping interaction metadata into the durable evidence store and consume plane envelope v2.1.

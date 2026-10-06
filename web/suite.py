@@ -71,13 +71,14 @@ def _cases():
     global _catalogue
     with _lock:
         if _catalogue is None:
-            report = Path(tempfile.mkdtemp(prefix="guardrail-suite-")) / "collected.jsonl"
-            try:
-                _pytest(report, "--collect-only")
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-            _catalogue = {row["id"]: {"id": row["id"], "title": row["title"], "area": row["area"]}
-                          for row in _rows(report) if row.get("event") == "case"}
+            with tempfile.TemporaryDirectory(prefix="guardrail-suite-") as folder:
+                report = Path(folder) / "collected.jsonl"
+                try:
+                    _pytest(report, "--collect-only")
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+                _catalogue = {row["id"]: {"id": row["id"], "title": row["title"], "area": row["area"]}
+                              for row in _rows(report) if row.get("event") == "case"}
         return _catalogue
 
 
@@ -140,11 +141,14 @@ def start_run(request: RunRequest | None = None):
         return JSONResponse(status_code=404, content={"error": {"code": "not_found", "message": "unknown test case"}})
     with _lock:
         if _run is None or _run.get("finished_at"):
+            if _run and _run.get("workspace"):
+                _run["workspace"].cleanup()
             ids = {case} if case else set(catalogue)
             for case_id in ids:
                 _results.pop(case_id, None)
-            report = Path(tempfile.mkdtemp(prefix="guardrail-suite-")) / "report.jsonl"
-            _run = {"report": report, "case": case, "ids": ids, "started_at": _now(), "error": None}
+            workspace = tempfile.TemporaryDirectory(prefix="guardrail-suite-")
+            report = Path(workspace.name) / "report.jsonl"
+            _run = {"workspace": workspace, "report": report, "case": case, "ids": ids, "started_at": _now(), "error": None}
             threading.Thread(target=_execute, args=(_run,), daemon=True).start()
     return _status()
 

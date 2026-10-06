@@ -283,5 +283,6 @@ def test_invalid_config_fails_plugin_load(harness):
     from consume_plane.runtime.loader import PluginLoadError
     h = harness(session("read_application"), [TrajectoryRisk],
                 plugin_config={"trajectory-risk": {"signal_weights": {"vibes": 0.9}}})
-    with pytest.raises(PluginLoadError, match="unknown signal_weights"):
+    with pytest.raises(PluginLoadError, match="setup of 'trajectory-risk' failed: ValueError") as error:
         asyncio.run(h.run())
+    assert "vibes" not in str(error.value)

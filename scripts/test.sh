@@ -3,6 +3,7 @@
 #
 # Usage: scripts/test.sh [target] [extra args]
 #   all          (default) every Python test + Node adapter and frontend tests
+#   lint         Python correctness checks (undefined names, syntax, shadowing)
 #   python       every Python test (uv run pytest)
 #   controls     tests/control_layer: the guardrail suite (tool calls and prompts through the gateway)
 #   support      tests/support: everything else (plumbing, audit store, config API, consume plane, web app, mock bank)
@@ -26,7 +27,8 @@ target=${1:-all}
 pytest() { echo "== pytest $*"; uv run --locked pytest -q "$@"; }
 
 case "$target" in
-    all)         pytest "$@"; echo; scripts/test_opencode_adapter.sh --quiet; echo; node --test tests/frontend/*.test.mjs ;;
+    all)         uv run --locked ruff check .; pytest "$@"; echo; scripts/test_opencode_adapter.sh --quiet; echo; node --test tests/frontend/*.test.mjs ;;
+    lint)        uv run --locked ruff check . "$@" ;;
     python)      pytest "$@" ;;
     controls)    pytest tests/control_layer "$@" ;;
     support)     pytest tests/support "$@" ;;

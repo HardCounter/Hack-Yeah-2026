@@ -130,7 +130,16 @@ class AuditReader:
 
         def _sync_page() -> AuditPage:
             conn = self.store._get_connection()
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                return _sync_page_transaction(conn)
+
+        def _sync_page_transaction(conn) -> AuditPage:
             self._sync_check_authorization(scope, run_id)
+
+            now = datetime.now(timezone.utc)
+            expires_at = (now + timedelta(seconds=self.store.settings.export_hold_seconds)).isoformat()
+            conn.execute("DELETE FROM audit_export_holds WHERE expires_at <= ?", (now.isoformat(),))
 
             meta = conn.execute(
                 "SELECT epoch, next_offset FROM store_metadata WHERE singleton = 1"
@@ -146,10 +155,23 @@ class AuditReader:
                 after_offset = cursor.after_offset
                 high_watermark = cursor.high_watermark
                 hold_id = cursor.hold_id
+                hold = conn.execute(
+                    "SELECT run_id, principal_id, high_watermark FROM audit_export_holds WHERE hold_id = ?",
+                    (hold_id,),
+                ).fetchone()
+                if hold is None or tuple(hold) != (run_id, scope.principal_id, high_watermark):
+                    raise ValueError("Cursor retention hold is expired or does not match the read scope")
+                if not 0 <= after_offset <= high_watermark:
+                    raise ValueError("Invalid cursor offset")
+                conn.execute("UPDATE audit_export_holds SET expires_at = ? WHERE hold_id = ?", (expires_at, hold_id))
             else:
                 after_offset = 0
                 high_watermark = current_next_offset - 1
-                hold_id = ""
+                hold_id = uuid.uuid4().hex
+                conn.execute(
+                    "INSERT INTO audit_export_holds (hold_id, run_id, principal_id, high_watermark, expires_at) VALUES (?, ?, ?, ?, ?)",
+                    (hold_id, run_id, scope.principal_id, high_watermark, expires_at),
+                )
 
             cursor_db = conn.execute(
                 """
@@ -182,6 +204,9 @@ class AuditReader:
                     (new_after, high_watermark, run_id),
                 ).fetchone()
                 has_more = next_check is not None
+
+            if not has_more:
+                conn.execute("DELETE FROM audit_export_holds WHERE hold_id = ?", (hold_id,))
 
             new_cursor = AuditCursor(
                 epoch=current_epoch,

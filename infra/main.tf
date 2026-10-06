@@ -108,7 +108,7 @@ resource "aws_instance" "app" {
     apt-get install -y docker.io docker-compose-v2 git
     systemctl enable --now docker
     usermod -aG docker ubuntu
-    git clone ${var.repo_url} /opt/app
+    git clone --branch deploy --single-branch ${var.repo_url} /opt/app
     chown -R ubuntu:ubuntu /opt/app
   EOT
 

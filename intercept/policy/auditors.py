@@ -16,7 +16,7 @@ CLASSIFIED = {
     "private_key": re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.DOTALL),
     "api_key": re.compile(r"\bpgw_live_[A-Za-z0-9]+\b"),
 }
-DOMAIN = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")
+DOMAIN = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+\Z")
 HOST_TOKEN = re.compile(r"(?i)(?<![a-z0-9-])(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}")
 
 
@@ -122,7 +122,7 @@ def validate_specs(specs):
             if set(c) != {"domains", "action"} or c["action"] not in ("BLOCK", "REQUIRE_APPROVAL", "ALERT"):
                 raise ValueError("invalid domain blocklist")
             if (not isinstance(c["domains"], list) or len(c["domains"]) > 512
-                    or any(not isinstance(d, str) or not DOMAIN.fullmatch(d) for d in c["domains"])):
+                    or any(not isinstance(d, str) or len(d) > 253 or not DOMAIN.fullmatch(d) for d in c["domains"])):
                 raise ValueError("blocklist entries must be lowercase hostnames")
         elif spec["type"] == "webhook":
             if set(c) != {"endpoint", "timeout_ms", "on_failure"}:

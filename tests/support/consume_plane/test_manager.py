@@ -115,7 +115,23 @@ def test_broken_plugin_is_dead_lettered_without_blocking_others(harness):
     assert [d["plugin"] for d in h.ledger.dead_letters()] == ["broken"]
     [failure] = h.findings("consumer.plugin_failure")
     assert failure.plugin == "consume-plane" and failure.details["failed_plugin"] == "broken"
-    assert "bug" not in failure.summary                    # exception text stays in the ledger only
+    assert "bug" not in failure.summary
+
+
+def test_plugin_error_text_never_reaches_logs_ledger_or_retry_reason(harness, caplog):
+    secret = "SYNTHETIC_PRIVATE_PAYLOAD_12345"
+
+    @plugin("private-error")
+    async def private_error(self, a, ctx):
+        raise ValueError(secret)
+
+    h = harness([action(1)], [private_error], max_attempts=2)
+    asyncio.run(h.run())
+    assert secret not in caplog.text
+    assert secret not in str(h.ledger.dead_letters())
+    assert secret not in str(h.source.nacks)
+    assert secret not in str(h.ledger._db.execute("SELECT last_error FROM plugin_runs").fetchall())
+    assert h.ledger.dead_letters()[0]["error"] == "ValueError"
 
 
 def test_slow_plugin_times_out_without_stalling_other_sessions(harness):
@@ -192,4 +208,3 @@ def test_naive_timestamp_does_not_crash_consumer_lag_metric(harness):
     h = harness([act], [noop])
     asyncio.run(h.run())
     assert h.source.acked == [act.event_id]
-

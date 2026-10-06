@@ -1,6 +1,7 @@
 # Deployment
 
-Status: **live since 2026-10-03.** The dashboard, web app, evidence API and Caddy proxy run in the
+Historical deployment record: **deployed on 2026-10-03.** Current hosted availability has not been
+established by the [2026-10-06 repository review](../project-review.md). The dashboard, web app, evidence API and Caddy proxy run in the
 Compose deployment.
 
 - URL: <https://18-197-138-116.sslip.io> (health check: `/healthz`, shows the deployed commit)
@@ -37,7 +38,8 @@ Goal: judges open one public HTTPS URL and everything works. No team laptops, no
 
 We use **paid LLM APIs** through our own key (team decision). No LLM is provided by the organizers.
 
-- The **agent we protect** and the **semantic guard** both call hosted API models.
+- The **agent we protect** calls a configured provider. Layer 1 semantic-guard settings are reserved;
+  the optional consume-plane goal-alignment judge can call a hosted model when enabled.
 - Mediated model requests enforce configured token limits. USD pricing and daily financial budgets are not implemented; a positive unsupported cost budget fails closed rather than allowing unpriced spend.
 - The judge-run test suite must work **without any API key**. It uses a stub; the real API is used
   only for the live demo.
@@ -189,12 +191,15 @@ Docker host (or the configured `API_PORT`).
 
 ### Guard vs agent
 
-- The **semantic guard is a security control**. It runs on every request that reaches it, after the
-  deterministic checks, and its latency shows in the pipeline trace. A hard deny skips it and saves the API call.
+- The deterministic prompt gateway checks normalized requests against policy and budgets. The
+  enforcing adapter sends full normalized history and system text and denies incomplete content.
+  Synthetic tests prove admission behavior; real OpenCode hook failure propagation remains unverified.
+  Layer 1 semantic-guard settings are reserved. The optional asynchronous goal-alignment judge cannot
+  override a deterministic denial.
 - The **agent LLM is the system being protected**. It answers the chat console and drives the agent
   demo. It never runs as a blocking security check.
-- Always stream agent responses and cap `max_tokens`. Set request timeouts. On provider errors the
-  guard fails closed.
+- Local Python model dispatch bounds responses, reserves tokens and handles backend failures.
+  OpenCode completion streams are not a universal interception boundary.
 
 ### OpenCode in the container
 
@@ -208,10 +213,10 @@ The chat console drives the real OpenCode agent, not only the built-in simulatio
 - Each OpenCode session is bound to a Task Contract by the backend through the gateway's operator
   endpoint before the first tool call. Unbound sessions are denied by the gateway.
 
-Not proven yet: the repository has verified that real OpenCode loads the adapter and completes the
-handshake (interactive mode, no prompt sent). A full non-interactive prompt through the adapter, with
-tool calls, has not been run. The built-in simulation agent (`simulation.agent`) stays available as the
-fallback behind the same chat endpoint.
+Real OpenCode loading, handshake and governed tool pipelines are exercised with a loopback fixture
+model in the integration suite. This does not establish hosted-provider reliability, every runtime
+hook's failure propagation, or final-answer interception. The scripted CLI demonstration is separate
+from the live OpenCode chat backend; [the current review](../project-review.md) records exact checks.
 
 ---
 

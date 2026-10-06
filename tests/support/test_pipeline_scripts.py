@@ -46,6 +46,23 @@ def test_runner_help_does_not_require_an_opencode_binary():
     assert "usage:" in result.stdout.lower()
 
 
+@pytest.mark.parametrize("application", ["APP-0001", "APP-0015", "APP-0016", "APP-0017"])
+def test_runner_accepts_all_shipped_applications(monkeypatch, application):
+    from simulation import opencode_runner
+    launched = []
+    monkeypatch.setattr(opencode_runner, "run_pipeline", lambda args: launched.append(args.application) or 0)
+    assert opencode_runner.main([application, "--model", "fixture/model"]) == 0
+    assert launched == [application]
+
+
+@pytest.mark.parametrize("application", ["APP-0000", "APP-0018", "APP-01", "APP-nope"])
+def test_runner_rejects_unknown_application_ids(application):
+    from simulation import opencode_runner
+    with pytest.raises(SystemExit) as error:
+        opencode_runner.main([application, "--model", "fixture/model"])
+    assert error.value.code == 2
+
+
 @posix_shell
 def test_run_wrapper_clears_virtualenv_and_forwards_arguments(tmp_path):
     bin_dir = tmp_path / "bin"

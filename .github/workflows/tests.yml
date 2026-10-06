@@ -5,6 +5,9 @@ on:
     branches: [main]  # PR branches are covered by pull_request; avoids running twice
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:  # a newer push cancels the stale run
   group: tests-${{ github.ref }}
   cancel-in-progress: true
@@ -28,6 +31,8 @@ jobs:
           package-manager-cache: false
       - name: Install Python (.python-version) and locked dependencies
         run: uv sync --locked
+      - name: Python correctness checks
+        run: uv run --locked ruff check .
       - name: Generate dataset (self-checks + determinism)
         run: uv run python data/generate.py
       - name: Test suite
@@ -36,3 +41,14 @@ jobs:
         run: node --experimental-vm-modules --test tests/frontend/dashboard.test.mjs adapters/opencode/test.mjs adapters/opencode/forward.test.mjs
       - name: Report renders
         run: uv run python data/report.py
+
+  container:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate Compose with empty demo credentials
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+      - name: Build the deployment image
+        run: docker build --build-arg GIT_SHA=${{ github.sha }} --tag sentinel-interlock:test .

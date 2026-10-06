@@ -158,4 +158,4 @@ AGENT_TOOLS = {  # identities from docs/use-cases.md; enforced by the gateway, n
     "admin-agent": ["delete_client"],
 }
 
-import kyc, bait  # noqa: E402,F401  registers the tools
+import kyc, bait as bait_tools  # noqa: E402,F401  registers the tools

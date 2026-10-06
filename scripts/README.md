@@ -9,6 +9,10 @@ configuration, dashboard and Node tests; only POSIX shell/process/permission che
 
 ## Run the control layer
 
+For a dashboard with actual synthetic evidence and no provider, run
+`uv run --locked python -m web.demo --port 8000`, then open `http://127.0.0.1:8000`.
+Its temporary state is removed on exit; live sessions and configuration writes are disabled.
+
 | Script | What it does |
 |---|---|
 | `run_opencode_intercepted.sh [--workspace DIR] [opencode flags]` | Terminal 2: starts `opencode --standalone` wired to whichever service terminal 1 started (`var/intercept.env`). Defaults to the run's temporary project; `--workspace` selects another existing project directory while retaining the run-specific adapter/agent config. |
@@ -75,7 +79,7 @@ mode; example data is available only with explicit `--example-mode`.
 
 | Script | What it does |
 |---|---|
-| `test.sh [target] [args]` | `all` runs every Python test, the Node adapter suite and frontend tests; `python`, `controls`, `support`, `intercept`, `persistence`, `consume`, `e2e`, `data`, and `decisions` select Python groups; `adapter` runs the OpenCode adapter Node suite; `frontend` runs `node --test tests/frontend/*.test.mjs`. Use `--help` for details. |
+| `test.sh [target] [args]` | `all` runs Ruff correctness checks, every Python test, the Node adapter suite and frontend tests; `lint` runs Ruff; `python`, `controls`, `support`, `intercept`, `persistence`, `consume`, `e2e`, `data`, and `decisions` select Python groups; `adapter` runs the OpenCode adapter Node suite; `frontend` runs `node --test tests/frontend/*.test.mjs`. Use `--help` for details. |
 | `test_consume_plane.sh [pytest args]` | Consume-plane tests only (`tests/support/consume_plane`). |
 | `test_opencode_adapter.sh [--quiet]` | OpenCode adapter Node tests; prints every JSON request the plugin sends. |
 | `check_opencode_pipeline.sh` | Starts real OpenCode and passes when the adapter's handshake reaches Python (no prompt sent). |

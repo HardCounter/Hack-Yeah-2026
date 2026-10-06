@@ -1,5 +1,6 @@
 import asyncio
 import textwrap
+import traceback
 from pathlib import Path
 
 import pytest
@@ -102,8 +103,37 @@ def test_skip_mode_keeps_good_plugins(tmp_path):
 def test_failing_setup_is_a_load_error(tmp_path):
     write_plugin(tmp_path, "boom.py", GOOD.format(cls="Boom", name="boom").replace(
         'self.limit = ctx.config.get("limit", 1)', 'raise ValueError("bad config")'))
-    with pytest.raises(PluginLoadError, match="setup of 'boom' failed"):
+    with pytest.raises(PluginLoadError, match="setup of 'boom' failed") as error:
         load(ConsumePlaneConfig(plugin_dirs=[str(tmp_path)]))
+    assert "ValueError" in str(error.value) and "bad config" not in str(error.value)
+
+
+def test_teardown_errors_omit_raw_diagnostics(tmp_path, caplog):
+    body = GOOD.format(cls="Broken", name="broken").replace(
+        "    async def handle(self, action, ctx):",
+        '    async def teardown(self):\n        raise RuntimeError("private-plugin-value")\n\n'
+        "    async def handle(self, action, ctx):",
+    )
+    write_plugin(tmp_path, "broken.py", body)
+    registry = load(ConsumePlaneConfig(plugin_dirs=[str(tmp_path)]))
+    asyncio.run(registry.teardown_all())
+    assert "RuntimeError" in caplog.text and "private-plugin-value" not in caplog.text
+
+
+def test_import_errors_omit_raw_messages_and_chained_tracebacks(tmp_path, monkeypatch):
+    from consume_plane.runtime import loader
+    file = tmp_path / "failed_import.py"
+    file.write_text('raise RuntimeError("private-import-value")\n')
+
+    def broken_import(name):
+        raise RuntimeError("private-import-value")
+
+    monkeypatch.setattr(loader.importlib, "import_module", broken_import)
+    for operation in (lambda: loader.load_file(file), lambda: loader.load_handler("broken:Plugin")):
+        with pytest.raises(PluginLoadError, match="import failed: RuntimeError") as error:
+            operation()
+        diagnostic = "".join(traceback.format_exception(error.value))
+        assert "private-import-value" not in diagnostic
 
 
 def test_config_rejects_unknown_keys_and_resolves_paths(tmp_path):

@@ -21,7 +21,7 @@ from persistence.models import ActionEventEnvelope, ActionStatus, ActionType
 from persistence.privacy import sanitize_event, token, timestamp, number, evidence
 from persistence.query_usage import UsageQueriesMixin
 from persistence.query_dashboard import DashboardQueriesMixin
-from persistence.privacy import decision_projection, sanitize_event, token, timestamp, number
+from persistence.privacy import decision_projection
 from persistence.schema import CURRENT_SCHEMA_VERSION
 from persistence.settings import PersistenceSettings
 from persistence.vocabulary import DECISION_FOR_VERDICT, WIRE_STATUS, is_intent

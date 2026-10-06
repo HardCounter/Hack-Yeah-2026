@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import json
 import os
@@ -153,6 +155,49 @@ async def test_keyset_pagination_and_high_watermark(tmp_path: Path):
     assert page3.has_more is False
 
     await store.close()
+
+
+@async_test
+async def test_page_hold_preserves_snapshot_during_retention_and_releases_at_end(tmp_path):
+    from persistence.maintenance import maintain
+    store = EventStore(tmp_path / "held-pages.db", settings=PersistenceSettings(terminal_retention_seconds=1))
+    await store.initialize()
+    try:
+        writer = await setup_test_run(store, "run-held", "principal-alice", event_count=3)
+        await writer.seal_run("run-held")
+        reader = AuditReader(store)
+        scope = ReadScope("principal-alice")
+        first = await reader.page(scope, "run-held", limit=1)
+        assert first.cursor.hold_id and first.has_more
+        report = await maintain(store, datetime.now(timezone.utc) + timedelta(seconds=2))
+        assert report.events_pruned == 0
+        second = await reader.page(scope, "run-held", first.cursor, limit=2)
+        assert len(second.events) == 2 and not second.has_more
+        assert store._get_connection().execute("SELECT COUNT(*) FROM audit_export_holds").fetchone()[0] == 0
+        report = await maintain(store, datetime.now(timezone.utc) + timedelta(seconds=2))
+        assert report.events_pruned == 3
+    finally:
+        await store.close()
+
+
+@async_test
+async def test_page_rejects_expired_or_mismatched_retention_hold(tmp_path):
+    store = EventStore(tmp_path / "expired-pages.db")
+    await store.initialize()
+    try:
+        await setup_test_run(store, "run-pages", "principal-alice", event_count=3)
+        reader, scope = AuditReader(store), ReadScope("principal-alice")
+        first = await reader.page(scope, "run-pages", limit=1)
+        for cursor in (replace(first.cursor, hold_id="forged"),
+                       replace(first.cursor, high_watermark=first.cursor.high_watermark + 1)):
+            with pytest.raises(ValueError, match="retention hold"):
+                await reader.page(scope, "run-pages", cursor, limit=1)
+        with store._get_connection() as conn:
+            conn.execute("UPDATE audit_export_holds SET expires_at = '2000-01-01T00:00:00+00:00'")
+        with pytest.raises(ValueError, match="retention hold"):
+            await reader.page(scope, "run-pages", first.cursor, limit=1)
+    finally:
+        await store.close()
 
 
 @async_test

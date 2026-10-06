@@ -55,7 +55,7 @@ def load_file(path: Path) -> list[type]:
         spec.loader.exec_module(module)
     except Exception as e:
         sys.modules.pop(module_name, None)
-        raise PluginLoadError(f"{path}: import failed: {type(e).__name__}: {e}") from e
+        raise PluginLoadError(f"{path}: import failed: {type(e).__name__}") from None
     plugins = getattr(module, "PLUGINS", None)
     if not isinstance(plugins, (list, tuple)):
         raise PluginLoadError(f"{path}: module must define a PLUGINS list")
@@ -87,7 +87,7 @@ def load_handler(handler: str) -> type:
     try:
         module = importlib.import_module(module_name)
     except Exception as e:
-        raise PluginLoadError(f"{handler}: import failed: {type(e).__name__}: {e}") from e
+        raise PluginLoadError(f"{handler}: import failed: {type(e).__name__}") from None
     cls = getattr(module, attr, None)
     if cls is None:
         raise PluginLoadError(f"{handler}: '{attr}' not found in {module_name}")

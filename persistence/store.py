@@ -242,7 +242,10 @@ class EventStore:
         conn = self._get_connection()
         with conn:
             conn.execute("BEGIN IMMEDIATE")
-            return sum(self._insert_event_row(row) for row in rows)
+            inserted = sum(self._insert_event_row(row) for row in rows)
+            if self._sync_logical_bytes() > self.settings.max_retained_logical_bytes:
+                raise AuditBackpressureError("Logical payload quota exhausted")
+            return inserted
 
     async def insert_event(self, event: ActionEventEnvelope) -> None:
         """Append sanitized immutable evidence; identical retries are idempotent."""
@@ -331,18 +334,18 @@ class EventStore:
         async with self._lock:
             await self._offload(self._sync_register_consumer, name, replay)
 
+    def _sync_logical_bytes(self):
+        """Account for event payloads and separately stored redacted content bodies."""
+        return self._get_connection().execute(
+            "SELECT (SELECT COALESCE(SUM(LENGTH(CAST(payload_json AS BLOB))), 0) FROM events)"
+            " + (SELECT COALESCE(SUM(size_bytes), 0) FROM agent_content)"
+        ).fetchone()[0]
+
     def _sync_append_with_outbox(self, events):
         rows = [self._event_row(event) for event in events]
         conn = self._get_connection()
         with conn:
             conn.execute("BEGIN IMMEDIATE")
-            incoming_bytes = sum(len(row[9]) for row in rows)
-            curr_bytes = conn.execute(
-                "SELECT COALESCE(SUM(LENGTH(payload_json)), 0) FROM events"
-            ).fetchone()[0]
-            if curr_bytes + incoming_bytes > self.settings.max_retained_logical_bytes:
-                raise AuditBackpressureError("Logical payload quota exhausted")
-
             if self.db_path != ":memory:":
                 try:
                     db_dir = os.path.dirname(os.path.abspath(self.db_path))
@@ -363,6 +366,8 @@ class EventStore:
                     conn.executemany("INSERT INTO outbox(event_id, consumer_name) VALUES (?, ?)",
                                      [(row[0], name) for name in consumers])
                     inserted += 1
+            if self._sync_logical_bytes() > self.settings.max_retained_logical_bytes:
+                raise AuditBackpressureError("Logical payload quota exhausted")
             return inserted
 
     def _sync_seal_run(self, run_id: str, verification_status: Optional[str] = None) -> None:

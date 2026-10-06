@@ -90,9 +90,7 @@ async def maintain(store: EventStore, now: Optional[datetime] = None) -> Mainten
                     )
 
             pending_jobs = conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0]
-            logical_bytes = conn.execute(
-                "SELECT COALESCE(SUM(LENGTH(payload_json)), 0) FROM events"
-            ).fetchone()[0]
+            logical_bytes = store._sync_logical_bytes()
 
         # Disk/file measurements
         db_bytes = 0
