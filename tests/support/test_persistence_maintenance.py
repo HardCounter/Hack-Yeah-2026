@@ -38,20 +38,13 @@ def async_test(fn):
 
 
 from persistence.models import (
-    ActionDetails,
-    ActionEventEnvelope,
-    ActionStatus,
-    ActionType,
     AuditContext,
-    AuditorVerdict,
-    InterceptionMetadata,
-    RunBinding,
 )
 
 
 def sample_envelope(
     event_id: str,
-    run_id: Optional[str] = None,
+    run_id: str | None = None,
     ts: str = "2026-10-03T12:00:00Z",
     action_index: int = 0,
 ) -> ActionEventEnvelope:

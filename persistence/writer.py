@@ -21,6 +21,7 @@ from persistence.models import (
     RunBinding,
 )
 from persistence.store import ConflictingRecordError, EventStore
+from persistence.privacy import sanitize_event
 
 
 class BoundAuditWriter:
@@ -97,16 +98,34 @@ class BoundAuditWriter:
             if not metadata.policy_version:
                 metadata.policy_version = binding.policy_version
 
+            contract_row = conn.execute(
+                "SELECT contract_json FROM task_contracts WHERE session_id=? AND run_id=?",
+                (binding.session_id, run_id),
+            ).fetchone()
+            case_id = json.loads(contract_row[0]).get("case_id") if contract_row else None
+
             # 2. Check if event_id already exists (idempotent retry or conflict check)
             existing_row = conn.execute(
                 "SELECT payload_json FROM events WHERE event_id = ?", (event_id,)
             ).fetchone()
             if existing_row is not None:
                 existing_envelope = ActionEventEnvelope.from_json(existing_row[0])
-                if (
-                    existing_envelope.context.action_id != action_id
-                    or existing_envelope.action_details.name != details.name
-                ):
+                # Compare the entire durable projection. Reuse only store-assigned fields;
+                # a retry cannot move evidence across runs or change its verdict/target/receipt.
+                context = AuditContext(
+                    contract_id=binding.contract_id, run_id=run_id, action_id=action_id,
+                    principal_id=binding.principal_id,
+                    action_index=existing_envelope.context.action_index,
+                    policy_hash=binding.policy_hash, feed_version=binding.feed_version,
+                    reason_code=reason_code or None, effect_receipt_id=effect_receipt_id,
+                )
+                candidate = sanitize_event(ActionEventEnvelope(
+                    event_id=event_id, trace_id=run_id, session_id=binding.session_id,
+                    agent_id=binding.agent_id, case_id=case_id, action_type=ActionType.TOOL_CALL,
+                    action_details=details, interception_metadata=metadata, status=status, context=context,
+                    ts=existing_envelope.ts, seq=existing_envelope.seq,
+                ))
+                if candidate.to_dict() != existing_envelope.to_dict():
                     raise ConflictingRecordError(
                         f"Event '{event_id}' already recorded with conflicting action details"
                     )
@@ -132,11 +151,6 @@ class BoundAuditWriter:
                 effect_receipt_id=effect_receipt_id,
             )
 
-            contract_row = conn.execute(
-                "SELECT contract_json FROM task_contracts WHERE session_id=? AND run_id=?",
-                (binding.session_id, run_id),
-            ).fetchone()
-            case_id = json.loads(contract_row[0]).get("case_id") if contract_row else None
             envelope = ActionEventEnvelope(
                 event_id=event_id,
                 trace_id=run_id,
@@ -154,6 +168,9 @@ class BoundAuditWriter:
             # Use internal event row insertion
             row = self.store._event_row(envelope)
             self.store._insert_event_row(row)
+            if self.store._sync_logical_bytes() > self.store.settings.max_retained_logical_bytes:
+                from persistence.store import AuditBackpressureError
+                raise AuditBackpressureError("Logical payload quota exhausted")
 
             # Register outbox jobs for active consumers
             consumers = [r[0] for r in conn.execute("SELECT name FROM consumers WHERE status != 'RETIRED'")]

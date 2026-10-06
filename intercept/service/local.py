@@ -131,6 +131,8 @@ class LocalService:
         reply = {"session_id": contract.session_id, "request_id": payload["request_id"],
                  "policy_version": contract.policy_version}
         if payload.get("action_type") == "prompt":
+            if self.runtime.prompt_gateway.content_incomplete(payload):
+                return {**reply, "decision": "BLOCK", "reason_code": "PROMPT_CONTENT_INCOMPLETE"}
             return {**reply, "decision": "ALLOW"}
         if payload.get("action_type") != "llm_request":
             raise ValueError("invalid prompt request")
@@ -140,6 +142,12 @@ class LocalService:
         tools = payload.get("tools")
         if not isinstance(messages, list) or not isinstance(tools, list):
             raise ValueError("invalid prompt request")
+        # System instructions are part of the provider request and must be scanned and metered too.
+        system = payload.get("system")
+        if system is not None:
+            if not isinstance(system, dict) or not isinstance(system.get("text"), str):
+                raise ValueError("invalid system prompt")
+            messages = [{"role": "system", "content": [{"type": "text", **system}]}] + messages
 
         async def admitted(*_):  # the provider call happens in OpenCode once this request is allowed
             return {"message": {"role": "assistant", "content": ""}}

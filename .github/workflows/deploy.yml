@@ -5,6 +5,9 @@ on:
   push:
     branches: [deploy]
 
+permissions:
+  contents: read
+
 concurrency:
   group: deploy
   cancel-in-progress: false  # never interrupt a deploy that is already running
@@ -22,10 +25,16 @@ jobs:
           node-version: 22
           package-manager-cache: false
       - run: uv sync --locked
+      - run: uv run --locked ruff check .
       - run: uv run python data/generate.py
       - run: uv run pytest
       - name: Test frontend and adapter Node suites
         run: node --experimental-vm-modules --test tests/frontend/dashboard.test.mjs adapters/opencode/test.mjs adapters/opencode/forward.test.mjs
+      - name: Validate deployment artifact before SSH
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          docker build --build-arg GIT_SHA=${{ github.sha }} --tag sentinel-interlock:test .
 
   deploy:
     needs: test

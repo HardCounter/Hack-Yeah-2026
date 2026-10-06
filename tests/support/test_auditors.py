@@ -176,6 +176,9 @@ class DomainBlocklistTests(unittest.IsolatedAsyncioTestCase):
     def test_invalid_configs_are_rejected(self):
         for spec in (blocklist(domains=["https://evil.com"]), blocklist(domains=["*.evil.com"]),
                      blocklist(domains=["Evil.com"]), blocklist(domains=["com"]), blocklist("REDACT"),
+                     blocklist(domains=["-evil.com"]), blocklist(domains=["evil-.com"]),
+                     blocklist(domains=["evil..com"]), blocklist(domains=["x" * 64 + ".com"]),
+                     blocklist(domains=["x." * 125 + "example.com"]),
                      blocklist(domains=[f"d{i}.com" for i in range(513)])):
             with self.subTest(spec=spec), self.assertRaises(ValueError):
                 Pipeline([spec])

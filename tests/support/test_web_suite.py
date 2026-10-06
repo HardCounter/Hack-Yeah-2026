@@ -87,9 +87,12 @@ def test_run_reports_each_case_with_its_final_decision_and_trace(fake_suite):
 def test_one_case_runs_alone_and_keeps_the_other_results(fake_suite):
     client.post("/api/suite/runs")
     ids = {case["title"]: case["id"] for case in finished()["cases"]}
+    old_report = suite._run["report"]
+    assert old_report.exists()
     (fake_suite / "test_cases.py").write_text(CASES.replace('"decision": "REDACT"', '"decision": "BLOCK"'))
 
     assert client.post("/api/suite/runs", json={"case": ids["redacts the number"]}).status_code == 202
+    assert not old_report.parent.exists()
     run = finished()
     assert run["case"] == ids["redacts the number"]
     assert statuses(run) == {"redacts the number": ("PII", "done", "BLOCK"), "clean request is held": ("LEG", "done", "REQUIRE_APPROVAL"),

@@ -87,7 +87,7 @@ test("forwards prompts, LLM requests and tool use as JSON", async () => {
                    input: { filePath: "docs/use-cases.md" } }
     await hooks.tool["execute.before"](call)
     await hooks.tool["execute.after"]({ ...call, status: "completed", result: { content: "# Use cases ..." } })
-    // 4. second model request carries only the new assistant + tool messages
+    // 4. enforcement forwards the entire current context for scanning and metering
     await hooks.session.context({ sessionID: SESSION, agent: "build", model: MODEL,
       system: [{ type: "text", text: "You are a coding agent." }], messages: [user, assistantCall, toolResult], options: {}, tools: TOOLS })
 
@@ -107,14 +107,14 @@ test("forwards prompts, LLM requests and tool use as JSON", async () => {
     // tool bodies keep the exact key sets the Python service validates
     assert.deepEqual(Object.keys(admission).sort(), ["arguments", "call_id", "session_id", "tool"])
     assert.deepEqual(Object.keys(outcome).sort(), ["call_id", "session_id", "status", "tool"])
-    // delta only, system unchanged so not resent, reasoning dropped, tool result marked untrusted
+    // Full history and unchanged system are included; reasoning is dropped, tool result untrusted.
     assert.equal(second.kind, "primary")
     assert.equal(second.request_seq, 2)
-    assert.equal(second.messages.length, 2)
-    assert.equal(Object.hasOwn(second, "system"), false)
-    assert.equal(second.messages[0].reasoning_parts_omitted, 1)
+    assert.equal(second.messages.length, 3)
+    assert.equal(second.system.text, first.system.text)
+    assert.equal(second.messages[1].reasoning_parts_omitted, 1)
     assert.ok(!JSON.stringify(second).includes("private chain of thought"))
-    assert.equal(second.messages[1].content[0].trust, "untrusted")
+    assert.equal(second.messages[2].content[0].trust, "untrusted")
   } finally {
     server.close()
   }
@@ -152,7 +152,24 @@ test("auxiliary model requests (compaction, generate, title) are forwarded with 
       ["compaction", `${SESSION}:compaction:2`],
     ])
     assert.equal(Object.hasOwn(bodies[2], "agent"), false)
-    assert.equal(bodies[3].messages.length, 1)          // delta is tracked per kind
+    assert.equal(bodies[3].messages.length, 2)
+  } finally {
+    server.close()
+  }
+})
+
+test("enforcement forwards edited history and unchanged system on every request", async () => {
+  const { requests, server, endpoint } = await captureServer()
+  try {
+    const hooks = await loadPlugin({ endpoint, prompts: "enforce" })
+    const base = { sessionID: SESSION, model: MODEL, system: ["Scan every request"], tools: {} }
+    await hooks.session.context({ ...base, messages: [user] })
+    await hooks.session.context({ ...base, messages: [{ role: "user", content: "SYNTHETIC_CHANGED_HISTORY" }] })
+    const second = requests[1].body
+    assert.equal(second.messages.length, 1)
+    assert.equal(second.messages[0].content[0].text, "SYNTHETIC_CHANGED_HISTORY")
+    assert.equal(second.system.text, "Scan every request")
+    assert.equal(second.message_count, 1)
   } finally {
     server.close()
   }

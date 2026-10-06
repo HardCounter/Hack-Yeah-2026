@@ -181,10 +181,6 @@ class GovernedPersistence:
                         raise ConflictingRecordError("Conflicting immutable event retry")
                     return
                 conn.execute("UPDATE audit_runs SET next_index=next_index+1 WHERE run_id=?", (candidate.context.run_id,))
-                encoded_size = len(row[-1].encode("utf-8"))
-                used_size = conn.execute("SELECT COALESCE(SUM(LENGTH(payload_json)),0) FROM events").fetchone()[0]
-                if used_size + encoded_size > self.store.settings.max_retained_logical_bytes:
-                    raise AuditBackpressureError("Logical payload quota exhausted")
                 if self.store.db_path != ":memory:":
                     db_dir = os.path.dirname(os.path.abspath(self.store.db_path))
                     try:
@@ -195,6 +191,8 @@ class GovernedPersistence:
                 inserted = self.store._insert_event_row(row, assign_seq=deliver)
                 if not inserted:
                     return
+                if self.store._sync_logical_bytes() > self.store.settings.max_retained_logical_bytes:
+                    raise AuditBackpressureError("Logical payload quota exhausted")
                 if deliver:
                     consumers = [r[0] for r in conn.execute("SELECT name FROM consumers WHERE status != 'RETIRED'")]
                     pending = conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0]
@@ -267,6 +265,8 @@ class GovernedPersistence:
         """Store pre-redacted bytes and return metadata only; raw bodies never enter events."""
         if not isinstance(body, bytes) or not redacted or trust not in ("trusted", "untrusted"):
             raise ValueError("Content must be bytes redacted by Layer 1 before persistence")
+        if len(body) > self.store.settings.max_export_bytes:
+            raise AuditBackpressureError("Content body exceeds the configured byte limit")
         digest = hashlib.sha256(body).hexdigest()
         content_id = digest
         ref = f"store://agent_content/{content_id}"
@@ -277,8 +277,15 @@ class GovernedPersistence:
                 old = conn.execute("SELECT sha256,size_bytes,body FROM agent_content WHERE content_id=?", (content_id,)).fetchone()
                 if old and (old[0] != digest or old[1] != len(body) or old[2] != body):
                     raise ConflictingRecordError("Content reference collision")
-                conn.execute("INSERT OR IGNORE INTO agent_content VALUES(?,?,?,?,?,?)",
-                             (content_id,digest,len(body),1,trust,body))
+                if not old:
+                    if self.store._sync_logical_bytes() + len(body) > self.store.settings.max_retained_logical_bytes:
+                        raise AuditBackpressureError("Logical payload quota exhausted")
+                    if self.store.db_path != ":memory:":
+                        db_dir = os.path.dirname(os.path.abspath(self.store.db_path))
+                        if shutil.disk_usage(db_dir).free < self.store.settings.min_free_bytes:
+                            raise AuditBackpressureError("Insufficient disk free space")
+                    conn.execute("INSERT INTO agent_content VALUES(?,?,?,?,?,?)",
+                                 (content_id,digest,len(body),1,trust,body))
         async with self.store._lock:
             await self.store._offload(write)
         return {"ref": ref, "sha256": digest, "size_bytes": len(body), "redacted": True, "trust": trust}

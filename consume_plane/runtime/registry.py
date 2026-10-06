@@ -45,8 +45,8 @@ class Registry:
                 continue
             try:
                 await teardown()
-            except Exception:
-                p.log.exception("teardown failed")
+            except Exception as exc:
+                p.log.error("teardown failed: %s", type(exc).__name__)
 
 
 async def load_registry(cfg: ConsumePlaneConfig, extra: Iterable[type] = ()) -> Registry:
@@ -102,7 +102,7 @@ async def load_registry(cfg: ConsumePlaneConfig, extra: Iterable[type] = ()) -> 
             if setup is not None:
                 await setup(SetupContext(name, config, plugin.log))
         except Exception as e:
-            errors.append(PluginLoadError(f"{origin}: setup of '{name}' failed: {type(e).__name__}: {e}"))
+            errors.append(PluginLoadError(f"{origin}: setup of '{name}' failed: {type(e).__name__}"))
             continue
         loaded.append(plugin)
 

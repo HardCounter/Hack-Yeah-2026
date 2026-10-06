@@ -40,6 +40,63 @@ def _event(*, action_type=ActionType.TOOL_CALL, status=ActionStatus.EXECUTED,
 
 
 @async_test
+async def test_content_and_events_share_transactional_byte_quota(tmp_path, monkeypatch):
+    from persistence.settings import PersistenceSettings
+    from persistence.store import AuditBackpressureError
+    from persistence.maintenance import maintain
+    store = EventStore(tmp_path / "content-quota.db", settings=PersistenceSettings(
+        max_retained_logical_bytes=2048, max_export_bytes=1024,
+    ))
+    await store.initialize()
+    governed = GovernedPersistence(store)
+    try:
+        first = await governed.put_content(b"a" * 1000, redacted=True)
+        assert await governed.put_content(b"a" * 1000, redacted=True) == first
+        from persistence import governed as governed_module
+        from types import SimpleNamespace
+        with monkeypatch.context() as disk:
+            disk.setattr(governed_module.shutil, "disk_usage", lambda _: SimpleNamespace(free=0))
+            assert await governed.put_content(b"a" * 1000, redacted=True) == first
+            with pytest.raises(AuditBackpressureError, match="disk free space"):
+                await governed.put_content(b"new", redacted=True)
+        assert (await maintain(store)).logical_bytes == 1000
+        with pytest.raises(AuditBackpressureError, match="body exceeds"):
+            await governed.put_content(b"b" * 1025, redacted=True)
+        await governed.put_content(b"b" * 1000, redacted=True)
+        with pytest.raises(AuditBackpressureError, match="quota"):
+            await governed.put_content(b"c" * 100, redacted=True)
+        with pytest.raises(AuditBackpressureError, match="quota"):
+            await store.append_with_outbox([_event()])
+        with pytest.raises(AuditBackpressureError, match="quota"):
+            await store.insert_events_batch([_event()])
+        assert await store.get_event("evt_1") is None
+        assert store._sync_logical_bytes() == 2000
+    finally:
+        await store.close()
+
+
+@async_test
+async def test_exact_retries_do_not_charge_event_bytes_twice(tmp_path):
+    from persistence.settings import PersistenceSettings
+    from persistence.store import AuditBackpressureError
+    store = EventStore(tmp_path / "retry-quota.db")
+    await store.initialize()
+    try:
+        event = _event()
+        await store.append_with_outbox([event])
+        used = store._sync_logical_bytes()
+        store.settings = PersistenceSettings(max_retained_logical_bytes=max(1024, used))
+        assert await store.append_with_outbox([event]) == 0
+        assert await store.insert_events_batch([event]) == 0
+        with pytest.raises(AuditBackpressureError, match="quota"):
+            await store.append_with_outbox([replace(event, event_id="overflow")])
+        assert await store.get_event("overflow") is None
+        assert store._sync_logical_bytes() == used
+    finally:
+        await store.close()
+
+
+@async_test
 async def test_v21_adapter_maps_tool_decision_status_and_persisted_seq(tmp_path):
     store = EventStore(tmp_path / "v21.db")
     await store.initialize()

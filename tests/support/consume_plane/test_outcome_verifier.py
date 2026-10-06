@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
-import hashlib
 
 from contracts import Budget, TaskContract
 from consume_plane.adapters.memory import MemoryTrajectoryReader

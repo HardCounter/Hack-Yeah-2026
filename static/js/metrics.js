@@ -100,14 +100,13 @@ ${tip(slices[i], n)}`),
 
   function render(fresh) {
     const by = security?.actions.by_decision, n = perf?.actions_evaluated ?? 0, num = v => security ? fmtNum(v) : '—';
-    // A task is one agent session on the risk map; it succeeded if the outcome checker verified it,
-    // or (no verdict recorded) if it was not halted at critical risk
+    // A task succeeds only when the independent outcome checker records verified success.
     const tasks = { total: App.sessions.length }, tasksOk = App.sessions.filter(ok).length;
     $('#kpis').replaceChildren(
       kpi('requests', 'Requests', perf ? fmtNum(n) : '—', aggregates ? 'all recorded prompts and tool calls' : 'latest recorded prompts and tool calls'),
       kpi('blocked', 'Blocked', num(by?.BLOCK), `requests · ${pct(by?.BLOCK, n)}% of all`, 'block'),
       kpi('redacted', 'Redacted', num(by?.REDACT), `requests · ${pct(by?.REDACT, n)}% forwarded clean`, 'warn'),
-      kpi('held', 'Held for approval', num(by?.REQUIRE_APPROVAL), 'requests awaiting a human', 'hold'),
+      kpi('held', 'Approval required', num(by?.REQUIRE_APPROVAL), 'execution denied · approval workflow unavailable', 'hold'),
       kpi('tasks', 'Tasks succeeded', tasks.total ? pct(tasksOk, tasks.total) + '%' : '—', `${tasksOk} of ${tasks.total} listed tasks · independently verified`, 'allow'),
       kpi('spend', 'Model spend', usage ? usd(usage.totals.cost_usd) : '—',
         usage ? `${fmtNum(usage.totals.total_tokens)} tokens${usage.totals.cost_usd == null ? ' · pricing unavailable' : usage.totals.source === 'reported' ? '' : ' · estimate'}` : 'tokens'),
@@ -185,7 +184,7 @@ ${tip(slices[i], n)}`),
     requests: { title: 'All requests', sub: 'Every prompt and tool call the gateway decided on, newest first.', pick: () => true, query: EVALUATED },
     blocked: { title: 'Blocked requests', sub: 'Stopped before reaching the model or tool.', pick: a => a.decision === 'BLOCK', query: 'decisions=BLOCK' },
     redacted: { title: 'Redacted requests', sub: 'Forwarded with personal data or secrets masked.', pick: a => a.decision === 'REDACT', query: 'decisions=REDACT' },
-    held: { title: 'Held for approval', sub: 'Waiting for a human to approve the action.', pick: a => a.decision === 'REQUIRE_APPROVAL', query: 'decisions=REQUIRE_APPROVAL' },
+    held: { title: 'Approval required', sub: 'Execution denied; the approval workflow is not available.', pick: a => a.decision === 'REQUIRE_APPROVAL', query: 'decisions=REQUIRE_APPROVAL' },
     spend: { title: 'Model spend', sub: 'Prompts, and the model turn that decided each tool call. Token counts and cost are the gateway\'s estimates.', pick: a => a.kind === 'prompt' && Mock.usage(a).total_tokens > 0, query: EVALUATED },
     latency: { title: 'Gateway latency', sub: 'Time in all checks per request, slowest first.', pick: () => true, sort: (a, b) => overhead(b) - overhead(a), query: EVALUATED },
     tasks: { title: 'Agent tasks', sub: 'One listed agent session each. Success requires a recorded independent verification.' },

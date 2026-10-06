@@ -77,6 +77,24 @@ class PromptGateway:
             raise ValueError(f"{label} is not bounded JSON data") from None
 
     @staticmethod
+    def content_incomplete(value: Any) -> bool:
+        """An elided adapter payload cannot authorize the full provider-visible content."""
+        pending, seen = [value], set()
+        while pending:
+            item = pending.pop()
+            if isinstance(item, (Mapping, list, tuple)):
+                if id(item) in seen:
+                    continue
+                seen.add(id(item))
+                if isinstance(item, Mapping):
+                    if item.get("truncated") is True or item.get("type") == "omitted":
+                        return True
+                    pending.extend(item.values())
+                else:
+                    pending.extend(item)
+        return False
+
+    @staticmethod
     def _status_for_decision(decision: str) -> ActionStatus:
         return storage_status(decision)
 
@@ -289,6 +307,8 @@ class PromptGateway:
                 rows = (denied,) if denied else ()
             elif self.contract.budget.tokens is None:
                 reason = "TOKEN_BUDGET_REQUIRED"
+            elif self.content_incomplete(messages):
+                reason = "PROMPT_CONTENT_INCOMPLETE"
             else:
                 try:
                     copied_messages = self._json_copy(messages, label="messages")

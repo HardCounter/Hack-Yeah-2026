@@ -119,7 +119,8 @@ class OpenCodeBackend:
         self.bank = None
         # One folder for every session's evidence store: the read API serves this directory.
         self.runs = root / "bank-runs"
-        self.runs.mkdir(parents=True, exist_ok=True)
+        self.runs.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.runs.chmod(0o700)
 
     def _build_bank(self):
         from simulation import agent  # noqa: F401  sets up the data import path
@@ -130,7 +131,7 @@ class OpenCodeBackend:
         return dataset / "bank.db"
 
     async def start(self, session):
-        from simulation.opencode_runner import _child_env, free_port
+        from simulation.opencode_runner import _child_env, _log, free_port
         from simulation.pipeline_support import prepare_project, request
         if self.bank is None:  # one shared synthetic bank per app start; the gateway copies it per session
             self.bank = await asyncio.to_thread(self._build_bank)
@@ -160,7 +161,7 @@ class OpenCodeBackend:
         env["CONTROL_LOG"], env["CONTROL_LOG_FILE"] = "file", str(folder / "control-layer.log")
         state.update(env=env, project=project, evidence=self.runs / f"{session.id}.evidence.db")
         state["policy_snapshot"] = snapshot
-        state["gateway_log"] = open(folder / "gateway.log", "wb")
+        state["gateway_log"] = _log(folder, "gateway.log")
         state["gateway"] = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "intercept.service.local", "--bank-db", str(self.bank), "--application", APPLICATION,
             "--contract-id", contract, "--runs-dir", str(self.runs), "--port", endpoint.rsplit(":", 1)[1],
@@ -168,7 +169,7 @@ class OpenCodeBackend:
             "--catalog-all", cwd=REPO, env=env, stdout=state["gateway_log"], stderr=asyncio.subprocess.STDOUT,
             start_new_session=True)
         port = free_port()
-        state["server_log"] = open(folder / "opencode.log", "wb")
+        state["server_log"] = _log(folder, "opencode.log")
         state["server"] = await asyncio.create_subprocess_exec(
             self.binary, "serve", "--hostname", "127.0.0.1", "--port", str(port), cwd=project, env=env,
             stdin=asyncio.subprocess.DEVNULL, stdout=state["server_log"], stderr=asyncio.subprocess.STDOUT,
@@ -233,7 +234,8 @@ class OpenCodeBackend:
 class SessionManager:
     def __init__(self, backend=None):
         self.root = Path(os.environ.get("RUNS_DIR", "/data/pipeline-runs")).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.root.chmod(0o700)
         self.max_sessions = positive_int("MAX_SESSIONS", 6)
         self.idle_seconds = positive_int("SESSION_IDLE_S", 900)
         self.message_timeout = positive_int("RUN_TIMEOUT_S", 120)
@@ -285,7 +287,7 @@ class SessionManager:
             await self._close(idle[0].id)  # the least recently used session makes room
         session_id = "ses_" + secrets.token_hex(16)
         folder = self.root / session_id
-        folder.mkdir()
+        folder.mkdir(mode=0o700)
         session = Session(session_id, folder)
         session.busy = True
         self._touch(session)
@@ -295,8 +297,8 @@ class SessionManager:
         except asyncio.CancelledError:
             await self._close(session_id)
             raise
-        except Exception:
-            log.exception("session start failed")
+        except Exception as exc:
+            log.error("session start failed: %s", type(exc).__name__)
             await self._close(session_id)
             raise HTTPException(503, "the session could not be started") from None
         session.busy = False
