@@ -5,7 +5,7 @@ The versions are governed by `uv.lock`; development tools and transitive Python 
 License declarations below are metadata reported by the packages, not a completed legal review.
 Consult each package's shipped license/notice files before redistributing it.
 
-The team has not selected a license for this project's own source. This inventory does not assign one.
+This project's own source is released under the MIT License (see `LICENSE`); `docs/goldman/` is excluded.
 
 | Python distribution | Installed version | Declared license |
 |---|---|---|
@@ -51,4 +51,4 @@ Their upstream image/package license notices must be preserved as appropriate wh
 The Docker base images are version tags, not immutable digest pins.
 
 Competition PDFs and team presentation materials are separate from the software dependency graph.
-Project-wide redistribution terms and team attribution remain maintainer decisions.
+They are not part of the MIT-licensed source unless stated otherwise.

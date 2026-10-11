@@ -39,5 +39,5 @@ CI runs Python and Node checks on three operating systems and builds the deploym
 Terraform applies and the `deploy` branch workflow operate external infrastructure and are separate
 from local development. Moving the `deploy` branch starts a release.
 
-The team has not selected a project license. Do not introduce a license or claim individual ownership
+The project is released under the [MIT License](LICENSE) (`docs/goldman/` excluded). Do not change the license or claim individual ownership
 of the team's work without the maintainers' agreement; dependency metadata is listed in [THIRD_PARTY.md](THIRD_PARTY.md).

@@ -3,6 +3,7 @@ name = "hack-yeah-2026"
 version = "0.1.0"
 description = "AI Control Layer for Autonomous Agents"
 readme = "README.md"
+license = "MIT"
 authors = [
     { name = "HardCounter Team" }
 ]

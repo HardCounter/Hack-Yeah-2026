@@ -170,4 +170,4 @@ and the [deployment runbook](docs/dashboard/deployment.md) before exposing it pu
 - [Team presentation](presentation/HackYeah2026-HardCounter.pdf)
 
 Design documents and historical test counts describe their stated revision; the current review records
-what was checked on this branch. This is a team project. A project license has not yet been selected.
+what was checked on this branch. This is a team project released under the [MIT License](LICENSE); `docs/goldman/` is excluded.
