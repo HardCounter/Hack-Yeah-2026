@@ -162,6 +162,7 @@ HardCounter:
 - [Mateusz Błażejowski](https://www.linkedin.com/in/mateusz-b%C5%82a%C5%BCejowski-965135341/)
 - [Krzysztof Radzewicz](https://www.linkedin.com/in/krzysztof-radzewicz-a15132355/)
 - [Krzysztof Adamczyk](https://www.linkedin.com/in/krzysztof-adamczyk-89532232b/)
+- Mikołaj Małatowski
 
 [Team presentation (PDF)](presentation/HackYeah2026-HardCounter.pdf) ·
 [Contributing](CONTRIBUTING.md) · [Dependency licenses](THIRD_PARTY.md)
