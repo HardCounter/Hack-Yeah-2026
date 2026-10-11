@@ -6,7 +6,7 @@ executable boundaries, tests and limits. Requirements below also cover deferred
 deployment/containment and live semantic features; implementation is not proof
 that every requirement is demonstrated. This document resolves
 the architecture contradictions identified in the October 3 review. It specializes
-[project-direction.md](project-direction.md); competition documents remain unchanged.
+[project-direction.md](archive/project-direction.md); competition documents remain unchanged.
 The MVP is **one KYC workflow**. AML, broad provider compatibility, distributed queues,
 automatic fallback, and arbitrary plugins are deferred. Technology suggestions in other
 documents are not installed dependencies or implemented capabilities.

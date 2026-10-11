@@ -2,7 +2,5 @@
   "$schema": "https://opencode.ai/config.json",
   "model": "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
   "small_model": "nvidia/nvidia/nemotron-3.5-lightning-30b-a3b",
-  "default_agent": "control-builder",
-  "share": "disabled",
-  "instructions": ["docs/project-direction.md"]
+  "share": "disabled"
 }

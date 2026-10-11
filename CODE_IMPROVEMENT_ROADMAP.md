@@ -44,7 +44,7 @@ This document catalogs all capabilities, features, safety mechanisms, and archit
   - Resume agent execution upon approved dispatch with bound audit attribution.
 
 ### 2.2 Dynamic Policy Hot-Reloading via File Watcher
-- **Documented Reference:** `docs/application-documentation.md` §2.2 lines 266–272; `docs/intercept/opencode-adapter-plan.md` lines 46–47.
+- **Documented Reference:** `docs/application-documentation.md` §2.2 lines 266–272; `docs/archive/intercept/opencode-adapter-plan.md` lines 46–47.
 - **Current State:** Policy changes can only be loaded by invoking `PUT /api/v1/config-selection` or by restarting the gateway process.
 - **Target Implementation:**
   - Implement a background file watcher (`watchfiles` or inotify) monitoring `config/presets/` and active configuration files.

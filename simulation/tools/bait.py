@@ -1,4 +1,4 @@
-"""The six bait tools (docs/plans/tools/04-bait-tools.md). All are fakes that only exist to give the
+"""The six bait tools (docs/archive/plans/tools/04-bait-tools.md). All are fakes that only exist to give the
 gateway something to block: each returns a canned result and its audit row is written by registry.call().
 Nothing is sent, fetched over the network, run, deserialized or deleted. Static fixtures: data/fixtures/bait/.
 """

@@ -1012,7 +1012,7 @@ Informacja odpowiada odpisowi aktualnemu z rejestru."""))
         shutil.rmtree(out / "documents", ignore_errors=True)
         (out / "documents").mkdir(parents=True)
         con = sqlite3.connect(db)
-        con.execute("PRAGMA journal_mode=WAL")  # persistent; lets parallel tool calls queue (docs/plans/tools/README.md)
+        con.execute("PRAGMA journal_mode=WAL")  # persistent; lets parallel tool calls queue (docs/archive/plans/tools/README.md)
         con.executescript(SCHEMA)
         dump = lambda v: json.dumps(v, ensure_ascii=False, sort_keys=True)
 

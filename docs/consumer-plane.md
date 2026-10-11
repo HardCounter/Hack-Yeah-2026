@@ -10,7 +10,7 @@ Detailed design for **Layer 3 (Consumer Layer)** of `docs/application-documentat
 sections 4 and 5.3 of that document into concrete contracts, a package layout, and a build plan.
 
 **Status (2026-10-03): phase 0 and the core of phase 1 are implemented** in `consume_plane/`
-(see [consumer-plane-implementation-notes.md](consumer-plane-implementation-notes.md) for what is
+(see [consumer-plane-implementation-notes.md](archive/consumer-plane-implementation-notes.md) for what is
 built, decisions taken, and deviations). The wire format is specified in
 [consumer-plane-event-envelope.md](consumer-plane-event-envelope.md). The persistence layer
 (Layer 2) is not implemented, so every dependency on it is a protocol with in-memory and JSONL

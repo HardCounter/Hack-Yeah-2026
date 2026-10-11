@@ -2,7 +2,7 @@
 
 Tools are deliberately naive (no policy); every control lives in the gateway. Each executed call
 writes one audit_actions row in the same transaction as the tool's own writes.
-See docs/plans/tools/01-registry.md and README.md (Concurrency).
+See docs/archive/plans/tools/01-registry.md and README.md (Concurrency).
 """
 import hashlib
 import json

@@ -1,4 +1,4 @@
-"""The ten KYC tools for the onboarding agent (docs/plans/tools/02, 03). Deliberately naive: no policy, no redaction,
+"""The ten KYC tools for the onboarding agent (docs/archive/plans/tools/02, 03). Deliberately naive: no policy, no redaction,
 no dedupe, no "already decided" guard. The gateway and the verifier catch those.
 
 Every tool runs inside registry.call()'s BEGIN IMMEDIATE transaction: never begin/commit/rollback here.
